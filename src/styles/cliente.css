@@ -1,0 +1,437 @@
+/**
+ * Paso 1 · Selección de cliente.
+ *
+ * Todo va namespaceado bajo `.cliente-v2` —el mismo nombre que en la app de operaciones de venta—
+ * para que las piezas compartidas entre las dos apps (ficha, buscador, badges, KPIs) se vean igual
+ * sin retocar clases al portarlas.
+ */
+
+.cliente-v2 {
+  --c-primary: #6c4cf1;
+  --c-primary-hover: #5a3ce0;
+  --c-surface: #ffffff;
+  --c-text-main: #1f2937;
+  --c-text-muted: #64748b;
+  --c-border: #e2e8f0;
+  --c-badge-blue-bg: #eef5ff;
+  --c-badge-blue-text: #2563eb;
+  --c-badge-green-bg: #eafbf2;
+  --c-badge-green-text: #16a34a;
+  --c-badge-purple-bg: #f0ebff;
+  --c-badge-purple-text: #6200ee;
+  --c-badge-gray-bg: #f1f5f9;
+  --c-badge-gray-text: #475569;
+  --c-shadow-card: 0 2px 8px rgba(15, 23, 42, 0.06);
+
+  /* Mismo ancho máximo que la barra de contexto (`.paso-header-in`), así el contenido del paso
+     queda alineado con los selectores y el stepper de arriba. */
+  max-width: 1480px;
+  margin: 0 auto;
+  /* Sin padding arriba: la barra del paso arranca pegada al borde del panel. */
+  padding: 0 24px;
+  color: var(--c-text-main);
+  font-family: 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+.cliente-v2 input,
+.cliente-v2 button,
+.cliente-v2 select {
+  font-family: inherit;
+}
+
+/* ===== Cards ===== */
+.cliente-v2 .card {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 16px;
+  box-shadow: var(--c-shadow-card);
+  padding: 24px;
+  margin-bottom: 12px;
+}
+.cliente-v2 .card.no-radius {
+  border-radius: 0;
+}
+
+/* ===== Toolbar: búsqueda del cliente ===== */
+.cliente-v2 .toolbar-wrapper {
+  margin-bottom: 12px;
+}
+.cliente-v2 .unified-toolbar {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 20px 24px;
+  margin-bottom: 0;
+}
+.cliente-v2 .search-container {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  /* Varias coincidencias: el desplegable se ancla al campo, no a la fila. */
+  position: relative;
+}
+.cliente-v2 .search-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: border-color 0.2s;
+  height: 46px;
+}
+.cliente-v2 .search-wrapper:focus-within {
+  border-color: var(--c-primary);
+}
+.cliente-v2 .search-wrapper > svg {
+  position: absolute;
+  left: 12px;
+  color: #6366f1;
+}
+.cliente-v2 .search-input {
+  width: 100%;
+  height: 100%;
+  padding: 0 16px 0 40px;
+  border: none;
+  background: transparent;
+  font-size: 15px;
+  outline: none;
+  color: var(--c-text-main);
+}
+.cliente-v2 .search-input::placeholder {
+  color: var(--c-text-muted);
+}
+.cliente-v2 .search-input:disabled {
+  background: transparent;
+  color: var(--c-text-muted);
+}
+.cliente-v2 .search-helper {
+  font-size: 13px;
+  color: var(--c-text-muted);
+  padding-left: 4px;
+}
+.cliente-v2 .search-helper--error {
+  color: var(--red);
+  font-weight: 600;
+}
+/* Botón de búsqueda: azul sólido con la lupa, a la altura del campo. */
+.cliente-v2 .btn-buscar {
+  flex-shrink: 0;
+  height: 46px;
+  padding: 0 24px;
+  border: none;
+  border-radius: 8px;
+  background: var(--c-badge-blue-text);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.2s;
+}
+.cliente-v2 .btn-buscar:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+.cliente-v2 .btn-buscar:disabled {
+  background: #9dbdf5;
+  cursor: not-allowed;
+}
+.cliente-v2 .results {
+  right: auto;
+  width: 100%;
+  border-radius: 8px;
+  border-color: var(--c-border);
+  max-height: 260px;
+}
+.cliente-v2 .btn {
+  padding: 0 24px;
+  height: 46px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  gap: 8px;
+}
+
+/* ===== Ficha del cliente ===== */
+.cliente-v2 .client-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+}
+.cliente-v2 .client-id {
+  color: var(--c-primary);
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 4px;
+  display: block;
+}
+.cliente-v2 .client-name {
+  font-size: 28px;
+  font-weight: 800;
+  margin-bottom: 4px;
+  color: var(--c-text-main);
+}
+.cliente-v2 .client-address {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--c-text-muted);
+  margin-bottom: 16px;
+}
+.cliente-v2 .status-indicators {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.cliente-v2 .status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cliente-v2 .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.cliente-v2 .badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cliente-v2 .badge {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.cliente-v2 .badge-gray {
+  background: var(--c-badge-gray-bg);
+  color: var(--c-badge-gray-text);
+}
+.cliente-v2 .badge-green {
+  background: var(--c-badge-green-bg);
+  color: var(--c-badge-green-text);
+}
+.cliente-v2 .badge-blue {
+  background: var(--c-badge-blue-bg);
+  color: var(--c-badge-blue-text);
+}
+.cliente-v2 .badge-purple {
+  background: var(--c-badge-purple-bg);
+  color: var(--c-badge-purple-text);
+}
+/* La condición de pago conserva su color, al tamaño del resto de las etiquetas. */
+.cliente-v2 .badge--cond {
+  background: #f1edfe;
+  color: var(--c-primary);
+}
+.cliente-v2 .badge--cond strong {
+  font-weight: 800;
+}
+/* Dato faltante o restricción del cliente: se resalta, porque condiciona el avance. */
+.cliente-v2 .badge--falta {
+  background: #ffe9ec;
+  color: var(--red);
+  border: 1px solid #ffc2cc;
+  font-weight: 700;
+}
+.cliente-v2 .divider {
+  height: 1px;
+  background: var(--c-border);
+  border: none;
+  margin: 24px 0;
+}
+
+/* ===== KPIs financieros ===== */
+.cliente-v2 .kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+/* Fila superior con exactamente TRES cajas (saldo, límite, remitos pendientes). */
+.cliente-v2 .kpi-grid--3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+.cliente-v2 .kpi-card {
+  background: #f8fafc;
+  border: 1px solid var(--c-border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Deja que la card encoja en el grid en vez de empujar el ancho con importes largos. */
+  min-width: 0;
+}
+.cliente-v2 .kpi-label {
+  font-size: 13px;
+  color: var(--c-text-muted);
+  font-weight: 500;
+}
+.cliente-v2 .kpi-value {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+/* ===== Uso de crédito ===== */
+.cliente-v2 .progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+}
+.cliente-v2 .progress-header span {
+  color: var(--c-text-muted);
+}
+.cliente-v2 .progress-header strong {
+  font-size: 16px;
+  color: var(--c-text-main);
+}
+.cliente-v2 .progress-track {
+  height: 10px;
+  background: var(--c-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.cliente-v2 .progress-fill {
+  height: 100%;
+  border-radius: 8px;
+  transition: width 0.3s ease;
+}
+
+/* Métricas arriba; "crédito disponible + línea utilizada + barra de uso" abajo. */
+.cliente-v2 .credito-grupo {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.cliente-v2 .credito-fila-inferior {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 32px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.cliente-v2 .credito-metrica {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  text-align: left;
+  flex: 0 0 auto;
+}
+/* Crédito disponible y línea utilizada (etiqueta + valor) van 2px más grandes. */
+.cliente-v2 .credito-metrica .kpi-label {
+  font-size: 15px;
+}
+.cliente-v2 .credito-metrica .kpi-value {
+  font-size: 22px;
+}
+/* La barra de crédito utilizado toma todo el ancho restante del contenedor. */
+.cliente-v2 .credito-uso {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 240px;
+}
+.cliente-v2 .credito-uso .progress-header,
+.cliente-v2 .credito-uso .progress-track {
+  width: 100%;
+}
+/* Cuando el límite no rige la operación (contado, o cliente liberado sin crédito) el grupo se
+   apaga: los datos siguen a la vista, pero se lee de un golpe que no van a usarse. */
+.cliente-v2 .credito-grupo--off .kpi-card {
+  background: #eef0f4;
+  border-color: #dcdfe6;
+}
+/* Apagados: ni el verde del disponible ni el semáforo de la línea utilizada mandan acá. */
+.cliente-v2 .credito-grupo--off .kpi-value,
+.cliente-v2 .credito-grupo--off .kpi-label {
+  color: #98a2b3;
+}
+/* Texto al ras, sin caja: es una aclaración, no una alarma. */
+.cliente-v2 .credito-nota-off {
+  margin: 12px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #d92d20;
+}
+/* Cliente bloqueado: la ficha entera lo avisa antes de que el usuario intente avanzar. */
+.cliente-v2 .card--bloqueado {
+  border: 2px solid #d92d20;
+}
+
+/* ===== Estado vacío (sin cliente): cajas quietas que preservan layout, bordes y tamaños.
+   SIN animación ni parpadeo: son contenedores estáticos esperando la información. ===== */
+.cliente-v2 .skeleton {
+  display: block;
+  background: #eef1f6;
+  border-radius: 6px;
+}
+.cliente-v2 .skeleton--valor {
+  height: 24px;
+  width: 130px;
+}
+.cliente-v2 .skeleton--linea {
+  height: 14px;
+  margin-bottom: 10px;
+}
+.cliente-v2 .skeleton--corto {
+  width: 90px;
+}
+.cliente-v2 .skeleton--titulo {
+  height: 22px;
+  width: 220px;
+}
+.cliente-v2 .skeleton--medio {
+  width: 260px;
+}
+.cliente-v2 .skeleton--badge {
+  display: inline-block;
+  height: 24px;
+  width: 96px;
+  border-radius: 16px;
+  margin: 0 8px 8px 0;
+}
+.cliente-v2 .skeleton--estado {
+  height: 18px;
+  width: 130px;
+  margin-bottom: 10px;
+}
+
+/* En anchos angostos (widget/modal de Monday) las filas se apilan sin desbordar. */
+@media (max-width: 680px) {
+  .cliente-v2 .kpi-grid,
+  .cliente-v2 .kpi-grid--3 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .cliente-v2 .credito-fila-inferior {
+    gap: 24px;
+  }
+}
+
+/* ===== Footer de acciones =====
+   Cierra el contenido del paso: el anticipo a la izquierda y el avance a la derecha. */
+.cliente-v2 .actions-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-top: 24px;
+  margin-bottom: 64px;
+}

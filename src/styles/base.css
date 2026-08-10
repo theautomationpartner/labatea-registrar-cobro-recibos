@@ -3,6 +3,7 @@
   --primary-blue: #0073ea;
   --primary-blue-hover: #0060c2;
   --purple: #6200ee;
+  --purple-light: #f0e6ff;
   --green: #00c875;
   --green-dark: #00874d;
   --red: #e2445c;
@@ -74,4 +75,18 @@ select {
 }
 .muted {
   color: var(--text-gray);
+}
+/* Colores de valor: los usa el semáforo de la línea de crédito en la ficha del cliente. */
+.v-green {
+  color: var(--green);
+}
+.v-orange {
+  color: var(--yellow);
+}
+.v-red {
+  color: var(--red);
+}
+/* Importe que no cuenta para esta operación (cliente bloqueado). */
+.v-gray {
+  color: #a1a3b1;
 }

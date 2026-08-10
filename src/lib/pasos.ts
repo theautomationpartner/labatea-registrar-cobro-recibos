@@ -29,7 +29,7 @@ export const PASOS_KEYS: readonly Paso[] = ['cliente', 'ventas', 'cobro', 'recib
  */
 export const DESCRIPCION: Record<Paso, string> = {
   cliente: 'Buscá y seleccioná el cliente al que se le va a registrar el cobro.',
-  ventas: 'Elegí las ventas pendientes de cobro que se van a cancelar con este cobro.',
+  ventas: 'Elegí las facturas pendientes del cliente e indicá cuánto se cancela de cada una.',
   cobro: 'Registrá el cobro: medio de pago, importe e imputación sobre las ventas seleccionadas.',
   recibo: 'Emití el recibo en Monday y enviáselo al cliente.',
 }

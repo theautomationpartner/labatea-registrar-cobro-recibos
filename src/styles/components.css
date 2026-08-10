@@ -302,6 +302,23 @@
   padding-top: 20px;
 }
 
+/* Anticipo de la próxima etapa, o el motivo por el que todavía no se puede avanzar. */
+.paso-siguiente {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #667085;
+}
+.paso-siguiente-ic {
+  transform: rotate(90deg);
+  color: #98a2b3;
+}
+.paso-siguiente--bloqueo {
+  color: #b42318;
+  font-weight: 600;
+}
+
 /* ===== Encabezado de paso =====
    Número, título y bajada. Mismo tamaño en los cuatro pasos del flujo. */
 .header-section {
@@ -392,6 +409,47 @@
 .en-desarrollo p {
   font-size: 13px;
   margin-top: 2px;
+}
+
+/* ===== Resultados de una búsqueda (varias coincidencias) =====
+   Se ancla al campo que lo abre, que es quien pone `position: relative`. */
+.results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-top: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+}
+.ritem {
+  padding: 12px 16px;
+  border-bottom: 1px solid #f0f1f4;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.ritem:last-child {
+  border-bottom: none;
+}
+/* Hover sutil (gray-100): sólo feedback de posicionamiento, sin ser invasivo. */
+.ritem:hover {
+  background: #f3f4f6;
+}
+.ritem-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+.ritem-code {
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--primary-blue);
 }
 
 /* ===== Dropdown genérico ===== */

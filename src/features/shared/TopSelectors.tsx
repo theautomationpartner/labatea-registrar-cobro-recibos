@@ -31,7 +31,7 @@ function UsuarioSelector() {
      selector cerrado sería el único lugar donde la persona aparece sin su ícono.
      Mientras se traen los usuarios de Monday queda el placeholder de carga. */
   const etiqueta = usuariosCargando ? (
-    <span className="selbox-ph">Cargando usuarios...</span>
+    <span className="selbox-ph">Cargando vendedores...</span>
   ) : usuario ? (
     /* Avatar y nombre van dentro de UN solo elemento: el botón reparte el espacio sobrante entre
        sus hijos, así que sueltos se separarían uno del otro en lugar de quedar juntos. */
@@ -48,7 +48,7 @@ function UsuarioSelector() {
       title={
         habilitado || usuariosCargando
           ? undefined
-          : 'Sólo un administrador puede registrar el cobro a nombre de otro usuario.'
+          : 'Sólo un administrador puede registrar el cobro a nombre de otro vendedor.'
       }
     >
       <Dropdown<Usuario>
@@ -77,7 +77,7 @@ export function SelectoresContexto({ children }: { children?: ReactNode }) {
     <div className="topsel">
       {/* La marca abre la barra, contra el margen izquierdo y separada de los controles. */}
       <LogoEmpresa />
-      <TopSel label="Seleccionar usuario:">
+      <TopSel label="Seleccionar Vendedor:">
         <UsuarioSelector />
       </TopSel>
       {children}

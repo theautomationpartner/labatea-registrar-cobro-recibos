@@ -1,0 +1,476 @@
+/**
+ * Paso 4 · Emitir y Enviar Recibo.
+ * Namespaceado bajo `.recibo-v2`, con las mismas medidas y márgenes que los pasos anteriores
+ * (`.facturas-v2`, `.cobro-v2`) y la gramática de cards del paso de emisión de la factura:
+ * ficha de campos a la izquierda y el documento a generar a la derecha.
+ */
+
+.recibo-v2 {
+  --r-border: #e4e7ec;
+  --r-text-main: #1f2937;
+  --r-text-label: #64748b;
+  --r-primary: #0052cc;
+  --r-success: #00c875;
+  --r-danger: #e44258;
+  --r-bg-panel: #f7f8fa;
+  --r-radius: 12px;
+  --r-shadow: 0 2px 4px rgba(0, 0, 0, 0.02), 0 4px 12px rgba(0, 0, 0, 0.04);
+
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 0 24px;
+  color: var(--r-text-main);
+  font-family: 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+.recibo-v2 input,
+.recibo-v2 button {
+  font-family: inherit;
+}
+.recibo-v2 .paso-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.recibo-v2 .header-section {
+  margin-bottom: 0;
+}
+
+/* Resumen a la izquierda; el recibo, a la derecha. Mismas medidas que la emisión de la factura. */
+.recibo-v2 .recibo-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 503px) minmax(360px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 1279px) {
+  .recibo-v2 .recibo-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* La card global trae fondo gris, radio chico y margen inferior: acá manda la superficie blanca de
+   los pasos anteriores, y la separación entre bloques la pone el `gap` de la grilla. */
+.recibo-v2 .card {
+  background: #fff;
+  border: 1px solid var(--r-border);
+  border-radius: var(--r-radius);
+  box-shadow: var(--r-shadow);
+  margin-bottom: 0;
+}
+/* Sin cliente elegido no hay recibo que emitir: el paso queda con un solo aviso. */
+.recibo-v2 .rec-vacio {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 28px 24px;
+  font-size: 14px;
+  color: var(--r-text-label);
+}
+
+/* ===== Resumen del recibo (misma ficha que el resumen de la venta) ===== */
+.recibo-v2 .resumen-recibo {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+}
+.recibo-v2 .resumen-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--r-text-main);
+  margin-bottom: 20px;
+}
+.recibo-v2 .rgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.recibo-v2 .rsep {
+  height: 1px;
+  background: var(--r-border);
+  border: none;
+  margin: 18px 0;
+}
+.recibo-v2 .rrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 15px;
+}
+.recibo-v2 .rlabel {
+  color: var(--r-text-label);
+  font-weight: 500;
+}
+.recibo-v2 .rreq {
+  color: var(--r-danger);
+  margin-left: 2px;
+}
+.recibo-v2 .rvalue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  color: var(--r-text-main);
+  text-align: right;
+}
+/* "Total recibido": lo que entregó el cliente. */
+.recibo-v2 .rvalue--green {
+  color: var(--green-dark);
+}
+/* "Total cancelado": el número que cierra el documento, destacado como el total de la factura. */
+.recibo-v2 .rvalue--total {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--r-success);
+}
+/* Botón de emisión, al pie de la ficha. */
+.recibo-v2 .btn-generar {
+  width: 100%;
+  margin-top: 24px;
+  padding: 12px;
+  border: none;
+  border-radius: 6px;
+  background: var(--r-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background 0.2s;
+}
+.recibo-v2 .btn-generar:hover:not(:disabled) {
+  background: #0043a6;
+}
+.recibo-v2 .btn-generar:disabled {
+  cursor: not-allowed;
+}
+/* Emitiendo: el botón se apaga a gris mientras el tablero trabaja. El azul se lee como "acción
+   disponible", y acá no hay nada que accionar hasta que la emisión cierre. */
+.recibo-v2 .btn-generar--curso,
+.recibo-v2 .btn-generar--curso:disabled {
+  background: #e4e7ee;
+  color: #667085;
+  cursor: progress;
+}
+/* Emitido: verde, letras blancas y el tilde. Es la confirmación de que el tablero cerró bien. */
+.recibo-v2 .btn-generar--ok,
+.recibo-v2 .btn-generar--ok:disabled {
+  background: var(--green);
+  color: #fff;
+}
+/* Falló: el botón se lee como alarma, con el detalle en el panel de abajo. */
+.recibo-v2 .btn-generar--err,
+.recibo-v2 .btn-generar--err:disabled {
+  background: var(--r-danger);
+  color: #fff;
+}
+.recibo-v2 .btn-generar--err:hover:not(:disabled) {
+  background: #c8384b;
+}
+
+/* ===== Error de emisión ===== */
+/* El estado arriba (la etiqueta del tablero) y el mensaje concreto debajo. */
+.recibo-v2 .rec-error {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #f6c9ce;
+  border-left: 3px solid var(--r-danger);
+  border-radius: 8px;
+  background: #fdf3f4;
+}
+.recibo-v2 .rec-error-estado {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--r-danger);
+}
+.recibo-v2 .rec-error-msg {
+  margin-top: 4px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--r-text-main);
+  /* El mensaje viene de la API: puede ser largo y traer nombres de columna sin espacios. */
+  overflow-wrap: anywhere;
+}
+
+/* Sin animación para quien la pidió apagada: el texto y el estado siguen diciendo lo mismo. */
+/* ===== Card del comprobante a generar ===== */
+.recibo-v2 .comprobantes {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.recibo-v2 .comprobantes-head .resumen-title {
+  margin-bottom: 0;
+}
+.recibo-v2 .comp-card {
+  background: #fff;
+  border: 1px solid var(--r-border);
+  border-radius: var(--r-radius);
+  box-shadow: var(--r-shadow);
+  overflow: hidden;
+}
+
+/* --- Cabecera: lo que hace falta para decidir, con la card plegada --- */
+.recibo-v2 .comp-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+}
+.recibo-v2 .comp-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.recibo-v2 .comp-chev {
+  color: var(--r-text-label);
+  font-size: 13px;
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+.recibo-v2 .comp-chev.open {
+  transform: rotate(180deg);
+}
+.recibo-v2 .comp-tit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 15px;
+  font-weight: 700;
+}
+/* Etiqueta de qué documento es, al lado del título. */
+.recibo-v2 .pbadge {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #e2f8ee;
+  color: #027a48;
+  font-size: 11px;
+  font-weight: 700;
+}
+.recibo-v2 .comp-head-datos {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  flex-shrink: 0;
+}
+.recibo-v2 .comp-head-dato {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.recibo-v2 .comp-head-lbl {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--r-text-label);
+}
+.recibo-v2 .comp-head-val {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--r-text-main);
+}
+/* El importe manda sobre el resto de los datos de la cabecera. */
+.recibo-v2 .comp-head-val--imp {
+  font-size: 17px;
+  font-weight: 800;
+}
+.recibo-v2 .comp-estado {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.recibo-v2 .comp-estado-txt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--r-text-label);
+}
+.recibo-v2 .comp-estado-txt--err {
+  color: var(--r-danger);
+}
+/* Tilde en rojo: el tablero devolvió un error de emisión. */
+.recibo-v2 .comp-ok--err {
+  background: var(--r-danger);
+}
+/* Tilde de emisión: apagado hasta que el recibo se emite. */
+.recibo-v2 .comp-ok {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #e6e9ef;
+  color: #fff;
+  font-size: 11px;
+}
+.recibo-v2 .comp-ok.on {
+  background: var(--r-success);
+}
+
+/* --- Cuerpo: el documento --- */
+/* Scrollea en horizontal si las tablas no entran: el paso nunca desborda su columna. */
+.recibo-v2 .comp-body {
+  border-top: 1px solid var(--r-border);
+  padding: 18px;
+  overflow-x: auto;
+}
+
+/* Leyenda del recibo, antes del detalle de lo entregado. */
+.recibo-v2 .rec-leyenda {
+  margin: 18px 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--r-text-label);
+}
+/* Título de la segunda tabla ("Comprobantes"), con aire respecto del total de la primera. */
+.recibo-v2 .rec-sub {
+  margin: 26px 0 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--r-text-main);
+}
+
+/* --- Las dos tablas del documento --- */
+.recibo-v2 .comp-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.recibo-v2 .comp-table th {
+  text-align: left;
+  padding: 10px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--r-text-label);
+  border-bottom: 1px solid var(--r-border);
+  white-space: nowrap;
+}
+/* Encabezado sobre banda gris, como en el documento impreso. */
+.recibo-v2 .rec-tabla thead tr {
+  background: var(--r-bg-panel);
+}
+.recibo-v2 .comp-table td {
+  padding: 12px 8px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--r-border);
+  white-space: nowrap;
+}
+.recibo-v2 .comp-table .ta-r {
+  text-align: right;
+}
+.recibo-v2 .rec-vacia td {
+  color: var(--r-text-label);
+  font-style: italic;
+  white-space: normal;
+}
+/* Forma de pago y número de factura: el dato que identifica la fila. */
+.recibo-v2 .rec-pago {
+  font-weight: 600;
+}
+.recibo-v2 .rec-comp {
+  font-weight: 700;
+  color: var(--r-primary);
+}
+/* Venta que dejó la deuda, debajo del número de comprobante. */
+.recibo-v2 .rec-comp-vta {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--r-text-label);
+}
+.recibo-v2 .rec-fecha {
+  color: var(--r-text-main);
+}
+.recibo-v2 .rec-imp {
+  font-weight: 700;
+}
+/* Dato que el tablero no tiene cargado. */
+.recibo-v2 .rec-sd {
+  color: #98a2b3;
+}
+
+/* Total al pie de SU tabla: pegado al borde derecho y con la línea gruesa del documento. Ancho
+   fijo, así los dos totales del recibo arrancan en el mismo lugar sin depender de los dígitos. */
+.recibo-v2 .rec-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 24px;
+  width: 380px;
+  max-width: 100%;
+  margin: 10px 0 0 auto;
+  padding-top: 8px;
+  border-top: 2px solid var(--r-text-main);
+}
+.recibo-v2 .rec-total-lbl {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.recibo-v2 .rec-total-val {
+  font-size: 17px;
+  font-weight: 800;
+}
+
+/* ===== Footer de acciones ===== */
+/* Mismo reparto que los pasos 2 y 3: Volver a la izquierda; el estado del recibo y el cierre de la
+   operación, juntos a la derecha. */
+.recibo-v2 .actions-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-top: 24px;
+  margin-bottom: 64px;
+  flex-wrap: wrap;
+}
+.recibo-v2 .actions-footer-fin {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto;
+}
+.recibo-v2 .btn {
+  padding: 0 24px;
+  height: 46px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  gap: 8px;
+}
+
+/* Columna derecha del paso: el documento y, debajo, la card de envío. Misma separación que la
+   grilla, para que el bloque de envío se lea como parte de la misma columna. */
+.recibo-v2 .recibo-col-der {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}

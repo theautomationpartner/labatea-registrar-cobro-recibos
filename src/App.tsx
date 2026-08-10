@@ -2,20 +2,21 @@ import { useEffect, useRef } from 'react'
 import { getUsuarioActual, getUsuarios } from '@/services/monday'
 import { ModalErrorMonday } from '@/components/ui/ModalErrorMonday'
 import { ClienteView } from '@/features/cliente/ClienteView'
-import { PasoEnDesarrollo } from '@/features/shared/PasoEnDesarrollo'
+import { CobroView } from '@/features/cobro/CobroView'
+import { FacturasView } from '@/features/facturas/FacturasView'
+import { ReciboView } from '@/features/recibo/ReciboView'
 import { useApp, useDispatch } from '@/state/hooks'
 import type { Paso } from '@/types'
 
 /**
  * Vista de cada etapa. Es la ÚNICA tabla de ruteo de la app: el estado dice en qué paso está y acá
- * se resuelve qué se dibuja. Las etapas todavía sin construir usan la vista genérica, que se
- * reemplaza por la definitiva a medida que se implementan.
+ * se resuelve qué se dibuja.
  */
 const VISTAS: Record<Paso, () => JSX.Element | null> = {
   cliente: ClienteView,
-  ventas: PasoEnDesarrollo,
-  cobro: PasoEnDesarrollo,
-  recibo: PasoEnDesarrollo,
+  ventas: FacturasView,
+  cobro: CobroView,
+  recibo: ReciboView,
 }
 
 export function App() {

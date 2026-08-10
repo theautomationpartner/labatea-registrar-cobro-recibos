@@ -1,3 +1,9 @@
 /** Punto único de importación de los servicios de Monday: las vistas nunca importan un archivo suelto. */
 export * from './usuarios'
+export * from './clientes'
+export * from './facturas'
+export * from './cuentas'
+export * from './recibos'
+export * from './envio'
 export { mondayHabilitado } from './sdk'
+export { BOARDS, COL, ENVIO_RECIBO_INDEX } from './columns'

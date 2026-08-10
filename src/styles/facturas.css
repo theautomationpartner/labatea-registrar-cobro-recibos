@@ -1,0 +1,587 @@
+/**
+ * Paso 2 · Facturas pendientes de cancelar.
+ * Namespaceado bajo `.facturas-v2`, con los mismos tokens de superficie que el paso 1.
+ */
+
+.facturas-v2 {
+  --c-primary: #6c4cf1;
+  --c-surface: #ffffff;
+  --c-text-main: #1f2937;
+  --c-text-muted: #64748b;
+  --c-border: #e2e8f0;
+  --c-shadow-card: 0 2px 8px rgba(15, 23, 42, 0.06);
+  /* Fondo del anillo del donut: gris muy claro, para que el color lea como avance. */
+  --donut-track: #e6e9f0;
+  /* Selección de una factura: el azul claro del sistema (`--tint-input` / `--tint-input-bd`), el
+     mismo que usan las cards de entrada de la app. */
+  --sel-bg: var(--tint-input);
+  --sel-bd: var(--tint-input-bd);
+  --sel-hover: #e2ecfc;
+
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 0 24px;
+  color: var(--c-text-main);
+  font-family: 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+.facturas-v2 input,
+.facturas-v2 button {
+  font-family: inherit;
+}
+.facturas-v2 .card {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 16px;
+  box-shadow: var(--c-shadow-card);
+  padding: 24px;
+  margin-bottom: 12px;
+}
+.facturas-v2 .btn {
+  padding: 0 24px;
+  height: 46px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  gap: 8px;
+}
+
+/* ===== Encabezado de la card ===== */
+.fact-card-head {
+  margin-bottom: 16px;
+}
+.fact-card-titulo {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--c-text-main);
+}
+.fact-card-bajada {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--c-primary);
+}
+
+/* Estados sin tabla: cargando, sin cliente, sin deuda. */
+.fact-vacio {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 28px 4px;
+  font-size: 14px;
+  color: var(--c-text-muted);
+}
+
+/* ===== Alerta del paso ===== */
+/* Condición del CLIENTE que frena la etapa (hoy, la línea de crédito agotada). Va arriba de la
+   tabla y no dentro de ella: no es un problema de una factura, es de con quién se está operando. */
+.fact-alerta {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 18px;
+  margin-bottom: 12px;
+  border: 1px solid #fecdca;
+  border-left: 4px solid #d92d20;
+  border-radius: 12px;
+  background: #fff7f6;
+}
+.fact-alerta > i {
+  color: #d92d20;
+  font-size: 17px;
+  margin-top: 1px;
+}
+.fact-alerta strong {
+  display: block;
+  font-size: 14px;
+  color: #912018;
+}
+.fact-alerta p {
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #7a271a;
+}
+
+/* ===== Barra de filtrado ===== */
+/* Campo de búsqueda a la izquierda, ocupando lo que sobra, y las dos acciones a la derecha. */
+.fact-filtro {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+/* Campo de filtro: fondo gris muy claro con un filete apenas visible, ancho completo y esquinas
+   redondeadas. Al enfocar pasa a blanco con el borde de acento, que es lo que confirma que se
+   está escribiendo ahí. */
+.fact-filtro-campo {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 320px;
+  min-width: 0;
+  height: 48px;
+  padding: 0 16px;
+  gap: 12px;
+  background: #f7f8fa;
+  border: 1px solid #e8eaef;
+  border-radius: 10px;
+  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+.fact-filtro-campo:focus-within {
+  background: #fff;
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 3px rgba(108, 76, 241, 0.12);
+}
+.fact-filtro-campo > i {
+  color: #8b93a3;
+  font-size: 15px;
+  flex: none;
+}
+.fact-filtro-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 14.5px;
+  color: var(--c-text-main);
+}
+.fact-filtro-input::placeholder {
+  color: #98a2b3;
+}
+.fact-filtro-limpiar {
+  border: none;
+  background: none;
+  padding: 4px;
+  color: #98a2b3;
+  cursor: pointer;
+  line-height: 1;
+}
+.fact-filtro-limpiar:hover {
+  color: var(--c-text-main);
+}
+/* "Ver todas": misma caja que el campo (alto, radio y filete), para que la barra se lea como una
+   sola pieza. En reposo —sin filtro que anular— va apagada: gris claro, como en el diseño. */
+.fact-filtro-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 20px;
+  border: 1px solid #e8eaef;
+  border-radius: 10px;
+  background: #fff;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--c-text-main);
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+.fact-filtro-btn:hover:not(:disabled) {
+  background: #eaf2fe;
+  border-color: #bcd6f5;
+}
+.fact-filtro-btn:disabled {
+  color: #a9b0bd;
+  background: #fdfdfe;
+  border-color: #eef0f4;
+  cursor: default;
+}
+.fact-filtro-btn i {
+  font-size: 13px;
+  color: #98a2b3;
+}
+/* Habilitado, el ícono acompaña al texto en oscuro: el botón pasa a ser una acción real. */
+.fact-filtro-btn:not(:disabled) i {
+  color: inherit;
+}
+
+/* ===== Tabla ===== */
+/* La tabla scrollea sola en anchos chicos: el paso nunca desborda su contenedor. */
+.fact-tabla-wrap {
+  overflow-x: auto;
+}
+/* Con muchas facturas la lista scrollea dentro de su caja, así el total y el botón de avance
+   siguen a la vista. El alto da para unas ocho filas; una fila expandida agranda el contenido,
+   no la caja. */
+.fact-tabla-wrap--scroll {
+  max-height: 560px;
+  overflow-y: auto;
+}
+/* Con la lista scrolleando, el encabezado se queda fijo: si no, a la cuarta fila ya no se sabe
+   qué columna se está mirando. */
+.fact-tabla-wrap--scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fff;
+}
+.fact-tabla {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.fact-tabla thead th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-text-muted);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--c-border);
+  white-space: nowrap;
+}
+.fact-tabla td {
+  padding: 14px 12px;
+  border-bottom: 1px solid #f1f3f8;
+  vertical-align: middle;
+}
+.fact-col-check {
+  width: 44px;
+}
+/* Los datos de columna van CENTRADOS bajo su encabezado (importes, fechas, mora y el anillo):
+   alineados a la derecha, el número quedaba lejos del título que lo nombra. */
+.fact-col-cen {
+  text-align: center;
+}
+.fact-num {
+  white-space: nowrap;
+  font-weight: 700;
+}
+/* Fila elegida: el azul claro del sistema (`--tint-input`), con un filete lateral que la ata a su
+   panel de pago. */
+.fact-grupo--on .fact-row td {
+  background: var(--sel-bg);
+  border-bottom-color: transparent;
+}
+.fact-grupo--on .fact-row td:first-child {
+  box-shadow: inset 3px 0 0 var(--primary-blue);
+}
+/* Hover un punto más saturado que la selección: si fueran el mismo azul, pasar el mouse por una
+   fila ya elegida no se notaría y una sin elegir parecería elegida. */
+.fact-row:hover td,
+.fact-grupo--on .fact-row:hover td {
+  background: var(--sel-hover);
+}
+
+.fact-check {
+  width: 17px;
+  height: 17px;
+  cursor: pointer;
+  accent-color: var(--primary-blue);
+}
+.fact-nro {
+  display: block;
+  font-weight: 700;
+  color: var(--c-text-main);
+}
+/* Nombre del ítem: el ID de la venta que originó la deuda. */
+.fact-venta {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--c-text-muted);
+}
+/* El saldo pendiente es el número que decide el cobro: se destaca en rojo. */
+.fact-pend {
+  color: #d92d20;
+}
+/* Factura vencida: la fecha y los días de mora se leen como alarma. */
+.fact-mora {
+  color: #d92d20;
+  font-weight: 700;
+}
+/* Dato ausente en el tablero (sin venta vinculada, o sin fecha de vencimiento cargada). */
+.fact-mora-sd {
+  color: #98a2b3;
+}
+
+/* Pagado / Pendiente: sólo el anillo; los dos importes tienen su propia columna. */
+.fact-pagado {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Estado del comprobante en el tablero. */
+.fact-estado {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.fact-estado-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.fact-estado.is-pendiente {
+  background: #fff1f2;
+  color: #d92d20;
+}
+.fact-estado.is-parcial {
+  background: #fff7e6;
+  color: #b54708;
+}
+
+/* ===== Donut ===== */
+.donut {
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.donut--sm {
+  width: 42px;
+  height: 42px;
+}
+.donut--md {
+  width: 96px;
+  height: 96px;
+}
+.donut-in {
+  background: #fff;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
+}
+.donut--sm .donut-in {
+  width: 32px;
+  height: 32px;
+}
+.donut--md .donut-in {
+  width: 74px;
+  height: 74px;
+}
+.donut-v {
+  font-weight: 800;
+}
+.donut--sm .donut-v {
+  font-size: 10px;
+}
+.donut--md .donut-v {
+  font-size: 20px;
+}
+.donut-l {
+  font-size: 10px;
+  color: var(--c-text-muted);
+}
+
+/* ===== Panel de pago (fila expandida) ===== */
+.fact-exp td {
+  padding: 0 12px 18px;
+  background: var(--sel-bg);
+  border-bottom: 1px solid var(--c-border);
+}
+.fact-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 32px;
+  padding: 16px 18px;
+  background: #fff;
+  border: 1px solid var(--sel-bd);
+  border-radius: 12px;
+}
+/* Ancho FIJO, no `min-width`: el mensaje de error es un bloque de esta columna y, pudiendo crecer,
+   estiraba la columna entera —y con ella el input— sólo por ser un texto largo. Con la medida
+   cerrada, el error envuelve en dos renglones y el campo mide siempre lo mismo, tenga o no error. */
+.fact-panel-pago {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 0 0 300px;
+  max-width: 300px;
+  min-width: 0;
+}
+.fact-panel-lbl {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.fact-input-wrap {
+  display: flex;
+  align-items: center;
+  height: 46px;
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  background: #fff;
+  transition: border-color 0.2s;
+}
+.fact-input-wrap:focus-within {
+  border-color: var(--c-primary);
+}
+/* Importe mayor al saldo de la factura: el error se ve en el propio campo, no sólo al continuar. */
+.fact-input-wrap--error,
+.fact-input-wrap--error:focus-within {
+  border-color: #d92d20;
+  box-shadow: 0 0 0 3px rgba(217, 45, 32, 0.12);
+}
+.fact-input-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: #d92d20;
+}
+.fact-input-signo {
+  padding: 0 10px 0 14px;
+  font-weight: 700;
+  color: var(--c-text-muted);
+}
+.fact-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 14px 0 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--c-text-main);
+  /* Los importes se leen de derecha a izquierda, como en cualquier planilla. */
+  text-align: right;
+}
+.fact-panel-acciones {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.fact-panel-tope {
+  font-size: 12px;
+  color: var(--c-text-muted);
+}
+.fact-panel-todo {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-primary);
+  cursor: pointer;
+}
+.fact-panel-todo:disabled {
+  color: #b9b3cf;
+  cursor: default;
+}
+.fact-panel-graf {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fact-panel-graf-in {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.fact-panel-metricas {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+.fact-panel-metricas > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.fact-panel-metricas dt {
+  color: var(--c-text-muted);
+  min-width: 150px;
+}
+.fact-panel-metricas dd {
+  font-weight: 800;
+}
+
+/* ===== Total a cancelar ===== */
+/* Métrica global del paso: es el importe que va a tener el cobro. */
+.fact-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 24px;
+  border: 1px solid var(--c-border);
+  border-radius: 14px;
+  background: #f8fafc;
+  margin-top: 4px;
+}
+/* Con algo imputado la métrica se enciende: el paso ya tiene un importe que cobrar. */
+.fact-total--on {
+  background: #eef9f2;
+  border-color: #bfe6cf;
+}
+.fact-total-txt {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.fact-total-lbl {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--c-text-main);
+}
+.fact-total-det {
+  font-size: 12px;
+  color: var(--c-text-muted);
+}
+.fact-total-val {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--c-text-main);
+}
+.fact-total--on .fact-total-val {
+  color: var(--green-dark);
+}
+
+/* ===== Footer de acciones ===== */
+/* Volver a la izquierda; el anticipo del paso siguiente y el avance, juntos a la derecha: la
+   navegación hacia atrás y hacia adelante quedan en los extremos que les corresponden. */
+.facturas-v2 .actions-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-top: 24px;
+  margin-bottom: 64px;
+  flex-wrap: wrap;
+}
+.facturas-v2 .actions-footer-fin {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto;
+}
+
+/* En anchos chicos el panel apila sus dos bloques en vez de comprimirlos. */
+@media (max-width: 900px) {
+  .fact-panel {
+    gap: 20px;
+  }
+  /* En pantallas angostas la columna cede su medida fija antes que desbordar la card. */
+  .fact-panel-pago {
+    flex: 1 1 240px;
+    max-width: none;
+  }
+  .fact-panel-metricas dt {
+    min-width: 120px;
+  }
+}
