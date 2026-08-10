@@ -1,0 +1,77 @@
+/* Tokens de diseño y reset. Fuente de verdad del look & feel monday. */
+:root {
+  --primary-blue: #0073ea;
+  --primary-blue-hover: #0060c2;
+  --purple: #6200ee;
+  --green: #00c875;
+  --green-dark: #00874d;
+  --red: #e2445c;
+  --yellow: #ffcb00;
+  --orange: #fdab3d;
+  --text-dark: #323338;
+  --text-gray: #676879;
+  --border: #d0d4e4;
+  --bg: #ffffff;
+  --avatar-orange: #f29100;
+
+  /* input = azul claro, summary = verde claro (color coding); resto blanco nítido */
+  --tint-input: #eef5ff;
+  --tint-input-bd: #bcd6f5;
+  --tint-data: #fdfdfc;
+  --tint-data-bd: #e9e9e4;
+  --tint-config: #fcfbfd;
+  --tint-config-bd: #e8e5ee;
+  --tint-summary: #eef9f2;
+  --tint-summary-bd: #bfe6cf;
+  --tint-neutral: #f7f8fa;
+  --tint-neutral-bd: #e4e7ee;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+body {
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+#root {
+  display: flex;
+  height: 100vh;
+  color: var(--text-dark);
+  background: var(--bg);
+}
+
+button {
+  font-family: inherit;
+}
+input,
+select {
+  font-family: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+/* Utilidades mínimas reutilizadas por varias vistas */
+.font-b {
+  font-weight: 600;
+}
+.xs {
+  font-size: 11px;
+  color: var(--text-gray);
+}
+.muted {
+  color: var(--text-gray);
+}

@@ -1,0 +1,17 @@
+/*
+ * Contenedor de la app: ocupa la ventana entera y es lo único que scrollea, así el layout de cada
+ * paso —con su barra de contexto arriba— funciona igual embebida en monday que suelta.
+ */
+
+/* Sin padding ARRIBA: la barra de contexto (`.paso-header`, que llega de borde a borde con su
+   propio padding) arranca pegada al tope del panel. Los laterales y el pie se mantienen. */
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 24px 20px;
+  background: #ffffff;
+}
+.view {
+  width: 100%;
+}
