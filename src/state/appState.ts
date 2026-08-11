@@ -179,15 +179,18 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, facturas: action.facturas, imputaciones }
     }
 
-    /* Marcar/desmarcar una factura. Al marcarla el importe nace en 0: NO se propone ningún valor
-       por defecto —cuánto se cancela de cada factura es una decisión del usuario, no algo que la
-       app deba suponer—. Al desmarcarla se borra la clave: la selección y el importe son el mismo
-       dato. */
+    /* Marcar/desmarcar una factura. Al marcarla se propone cancelarla ENTERA: el importe nace en su
+       saldo pendiente, que es el caso habitual de una cobranza, y queda editable para imputar menos.
+       Al desmarcarla se borra la clave: la selección y el importe son el mismo dato. */
     case 'toggleFactura': {
       const { [action.factura.id]: actual, ...resto } = state.imputaciones
       const cobro = reabrirCobro(state.cobro)
       if (actual !== undefined) return { ...state, imputaciones: resto, cobro }
-      return { ...state, imputaciones: { ...state.imputaciones, [action.factura.id]: 0 }, cobro }
+      return {
+        ...state,
+        imputaciones: { ...state.imputaciones, [action.factura.id]: action.factura.pendiente },
+        cobro,
+      }
     }
 
     /* Importe a cancelar de una factura ya seleccionada. NO se topea contra el saldo: pasarse es un
