@@ -9,8 +9,9 @@
  *
  * NO hay descuentos por medio de pago. En la app de operaciones de venta el descuento por pronto
  * pago se aplica sobre la venta; en una cobranza de facturas ya emitidas no existe tal cosa: lo
- * que cancela la deuda es exactamente el importe recibido. Por eso "TOTAL RECIBIDO" puede —y
- * debe— igualar clavado al "TOTAL A CANCELAR".
+ * que cancela la deuda es exactamente el importe recibido. Por eso "TOTAL RECIBIDO" tiene que
+ * igualar al "TOTAL A CANCELAR" hasta el peso: lo único que se le perdona son los centavos (ver
+ * `TOLERANCIA_DIFERENCIA`).
  */
 import { parseDate } from '@/lib/dates'
 import { money, round2 } from '@/lib/format'
@@ -46,25 +47,41 @@ export const retencionSinComprobante = (
 export const esPagoConTarjeta = (forma: FormaPago | null | undefined): boolean =>
   forma === 'Tarjeta de débito' || forma === 'Tarjeta de crédito'
 
-/** Sólo el crédito tiene plan de cuotas; el débito se acredita en un pago. */
-export const esTarjetaDeCredito = (forma: FormaPago | null | undefined): boolean =>
-  forma === 'Tarjeta de crédito'
-
 /* ===== Cheque ===== */
 
-/** Aviso al lado del medio de cobro que el CRM del cliente no habilita. */
-export const MSG_CLIENTE_SIN_CHEQUE = 'cliente no acepta cheque'
+/** Error bajo el CUIT del emisor cuando el cheque es del propio cliente y no se le reciben. */
+export const MSG_CHEQUE_CLIENTE_NO =
+  'No se reciben cheques del cliente seleccionado. Ingrese otro CUIT.'
+
+/** Sólo los dígitos: el mismo CUIT con guiones o sin ellos es el mismo CUIT. */
+const digitosCuit = (cuit: string | undefined): string => (cuit ?? '').replace(/\D/g, '')
+
+/** En qué termina la validación del CUIT del emisor. */
+export type ResultadoCuitEmisor =
+  /** Se puede registrar: o es de un tercero, o es del cliente y sí le tomamos cheques. */
+  | 'ok'
+  /** Es del PROPIO cliente y su CRM dice que no le recibimos cheques. */
+  | 'cliente-no-acepta'
 
 /**
- * El cliente no puede pagar con cheque: su CRM dice que no le recibimos cheques
- * ("Recibimos CHEQUE" = NO). Acá la regla es de UNA sola condición, a diferencia de la venta, donde
- * además tenía que tratarse de una operación de CONTADO: en una cobranza no hay forma de pago de la
- * venta que la module, el cheque se recibe o no se recibe. Sin el dato cargado el medio se ofrece:
- * la restricción la marca un "NO" explícito, no la ausencia de la columna.
+ * Valida el CUIT del emisor del cheque contra el cliente de la operación.
+ *
+ * La restricción es del EMISOR, no del medio: un cheque de un TERCERO se recibe siempre, aunque al
+ * cliente no le tomemos los suyos. Sólo cuando el CUIT coincide con el del cliente se mira su
+ * columna "Recibimos CHEQUE"; sin ese dato cargado el cheque se acepta, porque la restricción la
+ * marca un "NO" explícito y no la ausencia de la columna.
+ *
+ * Se compara por DÍGITOS: el mismo CUIT con guiones o sin ellos es el mismo CUIT.
  */
-export const chequeBloqueado = (
-  cliente: Pick<Cliente, 'aceptaCheques'> | null | undefined,
-): boolean => cliente?.aceptaCheques === false
+export function validarCuitEmisor(
+  cliente: Pick<Cliente, 'cuit' | 'aceptaCheques'> | null | undefined,
+  cuitEmisor: string | undefined,
+): ResultadoCuitEmisor {
+  if (!cliente || cliente.aceptaCheques !== false) return 'ok'
+  const delCliente = digitosCuit(cliente.cuit)
+  if (delCliente === '') return 'ok'
+  return digitosCuit(cuitEmisor) === delCliente ? 'cliente-no-acepta' : 'ok'
+}
 
 /** Mensaje único de la regla de vencimiento del cheque: lo comparten el formulario y el bloqueo. */
 export const MSG_CHEQUE_VENCIMIENTO = 'La fecha de vencimiento debe ser como máximo la fecha de hoy'
@@ -136,34 +153,39 @@ export const cuitCompleto = (cuit: string | undefined): boolean => tramoCuitInco
 
 /* ===== Tarjeta ===== */
 
-/** Cuotas que se ofrecen en el crédito. Son fijas: las define el acuerdo con la tarjeta. */
-export const CUOTAS_CREDITO = [3, 6, 12] as const
+/**
+ * Un cobro con tarjeta —débito o crédito— se puede partir en UNA o DOS tarjetas. Es el mismo
+ * catálogo que usa la app de operaciones de venta, de donde viene esta lógica.
+ *
+ * No es un plan de cuotas: son cuántos PLÁSTICOS cubren el importe. Con "2", el primero lo escribe
+ * el usuario y el segundo se precarga con lo que quede pendiente (ver `importeSugeridoTarjeta`),
+ * que es lo que evita tener que restar a mano para que la diferencia cierre en cero.
+ *
+ * Dos es el tope: partir un cobro en más plásticos no es un caso del circuito, y cada tarjeta suma
+ * un movimiento propio al recibo.
+ */
+export const PAGOS_TARJETA = ['1', '2'] as const
 
-/** Dígitos reales de un número de tarjeta, sin los espacios del agrupado visual. */
-export const NRO_TARJETA_DIGITOS = 16
-
-export const MSG_NRO_TARJETA = 'Número de tarjeta inválido. Debe contener 16 dígitos'
+export type CantPagosTarjeta = (typeof PAGOS_TARJETA)[number]
 
 /**
- * Número de tarjeta agrupado de a 4 para mostrar ("XXXX XXXX XXXX XXXX"), junto con los dígitos
- * puros que se guardan. Lo que no es número no entra y de 16 dígitos no se pasa: el agrupado es
- * sólo presentación, nunca parte del dato.
+ * Qué importe se le propone a la tarjeta que se está cargando.
+ *
+ * Con UN pago, la tarjeta tiene que cancelar todo lo que falta: se sugiere la diferencia entera.
+ * Con DOS, la PRIMERA la escribe el usuario —es él quien decide cómo repartir— y por eso arranca
+ * en cero; la segunda vuelve a sugerir la diferencia, que a esa altura es exactamente el resto.
+ *
+ * `cargadas` es cuántas tarjetas ya entraron al cobro: es lo que distingue la primera de la
+ * segunda sin necesidad de llevar un contador aparte.
  */
-export function formatearNroTarjeta(entrada: string): { texto: string; digitos: string } {
-  const digitos = soloDigitos(entrada, NRO_TARJETA_DIGITOS)
-  return { texto: digitos.replace(/(.{4})/g, '$1 ').trim(), digitos }
+export function importeSugeridoTarjeta(
+  cantPagos: string,
+  cargadas: number,
+  diferencia: number,
+): number {
+  if (cantPagos === '2' && cargadas === 0) return 0
+  return Math.max(diferencia, 0)
 }
-
-/** El número de tarjeta está completo: los 16 dígitos, ni uno menos. */
-export const nroTarjetaCompleto = (numero: string | undefined): boolean =>
-  (numero ?? '').length === NRO_TARJETA_DIGITOS
-
-/**
- * Valor de cada cuota: el importe repartido en la cantidad de cuotas. Se recalcula solo cada vez
- * que cambia el importe del movimiento. Sin cuotas (débito) no hay valor por cuota.
- */
-export const valorPorCuota = (importe: number, cuotas: number | undefined): number | null =>
-  cuotas && cuotas > 0 ? round2(importe / cuotas) : null
 
 /* ===== Resumen del cobro ===== */
 
@@ -193,11 +215,22 @@ export function resumenCobro(
 }
 
 /**
- * La diferencia quedó en CERO exacto: lo recibido iguala lo que hay que cancelar. Es la ÚNICA
- * condición que habilita el avance de etapa —ni de menos (falta cobrar) ni de más (cobro
- * excedente)—, comparada con la misma precisión con la que se escribe: dos decimales.
+ * Hasta cuánta diferencia se da por cancelada. Lo que no puede quedar pendiente son PESOS: los
+ * centavos son redondeo de la propia operación (retenciones, cupones, prorrateos entre facturas) y
+ * exigir que cierren al centavo obligaría a maquillar un movimiento para tapar $ 0,03.
+ *
+ * Un peso entero, en cambio, SÍ es plata pendiente: con $ 1,00 de diferencia el cobro no está
+ * cancelado en su totalidad. Por eso el tope es estricto —"menos de un peso"—: 0,99 cierra, 1,00 no.
  */
-export const diferenciaEnCero = (resumen: ResumenCobro): boolean => resumen.diferencia === 0
+export const TOLERANCIA_DIFERENCIA = 1
+
+/**
+ * La diferencia quedó saldada: lo recibido iguala lo que hay que cancelar, salvo centavos. Es la
+ * ÚNICA condición que habilita el avance de etapa, y vale para los dos lados —faltar un peso y
+ * pasarse un peso frenan igual—, comparada con la misma precisión con la que se escribe.
+ */
+export const diferenciaSaldada = (resumen: ResumenCobro): boolean =>
+  Math.abs(resumen.diferencia) < TOLERANCIA_DIFERENCIA
 
 /**
  * Motivo por el que el cobro todavía no cierra, o `null` cuando está listo. Misma forma que el
@@ -251,9 +284,10 @@ export function bloqueoCobro(
     }
   }
 
-  /* Todo o nada: recibir de menos deja facturas sin cancelar y recibir de más no corresponde a
-     este cobro. En los dos casos se frena el avance. */
-  if (!diferenciaEnCero(resumen)) {
+  /* Recibir de menos deja facturas sin cancelar y recibir de más no corresponde a este cobro: en
+     los dos casos se frena el avance. Lo que se mira son PESOS —los centavos ya los absorbe
+     `diferenciaSaldada`—, así que llegar acá significa que hay al menos un peso descolocado. */
+  if (!diferenciaSaldada(resumen)) {
     const falta = resumen.diferencia
     return falta > 0
       ? {
@@ -271,7 +305,56 @@ export function bloqueoCobro(
   return null
 }
 
-/** El cobro se puede registrar: hay movimientos, todos válidos, y la diferencia quedó en cero. */
+/**
+ * Qué le falta al anticipo para poder registrarse. Los tres datos se reclaman JUNTOS: son un solo
+ * bloque de la pantalla, así que nombrarlos de a uno obligaría a intentar avanzar tres veces para
+ * enterarse de todo lo que falta.
+ *
+ * Es la ÚNICA definición de "el anticipo está completo": la usan el bloqueo del paso y el
+ * formulario de carga, así no pueden discrepar sobre cuándo se puede empezar a cargar pagos.
+ */
+export function faltantesDeAnticipo(datos: DatosAnticipo): string[] {
+  return [
+    !(datos.importe > 0) && 'Importe del anticipo',
+    !datos.detalle.trim() && 'Detalle',
+    !datos.vencimiento.trim() && 'Fecha Vto',
+  ].filter((x): x is string => typeof x === 'string')
+}
+
+/**
+ * Qué impide registrar un ANTICIPO. Es el mismo bloqueo del cobro con UNA regla antes: sin importe
+ * declarado no hay nada que cancelar, así que ni siquiera tiene sentido mirar los movimientos.
+ *
+ * A partir de ahí las reglas son idénticas —los medios de pago y la diferencia saldada se validan
+ * igual—, porque lo que cambia entre los dos recorridos es de dónde sale el TOTAL A CANCELAR (la
+ * imputación a facturas o este importe), no cómo se controla que lo recibido lo iguale.
+ */
+export function bloqueoAnticipo(
+  datos: DatosAnticipo,
+  movimientos: readonly MovimientoPago[],
+  resumen: ResumenCobro,
+): BloqueoCobro | null {
+  const faltantes = faltantesDeAnticipo(datos)
+  if (faltantes.length > 0) {
+    return {
+      titulo: 'Faltan datos del anticipo',
+      mensaje:
+        'Completá arriba los datos del anticipo: el importe que entrega el cliente a cuenta —que es el total que el recibo va a declarar—, el detalle de por qué se registra y su fecha de vencimiento.',
+      faltantes,
+    }
+  }
+  return bloqueoCobro(movimientos, resumen)
+}
+
+/** Los tres datos que declaran un anticipo. Sin ellos el recorrido no avanza. */
+export interface DatosAnticipo {
+  importe: number
+  detalle: string
+  /** dd/MM/yyyy, el formato del ERP. */
+  vencimiento: string
+}
+
+/** El cobro se puede registrar: hay movimientos, todos válidos, y la diferencia quedó saldada. */
 export const cobroCompleto = (
   movimientos: readonly MovimientoPago[],
   resumen: ResumenCobro,

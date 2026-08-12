@@ -12,6 +12,14 @@ interface DropdownProps<T> {
   itemClassName?: string
   /** Deshabilita el control: no abre el menú (p. ej. mientras se cargan sus opciones). */
   disabled?: boolean
+  /**
+   * Opción que se VE pero no se puede elegir (p. ej. un módulo reservado a administradores). Se
+   * muestra apagada en vez de esconderse: que exista es parte de lo que el usuario tiene que saber,
+   * y el motivo aparece al pasarle el mouse (`itemTitle`).
+   */
+  itemDisabled?: (item: T) => boolean
+  /** Por qué esa opción no se puede elegir. Se muestra como tooltip. */
+  itemTitle?: (item: T) => string | undefined
 }
 
 /** Selector con menú desplegable. Lo usa el selector de usuario del encabezado. */
@@ -23,6 +31,8 @@ export function Dropdown<T>({
   onSelect,
   itemClassName = '',
   disabled = false,
+  itemDisabled,
+  itemTitle,
 }: DropdownProps<T>) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -45,20 +55,26 @@ export function Dropdown<T>({
 
       {open && !disabled && (
         <div className="ddmenu" role="listbox">
-          {items.map((item) => (
-            <div
-              key={itemKey(item)}
-              role="option"
-              aria-selected={false}
-              className={`dditem ${itemClassName}`}
-              onClick={() => {
-                onSelect(item)
-                setOpen(false)
-              }}
-            >
-              {renderItem(item)}
-            </div>
-          ))}
+          {items.map((item) => {
+            const vedada = itemDisabled?.(item) ?? false
+            return (
+              <div
+                key={itemKey(item)}
+                role="option"
+                aria-selected={false}
+                aria-disabled={vedada || undefined}
+                title={vedada ? itemTitle?.(item) : undefined}
+                className={`dditem ${itemClassName} ${vedada ? 'dditem--vedada' : ''}`}
+                onClick={() => {
+                  if (vedada) return
+                  onSelect(item)
+                  setOpen(false)
+                }}
+              >
+                {renderItem(item)}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

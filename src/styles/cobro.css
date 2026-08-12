@@ -117,13 +117,6 @@
   font-weight: 800;
   white-space: nowrap;
 }
-/* Aclaración al pie de la cifra, cuando el número solo no explica la cuenta. */
-.cobro-v2 .cobro-cab-nota {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--c-text-secondary);
-  white-space: nowrap;
-}
 .cobro-v2 .cobro-cab-num--azul {
   color: var(--c-text-main);
 }
@@ -185,6 +178,110 @@
   box-shadow: none;
   padding: 24px;
 }
+/* ===== Datos del anticipo =====
+   Banda propia DENTRO del panel y encima de "Registrar anticipo": es su premisa, no una parte más
+   del registro. Los tres campos van en fila y el aviso cierra abajo, alineado con ellos. */
+.cobro-v2 .cobro-anticipo {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  align-items: center;
+  gap: 10px 14px;
+  background: var(--tint-config);
+  border: 0 solid var(--c-border);
+  border-bottom-width: 1px;
+  border-left: 3px solid var(--purple);
+  padding: 16px 24px;
+}
+.cobro-v2 .cobro-anticipo-ic {
+  width: 44px;
+  height: 44px;
+  background: var(--purple);
+  color: #fff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+/* Los tres campos: el importe manda y los otros dos lo acompañan; en pantallas angostas bajan de
+   renglón en vez de comprimirse. */
+.cobro-v2 .cobro-anticipo-campos {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.cobro-v2 .cobro-anticipo-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.cobro-v2 .cobro-anticipo-campo--importe {
+  flex: 0 0 260px;
+}
+.cobro-v2 .cobro-anticipo-campo--fecha {
+  flex: 0 0 180px;
+}
+.cobro-v2 .cobro-anticipo-lbl {
+  display: block;
+  font-size: 12px;
+  color: var(--c-text-secondary);
+  font-weight: 500;
+}
+/* El importe se escribe en grande, sin caja: es la cifra que gobierna el paso. */
+.cobro-v2 .cobro-anticipo-monto {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+}
+.cobro-v2 .cobro-anticipo-pre {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--c-text-secondary);
+}
+.cobro-v2 .cobro-anticipo-monto input {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  border: none;
+  border-bottom: 1.5px solid var(--c-border);
+  outline: none;
+  background: transparent;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--c-text-main);
+}
+/* Sin importe cargado, la línea avisa en rojo. Al enfocar el campo manda el acento del anticipo:
+   mientras se está escribiendo no se reta al usuario por algo que está justo completando. */
+.cobro-v2 .cobro-anticipo-monto--falta input {
+  border-bottom-color: var(--c-danger);
+}
+.cobro-v2 .cobro-anticipo-monto input:focus {
+  border-bottom-color: var(--purple);
+}
+.cobro-v2 .cobro-anticipo-monto input::placeholder {
+  color: var(--c-text-secondary);
+  font-weight: 500;
+}
+/* El detalle y la fecha usan la caja estándar del paso, pero con el acento del anticipo al foco. */
+.cobro-v2 .cobro-anticipo-campo .cobro-in:focus {
+  border-color: var(--purple);
+}
+/* La aclaración arranca en la columna de los campos, no debajo del ícono. */
+.cobro-v2 .cobro-anticipo-hint {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--c-text-secondary);
+}
+
 .cobro-v2 .cobro-card-title {
   font-size: 16px;
   font-weight: 700;
@@ -390,10 +487,17 @@
   flex: 0 0 30%;
   max-width: 30%;
 }
-/* Cheque: el CUIT del emisor son tres tramos en línea, así que pide algo más de aire que un campo
-   normal para no partirse en dos renglones. */
+/* Cheque · Tipo: son dos opciones cortas ("Papel" / "eCheq"), así que se le fija el ancho de su
+   rótulo. Sin esto crecería como cualquier campo del renglón y le robaría el espacio al número de
+   cheque, que es el que sí lo necesita. */
+.cobro-v2 .cobro-cond .cobro-form-campo.cobro-campo--formato {
+  flex: 0 0 150px;
+}
+/* Cheque: el CUIT del emisor son tres tramos en línea más el botón "Validar", así que pide algo más
+   de aire que un campo normal para no partirse en dos renglones. NO crece: comparte renglón sólo
+   con el banco, y estirándose alargaría el tramo de ocho dígitos hasta desfigurar el CUIT. */
 .cobro-v2 .cobro-cond .cobro-form-campo.cobro-campo--cuit {
-  flex: 1 1 240px;
+  flex: 0 1 340px;
 }
 /* Los tres tramos del CUIT (XX-XXXXXXXX-X), con los guiones fijos entre medio. */
 .cobro-v2 .cobro-cuit {
@@ -423,6 +527,75 @@
   color: var(--c-text-secondary);
   font-weight: 700;
 }
+/* El CUIT ya validado queda congelado: se lee como dato confirmado, no como campo editable. */
+.cobro-v2 .cobro-cuit-in:disabled {
+  background: #f3f5f8;
+  color: var(--c-text-main);
+  cursor: not-allowed;
+}
+/* Botón "Validar", pegado a la derecha del CUIT. Mismo alto que los tramos; una vez resuelto se
+   queda sólo con el ícono, porque el color ya dice todo lo que hay que saber. */
+/* En reposo es la MISMA caja que los tramos del CUIT —alto, padding, borde y radio de `.cobro-in`—,
+   así el botón se lee como parte del campo y no como un elemento ajeno pegado al lado. Al pasar el
+   mouse se llena de azul: recién ahí se lee como la acción a ejecutar. */
+.cobro-v2 .cobro-cuit-validar {
+  flex: 0 0 auto;
+  height: 40px;
+  margin-left: 2px;
+  padding: 0 14px;
+  border: 1.5px solid #000;
+  border-radius: var(--c-radius-md);
+  background: var(--c-bg-input);
+  color: var(--c-text-main);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.cobro-v2 .cobro-cuit-validar:hover:not(:disabled) {
+  background: var(--c-primary);
+  border-color: var(--c-primary);
+  color: #fff;
+}
+/* Sin los once dígitos no hay nada que validar: el botón espera apagado. */
+.cobro-v2 .cobro-cuit-validar:disabled {
+  border-color: var(--c-border);
+  color: #a9b0bd;
+  background: #fbfbfc;
+  cursor: not-allowed;
+}
+/* Validado: verde con el tilde en blanco. Queda deshabilitado —ya no hay nada que revalidar—,
+   así que pisa también el estilo de :disabled. */
+.cobro-v2 .cobro-cuit-validar--ok,
+.cobro-v2 .cobro-cuit-validar--ok:disabled {
+  width: 40px;
+  padding: 0;
+  background: var(--c-success, #00c875);
+  border-color: var(--c-success, #00c875);
+  color: #fff;
+  cursor: default;
+}
+/* Rechazado: rojo con la cruz en blanco. Sigue habilitado para revalidar el CUIT nuevo. */
+.cobro-v2 .cobro-cuit-validar--err,
+.cobro-v2 .cobro-cuit-validar--err:disabled {
+  width: 40px;
+  padding: 0;
+  background: var(--c-danger);
+  border-color: var(--c-danger);
+  color: #fff;
+}
+/* Retención: el año es corto y el número del certificado acompaña; el adjunto se queda con el
+   resto del renglón. */
+.cobro-v2 .cobro-cond .cobro-form-campo.cobro-campo--anio {
+  flex: 0 0 140px;
+}
+.cobro-v2 .cobro-cond .cobro-form-campo.cobro-campo--nroret {
+  flex: 0 1 240px;
+}
+
 /* Cheque: los dos campos de fecha, a un quinto del renglón cada uno. */
 .cobro-v2 .cobro-cond .cobro-form-campo.cobro-campo--fecha {
   flex: 0 0 20%;
@@ -446,11 +619,20 @@
 .cobro-v2 .cobro-cond--tarjeta .cobro-form-campo {
   flex: 1 1 190px;
 }
-.cobro-v2 .cobro-cond--tarjeta .cobro-campo--cuotas {
+/* Cant. Pagos: son dos opciones de un dígito, así que no necesita más que el ancho de su rótulo.
+   Fijo y angosto para que no le robe espacio a los campos que sí lo piden. */
+.cobro-v2 .cobro-cond--tarjeta .cobro-campo--pagos {
   flex: 0 0 120px;
 }
-.cobro-v2 .cobro-cond--tarjeta .cobro-campo--nrotarj {
-  flex: 1 1 230px;
+/* Ayuda del importe sugerido: ocupa su propio renglón, debajo de los campos que explica. */
+.cobro-v2 .cobro-form-hint {
+  flex: 1 0 100%;
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--c-text-secondary);
+}
+.cobro-v2 .cobro-form-hint i {
+  color: var(--c-primary);
 }
 /* El vencimiento del plástico no se rige por el 20% del cheque: acá comparte renglón con otros
    cuatro campos, así que va a medida. */
@@ -488,27 +670,10 @@
 }
 
 /* Ayuda de lo que falta cobrar: ocupa el ancho completo, debajo de la grilla. */
-.cobro-v2 .cobro-form-hint {
-  flex: 1 0 100%;
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--c-text-secondary);
-}
-.cobro-v2 .cobro-form-hint i {
-  color: var(--c-primary);
-}
-
 /* Asterisco rojo de campo obligatorio. */
 .cobro-v2 .cobro-req {
   color: var(--c-danger);
   font-weight: 700;
-}
-/* Medio de cobro que el CRM del cliente no habilita: se ve, pero tachado en rojo y sin poder
-   elegirse. El estilo de <option> depende del sistema operativo (Windows y Linux lo respetan;
-   macOS dibuja el menú nativo), así que el `disabled` es el que garantiza la restricción. */
-.cobro-v2 .cobro-op--vedada {
-  text-decoration: line-through red;
-  color: var(--c-danger);
 }
 /* Zona de arrastrar y soltar el comprobante. */
 .cobro-v2 .cobro-drop {
@@ -691,6 +856,10 @@
 }
 
 /* --- Pie del bloque: por qué el cobro todavía no cierra --- */
+/* Franja del aviso en vivo del cobro. Reserva DE ENTRADA el alto de su mensaje —esté o no
+   presente—, igual que `.cobro-form-campo--val` con los errores de campo: mostrarlo o esconderlo
+   no puede cambiar el alto de la card ni empujar lo que tiene alrededor.
+   El `min-height` es el alto de una línea del aviso (13px × 1.5 ≈ 20px). */
 .cobro-v2 .cobro-card-acts {
   display: flex;
   align-items: center;
@@ -699,7 +868,11 @@
   flex-wrap: wrap;
   margin-top: 20px;
   padding-top: 25px;
+  min-height: 20px;
+  box-sizing: content-box;
 }
+/* Aviso en vivo del cobro. Las dos variantes comparten tamaño, peso y line-height: alternar entre
+   "falta cargar" y "se pasó" no puede mover un pixel del renglón que las contiene. */
 .cobro-v2 .cobro-bloqueo-inline {
   display: inline-flex;
   align-items: center;
@@ -707,6 +880,14 @@
   color: var(--c-danger);
   font-size: 13px;
   font-weight: 600;
+  line-height: 20px;
+}
+/* Todavía falta cargar: no es un error, es el próximo paso. */
+.cobro-v2 .cobro-bloqueo-inline--info {
+  color: var(--c-text-secondary);
+}
+.cobro-v2 .cobro-bloqueo-inline--info i {
+  color: var(--c-primary);
 }
 
 /* --- Botones propios del formulario ("+ Agregar") --- */

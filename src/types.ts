@@ -1,11 +1,40 @@
 /** Modelo de dominio. La capa de servicio (Monday) debe devolver exactamente estas formas. */
 
 /**
- * Etapas de la app. A diferencia de "Operaciones de venta", acá hay UN SOLO recorrido —registrar
- * un cobro y emitir su recibo—, así que no existe un paso previo de elección de operación: la app
- * arranca directamente en la selección de cliente.
+ * Módulo de la app, elegido en el ENCABEZADO. Son dos operaciones INDEPENDIENTES entre sí: no
+ * comparten etapas, ni pantallas, ni estado de trabajo.
+ *
+ *   · COBROS · lo que la app implementa hoy: se le cobra a un cliente y se le emite el recibo.
+ *              Es el módulo por defecto.
+ *   · PAGOS  · circuito propio, TODAVÍA SIN DEFINIR: sus etapas y sus pantallas no son las de
+ *              cobros y se especificarán aparte. Sólo lo puede elegir un administrador (ver
+ *              `lib/permisos`).
+ *
+ * Elegir uno u otro cambia la app entera, no una parte: por eso el ruteo de más alto nivel mira
+ * ESTE valor antes que el paso (ver `App`), y cambiarlo descarta lo que se venía cargando en el
+ * módulo anterior.
+ */
+export type OperacionApp = 'COBROS' | 'PAGOS'
+
+/**
+ * Etapas del módulo de COBROS. Son suyas y de nadie más: PAGOS es una operación independiente y
+ * definirá su propio recorrido cuando se especifique, sin reusar estas claves.
  */
 export type Paso = 'cliente' | 'ventas' | 'cobro' | 'recibo'
+
+/**
+ * Qué se está registrando DENTRO del módulo de COBROS. Es lo primero que se elige —antes incluso
+ * que el cliente— porque decide el recorrido de ese módulo (ver `lib/pasos`) y el "🤖Tipo de Cobro"
+ * con el que nace el recibo en Monday:
+ *
+ *   · cobro      · se cancelan facturas que ya están pendientes en el tablero. Recorrido completo.
+ *   · anticipo   · el cliente entrega dinero A CUENTA, sin facturas que imputar: el paso de ventas
+ *                  pendientes no existe y lo que se cancela es el importe del propio anticipo.
+ *   · aplicacion · se aplica el saldo a favor de anticipos ya registrados contra facturas
+ *                  pendientes. Recorre las mismas cuatro etapas que el cobro; lo que cambia es el
+ *                  paso 3, donde el dinero sale de los anticipos y no de una forma de pago.
+ */
+export type TipoOperacion = 'cobro' | 'anticipo' | 'aplicacion'
 
 /**
  * Usuario que puede quedar como responsable de la operación: sale de los equipos "Vendedores" y
@@ -187,6 +216,13 @@ export interface MovimientoPago {
    * siempre se parte en exactamente tres tramos (ver `partesCuit`).
    */
   cuitEmisor?: string
+  /**
+   * Retenciones (IVA, IIBB, GAN…): año fiscal al que corresponde el certificado, con sus cuatro
+   * dígitos, y número del comprobante que lo respalda. Los pide cualquier medio cuyo nombre empiece
+   * con "Retencion" (ver `esRetencion`).
+   */
+  anioRetencion?: string
+  nroComprobanteRetencion?: string
   /** Cheque: formato del documento, físico o electrónico (eCheq). */
   formatoCheque?: FormatoCheque
   /**
@@ -207,14 +243,10 @@ export interface MovimientoPago {
    * persiste ni viaja en ningún payload JSON.
    */
   comprobanteArchivo?: File | null
-  /** Tarjeta (débito/crédito): banco emisor y tipo de tarjeta; las cuotas sólo aplican al crédito. */
+  /** Tarjeta (débito/crédito): banco emisor y tipo de tarjeta. */
   bancoTarjeta?: string
   tipoTarjeta?: TarjetaTipo | null
-  cuotas?: number
-  /** Tarjeta: los 16 dígitos del número, SIN los espacios del agrupado visual. */
-  numeroTarjeta?: string
-  /** Tarjeta: nombre del titular y vencimiento del plástico (dd/mm/aaaa). */
-  titularTarjeta?: string
+  /** Tarjeta: vencimiento del plástico (dd/mm/aaaa). */
   vencimientoTarjeta?: string
   /** Tarjeta: número de cupón que imprime el posnet. Es la referencia de la acreditación. */
   numeroCupon?: string
@@ -264,4 +296,31 @@ export interface LogEntry {
   tipo: LogTipo
   titulo: string
   detalle: string
+}
+
+/* ===== Anticipos pendientes de aplicar ===== */
+
+/**
+ * Un anticipo del cliente que todavía tiene saldo a favor, leído de "Anticipos Pends de Aplicar"
+ * (18426066447). Es la unidad que se elige en el paso 3 del recorrido "Aplicar Anticipo contra
+ * Facturas": su saldo se imputa a las facturas seleccionadas en el paso 2.
+ */
+export interface AnticipoPendiente {
+  /** ID del ítem en Monday: es la clave de la aplicación y lo que se linkea al recibo. */
+  id: string
+  /** Nombre del ítem ("Anticipo - REC1001"). */
+  nombre: string
+  /** "Recibo y Cobro" (text_mm64bf3r): el comprobante con el que entró el anticipo. */
+  recibo: string
+  /** "Fecha de Anticipo" (date_mm64k479), en ISO (yyyy-MM-dd). */
+  fecha: string
+  /** "Importe $" (numeric_mm64h18): con cuánto nació el anticipo. */
+  importe: number
+  /**
+   * "Pend de Aplicar" (formula_mm641qex): el saldo que todavía tiene a favor. Es el TOPE de lo que
+   * se le puede imputar a las facturas.
+   */
+  pendiente: number
+  /** "Comentarios" (text_mm64a1zb): por qué se registró. */
+  comentario: string
 }

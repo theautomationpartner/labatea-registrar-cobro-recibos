@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Donut } from '@/components/ui/Donut'
 import { colorCancelacion, type Imputaciones } from '@/lib/cobros'
 import { desdeIso, diasDeMora } from '@/lib/dates'
@@ -19,6 +19,19 @@ interface TablaFacturasProps {
  */
 const MAX_FILAS_SIN_SCROLL = 8
 
+/**
+ * Cuánto dura el PLEGADO del panel, en ms. Tiene que coincidir con la animación `fact-plegar` de
+ * `facturas.css`: es el tiempo que la fila sigue montada después de desmarcarse, para que la
+ * salida se vea en vez de desaparecer de un corte.
+ */
+const MS_PLEGADO = 200
+
+/**
+ * Cuánto dura el DESPLIEGUE, en ms. Tiene que coincidir con la animación `fact-desplegar` de
+ * `facturas.css`: es el tiempo que la fila queda marcada como "recién abierta" para animarse.
+ */
+const MS_DESPLIEGUE = 240
+
 /** Días de mora de la fila: en rojo si la factura ya venció, neutro si todavía no. */
 function Mora({ vencimiento }: { vencimiento: string }) {
   const dias = diasDeMora(vencimiento)
@@ -37,10 +50,73 @@ function Mora({ vencimiento }: { vencimiento: string }) {
  * formulario aparte donde habría que volver a decir de qué comprobante se está hablando.
  *
  * Sin columnas "Fecha" ni "Acciones": la primera no aporta al cobro y la segunda no tiene ninguna
- * acción que ofrecer en este paso.
+ * acción que ofrecer en este paso. Tampoco "Pagado" ni "Falta": lo cobrado ya se lee en el anillo
+ * de "Pagado %" y lo que falta ES el saldo pendiente, que tiene su propia columna —eran
+ * las dos el mismo dato dicho por segunda vez—.
+ *
+ * Las filas llegan ordenadas por vencimiento, de la más vieja a la más nueva (ver el servicio de
+ * facturas): la tabla las dibuja en el orden en que las recibe.
  */
 export function TablaFacturas({ facturas, imputaciones }: TablaFacturasProps) {
   const dispatch = useDispatch()
+  /* Facturas que se están PLEGANDO: ya no están imputadas, pero su panel sigue montado —con el
+     último importe que tuvieron— hasta que termina la animación de salida. Sin esto, desmarcar
+     desmonta la fila en el acto y el panel desaparece de un corte. */
+  const [plegando, setPlegando] = useState<Record<string, number>>({})
+  /* Facturas que se ACABAN de marcar en esta pantalla: son las únicas que se despliegan animadas.
+     La marca dura lo que dura la animación y se borra sola. Sin esto, la animación también corría
+     al MONTAR la tabla —al volver al paso con el stepper—, y las facturas ya elegidas se abrían de
+     nuevo delante del usuario como si las acabara de tildar. */
+  const [abriendo, setAbriendo] = useState<Set<string>>(() => new Set())
+  /* Imputaciones del render anterior. Arranca con las actuales a propósito: en el primer render
+     "no cambió nada", así que lo que ya venía elegido no se anima ni al abrir ni al cerrar. */
+  const previas = useRef<Imputaciones>(imputaciones)
+
+  useEffect(() => {
+    const antes = previas.current
+    previas.current = imputaciones
+    const nuevas = Object.keys(imputaciones).filter((id) => !(id in antes))
+    const quitadas = Object.keys(antes).filter((id) => !(id in imputaciones))
+    if (nuevas.length === 0 && quitadas.length === 0) return
+
+    setAbriendo((actual) => {
+      const proximo = new Set(actual)
+      for (const id of nuevas) proximo.add(id)
+      // Una factura que se cierra deja de estar "recién abierta".
+      for (const id of quitadas) proximo.delete(id)
+      return proximo
+    })
+    if (quitadas.length > 0) {
+      setPlegando((actual) => ({
+        ...actual,
+        ...Object.fromEntries(quitadas.map((id) => [id, antes[id]])),
+      }))
+    }
+
+    const timers = [
+      // Terminada la animación de salida, la fila se desmonta de verdad.
+      quitadas.length > 0 &&
+        setTimeout(() => {
+          setPlegando((actual) => {
+            const resto = { ...actual }
+            for (const id of quitadas) delete resto[id]
+            return resto
+          })
+        }, MS_PLEGADO),
+      /* Terminado el despliegue se quita la marca: si la fila se vuelve a montar por otro motivo
+         —un filtro que la saca y la trae— ya no tiene por qué animarse. */
+      nuevas.length > 0 &&
+        setTimeout(() => {
+          setAbriendo((actual) => {
+            const proximo = new Set(actual)
+            for (const id of nuevas) proximo.delete(id)
+            return proximo
+          })
+        }, MS_DESPLIEGUE),
+    ].filter((t): t is ReturnType<typeof setTimeout> => t !== false)
+
+    return () => timers.forEach(clearTimeout)
+  }, [imputaciones])
   const elegidas = facturas.filter((f) => f.id in imputaciones).length
   const todas = facturas.length > 0 && elegidas === facturas.length
   const algunas = elegidas > 0 && !todas
@@ -82,21 +158,27 @@ export function TablaFacturas({ facturas, imputaciones }: TablaFacturasProps) {
             <th className="fact-col-cen">Días de Mora</th>
             <th className="fact-col-cen">Importe Original</th>
             <th className="fact-col-cen">Saldo Pendiente</th>
-            <th className="fact-col-cen">Pagado / Pendiente</th>
-            <th className="fact-col-cen">Pagado</th>
-            <th className="fact-col-cen">Falta</th>
+            <th className="fact-col-cen">Pagado %</th>
             <th>Estado</th>
           </tr>
         </thead>
 
         {facturas.map((f) => {
-          const importe = imputaciones[f.id]
-          const elegida = importe !== undefined
+          const elegida = f.id in imputaciones
+          /* Mientras se pliega, el panel sigue mostrando el último importe: animar un campo que se
+             vacía justo al cerrarse se vería como un parpadeo. */
+          const seCierra = !elegida && f.id in plegando
+          const importe = elegida ? imputaciones[f.id] : plegando[f.id]
           const vence = desdeIso(f.vencimiento)
           const vencida = (diasDeMora(f.vencimiento) ?? 0) > 0
           return (
             /* Un `tbody` por factura mantiene la fila y su panel como una sola unidad. */
-            <tbody key={f.id} className={elegida ? 'fact-grupo fact-grupo--on' : 'fact-grupo'}>
+            /* La fila conserva su fondo de elegida mientras se pliega: si lo perdiera de golpe, el
+               color saltaría antes de que el panel termine de cerrarse. */
+            <tbody
+              key={f.id}
+              className={`fact-grupo ${elegida || seCierra ? 'fact-grupo--on' : ''}`}
+            >
               <tr className="fact-row">
                 <td className="fact-col-check">
                   <input
@@ -131,8 +213,6 @@ export function TablaFacturas({ facturas, imputaciones }: TablaFacturasProps) {
                     />
                   </div>
                 </td>
-                <td className="fact-col-cen fact-num">{money(f.cobrado)}</td>
-                <td className="fact-col-cen fact-num">{money(f.pendiente)}</td>
                 <td>
                   <span className={`fact-estado ${f.parcial ? 'is-parcial' : 'is-pendiente'}`}>
                     <span className="fact-estado-dot" />
@@ -141,16 +221,31 @@ export function TablaFacturas({ facturas, imputaciones }: TablaFacturasProps) {
                 </td>
               </tr>
 
-              {elegida && (
+              {(elegida || seCierra) && (
                 <tr className="fact-exp">
-                  <td colSpan={10}>
-                    <PanelImputacion
-                      factura={f}
-                      importe={importe}
-                      onImporte={(valor) =>
-                        dispatch({ type: 'setImporteFactura', id: f.id, importe: valor })
-                      }
-                    />
+                  <td colSpan={8}>
+                    {/* Dos envoltorios para poder animar el DESPLIEGUE: el de afuera anima su alto
+                        (de 0fr a 1fr) y el de adentro recorta lo que todavía no entra. Sin esto el
+                        panel aparecía de golpe y empujaba la tabla de un salto. */}
+                    <div
+                      className={`fact-exp-wrap ${
+                        seCierra
+                          ? 'fact-exp-wrap--cerrando'
+                          : abriendo.has(f.id)
+                            ? 'fact-exp-wrap--abriendo'
+                            : ''
+                      }`}
+                    >
+                      <div className="fact-exp-in">
+                        <PanelImputacion
+                          factura={f}
+                          importe={importe}
+                          onImporte={(valor) =>
+                            dispatch({ type: 'setImporteFactura', id: f.id, importe: valor })
+                          }
+                        />
+                      </div>
+                    </div>
                   </td>
                 </tr>
               )}

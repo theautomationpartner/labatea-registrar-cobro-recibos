@@ -3,11 +3,22 @@
  *
  * Son DOS solicitudes, no más:
  *
- *   1) CABECERA — `create_item` en "➡️Recibos y Cobros" (18421035524) con el vendedor, el cliente y
- *      los tres totales (cancelado, recibido y su diferencia). Su `id` es el `parent_item_id` de
- *      todo lo que sigue: sin él no hay dónde colgar nada.
- *   2) SUBELEMENTOS — TODOS en una sola mutación: primero las facturas canceladas (alias `f0`,
- *      `f1`…) y a continuación las formas de pago (`p0`, `p1`…).
+ *   1) CABECERA — `create_item` en "➡️Recibos y Cobros" (18421035524) con el tipo de cobro, el
+ *      vendedor, el cliente y los tres totales (cancelado, recibido y su diferencia). Su `id` es el
+ *      `parent_item_id` de todo lo que sigue: sin él no hay dónde colgar nada.
+ *   2) SUBELEMENTOS — TODOS en una sola mutación, en ESTE orden:
+ *        1. lo que el recibo CANCELA: las facturas imputadas (alias `f0`, `f1`…) o, en un
+ *           ANTICIPO, su única línea (`a0`);
+ *        2. los MEDIOS con los que entró la plata: efectivo, transferencia, cheque y tarjetas
+ *           (`p0`, `p1`…), en el orden en que se cargaron —entre ellos da igual—;
+ *        3. las RETENCIONES, siempre después de los medios: no son caja, son impuesto ya
+ *           ingresado;
+ *        4. el ajuste por DIFERENCIA DE CAJA (`d0`), ÚLTIMO sin excepción y sólo si lo hubo: el
+ *           descuadre se declara recién cuando ya está escrito todo lo que lo produjo.
+ *
+ *      La APLICACIÓN DE ANTICIPOS invierte los dos primeros bloques a propósito: primero los
+ *      anticipos que se imputan (`an0`, `an1`…) y después las facturas que cancelan. No tiene ni
+ *      retenciones ni ajuste: ahí no entra plata nueva.
  *
  * Los dos lotes van JUNTOS y en ESE orden. Que estén en un solo documento no los desordena: el
  * spec de GraphQL obliga a ejecutar los campos raíz de una `mutation` EN SERIE y en el orden en que
@@ -29,16 +40,20 @@
  */
 import { round2 } from '@/lib/format'
 import { aIso } from '@/lib/dates'
-import { cuitCompleto, esRetencion, esPagoConTarjeta, valorPorCuota } from '@/lib/pagos'
+import { cuitCompleto, esRetencion, esPagoConTarjeta } from '@/lib/pagos'
 import type { MovimientoPago } from '@/types'
 import {
   BANCO_EMISOR_LABEL,
   BOARDS,
+  CAJA_ANTICIPO_INDEX,
+  CAJA_DIF_INDEX,
+  CAJA_FACT_CANCELADA_INDEX,
   CAJA_INDEX,
   CHEQUE_ORIGEN_LABEL,
   COL,
   ESTADO_EMISION_INDEX,
   personCol,
+  TIPO_COBRO_INDEX,
 } from './columns'
 import { byId, type MondayItem } from './parse'
 import { mondayApi, mondayHabilitado, mondaySubirArchivo } from './sdk'
@@ -94,16 +109,92 @@ const columnaComprobante = (m: MovimientoPago): string | null => {
 /* ===== Columnas de cada tipo de subelemento ===== */
 
 /**
- * Subelemento de una FACTURA CANCELADA: qué factura se cancela y por cuánto. Son las dos únicas
- * columnas que lleva —no hay medio de pago acá: eso vive en el otro tipo de subítem—.
+ * Subelemento de una FACTURA CANCELADA: qué factura se cancela y por cuánto.
+ *
+ * La caja va en "Fact Cancelada", que es lo que rotula al subítem como una línea de lo CANCELADO y
+ * no de lo cobrado: acá no hay medio de pago —eso vive en el otro tipo de subítem—, y sin la
+ * etiqueta la fila quedaría sin caja en el tablero, indistinguible de una carga a medio hacer. Va
+ * por ÍNDICE, igual que el resto de esta columna.
  */
 function columnasFactura(facturaId: string, importe: number): Record<string, unknown> {
   const cv: Record<string, unknown> = {
-    [COL.cobroSub.importeCancelado]: String(round2(importe)),
+    [COL.cobroSub.caja]: { index: CAJA_FACT_CANCELADA_INDEX },
+    [COL.cobroSub.importeCancelado]: round2(importe),
   }
   const factura = relacion(facturaId)
   if (factura) cv[COL.cobroSub.factura] = factura
   return cv
+}
+
+/**
+ * Subelemento de un ANTICIPO APLICADO: qué anticipo se está usando y por cuánto. Es la línea de lo
+ * RECIBIDO en una aplicación —el lugar que en un cobro ocupan las formas de pago—, porque acá el
+ * dinero no entra en el acto: ya estaba entregado y lo que se hace es imputarlo.
+ *
+ * Va por la MISMA relación que las facturas ("💰Fact Cancelada", board_relation_mm63pczd): la
+ * columna conecta con tres tableros —entre ellos "Anticipos Pends de Aplicar"—, así que un anticipo
+ * y una factura se linkean por ahí sin necesidad de una columna aparte. Lo que distingue a la línea
+ * es su caja: "Anticipo".
+ */
+function columnasAnticipoAplicado(anticipoId: string, importe: number): Record<string, unknown> {
+  const cv: Record<string, unknown> = {
+    [COL.cobroSub.caja]: { index: CAJA_ANTICIPO_INDEX },
+    [COL.cobroSub.importeCobrado]: round2(importe),
+  }
+  const anticipo = relacion(anticipoId)
+  if (anticipo) cv[COL.cobroSub.factura] = anticipo
+  return cv
+}
+
+/**
+ * Subelemento del ANTICIPO: la línea que declara cuánto entregó el cliente a cuenta. Ocupa el lugar
+ * que en un cobro ocupan los subítems de factura —dice QUÉ se cancela, no CON QUÉ se paga—, y por
+ * eso reusa su misma columna de importe ("🤖Importe Cancelado $").
+ *
+ * Lo que lo distingue es la caja: se escribe con la etiqueta "Anticipo" del board, por ÍNDICE
+ * (igual que las formas de pago), así el subítem queda identificado como anticipo en el tablero.
+ *
+ * Lleva además los otros dos datos que el usuario declaró junto al importe: el DETALLE —por qué se
+ * registra— y la FECHA de vencimiento. Los tres viajan juntos porque describen al mismo anticipo:
+ * el importe sin su motivo deja una línea que nadie puede explicar tres meses después.
+ */
+function columnasAnticipo(
+  importe: number,
+  detalle: string | undefined,
+  vencimiento: string | undefined,
+): Record<string, unknown> {
+  const cv: Record<string, unknown> = {
+    [COL.cobroSub.caja]: { index: CAJA_ANTICIPO_INDEX },
+    [COL.cobroSub.importeCancelado]: round2(importe),
+  }
+  /* Cada campo se escribe sólo si tiene valor: vacío se OMITE en lugar de mandarse en blanco, igual
+     que en el resto del archivo. La columna de texto largo pide su valor envuelto en `text`. */
+  const texto = detalle?.trim()
+  if (texto) cv[COL.cobroSub.detalle] = { text: texto }
+  /* "🤖Fecha Venc" es la MISMA columna que usan el cheque y la tarjeta; acá es el vencimiento del
+     anticipo. Nunca conviven en un mismo subítem. */
+  const vence = fechaCol(vencimiento)
+  if (vence) cv[COL.cobroSub.vencimiento] = vence
+  return cv
+}
+
+/**
+ * Subelemento de AJUSTE por diferencia de caja. Cierra el recibo cuando lo que entró a caja no
+ * coincide exactamente con lo que se cancela: el paso de registro deja pasar los descuadres de
+ * CENTAVOS (ver `TOLERANCIA_DIFERENCIA` en `lib/pagos`), y esta línea es la que los documenta en el
+ * tablero en vez de dejarlos como un hueco silencioso entre los dos totales.
+ *
+ * El signo se conserva: positivo cuando faltó plata en caja (se canceló más de lo que entró) y
+ * negativo cuando sobró. Un ajuste sin signo no se podría conciliar.
+ *
+ * El importe va como NÚMERO, igual que en todas las columnas `numeric_` de este archivo: así un
+ * separador decimal mal formado no puede viajar disfrazado de texto.
+ */
+function columnasDifCaja(diferencia: number): Record<string, unknown> {
+  return {
+    [COL.cobroSub.caja]: { index: CAJA_DIF_INDEX },
+    [COL.cobroSub.importeCobrado]: round2(diferencia),
+  }
 }
 
 /**
@@ -112,8 +203,7 @@ function columnasFactura(facturaId: string, importe: number): Record<string, unk
  *
  *   · Transferencia → la cuenta propia que recibió el dinero.
  *   · Cheque        → número, CUIT del emisor, emisión, vencimiento, origen y banco.
- *   · Tarjeta       → banco emisor, plástico, titular, tipo, cupón, vencimiento, acreditación y
- *                     —sólo en el crédito— el plan de cuotas.
+ *   · Tarjeta       → banco emisor, tipo, cupón, vencimiento y cuenta de acreditación.
  *   · Retención     → nada extra acá: lo único que agrega es su comprobante, que es un archivo.
  *   · EFECTIVO      → NADA: se queda con la caja y el importe, por definición del requerimiento.
  *
@@ -124,7 +214,7 @@ function columnasPago(m: MovimientoPago): Record<string, unknown> {
   const cv: Record<string, unknown> = {
     // Por índice, no por etiqueta: es la identidad de la caja en el board (ver `CAJA_INDEX`).
     [COL.cobroSub.caja]: { index: CAJA_INDEX[m.formaPago] },
-    [COL.cobroSub.importeCobrado]: String(round2(m.importe)),
+    [COL.cobroSub.importeCobrado]: round2(m.importe),
   }
 
   if (m.formaPago === 'Efectivo') return cv
@@ -137,9 +227,11 @@ function columnasPago(m: MovimientoPago): Record<string, unknown> {
   }
 
   if (m.formaPago === 'Cheque') {
-    // El número de cheque va a una columna numérica: sólo los dígitos.
-    const nro = (m.numeroCheque ?? '').replace(/\D/g, '')
-    if (nro) cv[COL.cobroSub.nroCheque] = nro
+    /* El número del cheque va a "🤖Nro Comprobante", que es de TEXTO: se escribe tal como se cargó,
+       sin recortarle nada. Un cheque puede llevar ceros a la izquierda o un prefijo, y filtrarle los
+       no-dígitos —como hacía falta cuando la columna era numérica— le cambiaba el número. */
+    const nro = m.numeroCheque?.trim()
+    if (nro) cv[COL.cobroSub.nroComprobante] = nro
     /* El CUIT va a una columna de TEXTO, así que se escribe tal como se cargó, con los guiones del
        formato ("20-45037195-6"). Sólo se manda completo: un CUIT a medio cargar no es un dato. */
     if (cuitCompleto(m.cuitEmisor)) cv[COL.cobroSub.cuit] = m.cuitEmisor
@@ -159,10 +251,10 @@ function columnasPago(m: MovimientoPago): Record<string, unknown> {
     // Banco EMISOR del plástico, distinto del banco de acreditación de más abajo.
     const bancoEmisor = dropdown(bancoDelTablero(m.bancoTarjeta))
     if (bancoEmisor) cv[COL.cobroSub.bancoEmisor] = bancoEmisor
-    if (m.numeroTarjeta) cv[COL.cobroSub.nroTarjeta] = m.numeroTarjeta
-    if (m.titularTarjeta?.trim()) cv[COL.cobroSub.titularTarjeta] = m.titularTarjeta.trim()
-    // Número de cupón del posnet: es la referencia con la que se concilia la acreditación.
-    if (m.numeroCupon?.trim()) cv[COL.cobroSub.nroCupon] = m.numeroCupon.trim()
+    /* Número de cupón del posnet: es la referencia con la que se concilia la acreditación, así que
+       va a "🤖Nro Comprobante" —la misma columna que el cheque y la retención—, tal como se cargó. */
+    const cupon = m.numeroCupon?.trim()
+    if (cupon) cv[COL.cobroSub.nroComprobante] = cupon
     const tipo = dropdown(m.tipoTarjeta)
     if (tipo) cv[COL.cobroSub.tipoTarjeta] = tipo
     // "🤖Fecha Venc" es la MISMA columna que usa el vencimiento del cheque.
@@ -171,20 +263,34 @@ function columnasPago(m: MovimientoPago): Record<string, unknown> {
     // Banco de ACREDITACIÓN: la cuenta propia de La Batea donde impacta el cobro.
     const acreditacion = relacion(m.cuentaPropiaId)
     if (acreditacion) cv[COL.cobroSub.bancoAcreditacion] = acreditacion
-    // Sólo el crédito tiene plan de cuotas; el débito se acredita en un pago.
-    if (m.formaPago === 'Tarjeta de crédito' && m.cuotas && m.cuotas > 0) {
-      cv[COL.cobroSub.cuotas] = String(m.cuotas)
-      cv[COL.cobroSub.valorCuota] = String(valorPorCuota(m.importe, m.cuotas) ?? 0)
-    }
     return cv
   }
 
-  /* Retenciones: no agregan ninguna columna de VALOR. Lo único que suman es el comprobante que las
-     respalda, y eso es un archivo que se sube después. */
+  /* Retenciones: el certificado se identifica con su AÑO y su NÚMERO, y cada uno va a una columna
+     de distinto tipo. El NÚMERO comparte "🤖Nro Comprobante" con el cheque —es de texto, así que se
+     escribe tal cual—; el AÑO va a una columna numérica, y ahí sí viaja sólo con dígitos: Monday
+     rechaza el ítem entero si a una `numbers` le llega texto (lo que el usuario tipeó ya viene
+     filtrado, y esto es el resguardo del lado del servicio).
+
+     Vacías se OMITEN, nunca se mandan en cero: un cero sería un número de comprobante que no
+     existe. El archivo que las respalda se sube aparte. */
+  if (esRetencion(m.formaPago)) {
+    const nro = m.nroComprobanteRetencion?.trim()
+    if (nro) cv[COL.cobroSub.nroComprobante] = nro
+    const anio = soloNumeros(m.anioRetencion)
+    if (anio) cv[COL.cobroSub.anioRetencion] = anio
+  }
   return cv
 }
 
 /* ===== Tipos de entrada y salida ===== */
+
+/**
+ * Sólo los dígitos de lo cargado, para las columnas NUMÉRICAS del tablero: Monday rechaza el ítem
+ * entero si a una columna `numbers` le llega texto. Devuelve '' cuando no queda ningún dígito, que
+ * es la señal para omitir la columna en vez de mandarla vacía.
+ */
+const soloNumeros = (valor: string | undefined): string => (valor ?? '').replace(/\D/g, '')
 
 /** Una factura imputada: qué ítem se cancela, con qué número se lo muestra y por cuánto. */
 export interface FacturaACancelar {
@@ -196,6 +302,27 @@ export interface FacturaACancelar {
   importe: number
 }
 
+/** Un anticipo que se aplica: qué ítem se usa, con qué nombre se lo muestra y por cuánto. */
+export interface AnticipoAAplicar {
+  /** Id del ítem en "Anticipos Pends de Aplicar" (18426066447). Va a la relación del subítem. */
+  id: string
+  /** Cómo se lo nombra en el subelemento. Sin dato, la línea se llama sólo "Anticipo". */
+  nro?: string
+  /** Importe de ese anticipo que se imputa en esta aplicación. */
+  importe: number
+}
+
+/**
+ * Qué recibo se está emitiendo. Es lo que ramifica toda la escritura: la etiqueta de "🤖Tipo de
+ * Cobro" de la cabecera, qué subelementos se arman y en qué ORDEN se crean.
+ *
+ *   · cobro      · facturas canceladas + formas de pago.
+ *   · anticipo   · la línea del anticipo entregado + formas de pago.
+ *   · aplicacion · anticipos aplicados PRIMERO y facturas canceladas DESPUÉS. Sin formas de pago:
+ *                  el dinero ya había entrado, esto sólo lo imputa.
+ */
+export type TipoRecibo = 'cobro' | 'anticipo' | 'aplicacion'
+
 export interface DatosRecibo {
   /** Cliente al que se le cobró: va a la relación "🤖Persona" de la cabecera. */
   clienteId: string
@@ -203,19 +330,35 @@ export interface DatosRecibo {
   nombreCliente: string
   /** Vendedor cobrante (usuario de Monday), para la columna Person "🤖Vendedor". */
   vendedorId?: string | null
-  /** Facturas imputadas en el paso 2: un subelemento cada una. */
+  /** Ver `TipoRecibo`. Ausente = cobro, que es el recorrido histórico. */
+  tipo?: TipoRecibo
+  /** Facturas imputadas: un subelemento cada una. Vacío en un anticipo. */
   facturas: FacturaACancelar[]
-  /** Movimientos cargados en el paso 3: un subelemento cada uno. */
+  /** Movimientos cargados en el paso de registro: un subelemento cada uno. Vacío en una aplicación. */
   movimientos: readonly MovimientoPago[]
+  /** Sólo ANTICIPO: importe entregado a cuenta. Es lo que declara la línea "Anticipo" del recibo. */
+  anticipo?: number
+  /** Sólo ANTICIPO: el motivo que escribió el usuario. Va al "🤖Detalle" de esa misma línea. */
+  detalleAnticipo?: string
+  /** Sólo ANTICIPO: vencimiento en dd/MM/yyyy. Va al "🤖Fecha Venc" de esa misma línea. */
+  vencimientoAnticipo?: string
+  /** Sólo APLICACIÓN: los anticipos que se imputan contra las facturas de `facturas`. */
+  anticiposAplicados?: readonly AnticipoAAplicar[]
 }
 
 export interface ResultadoRecibo {
   /** Id del ítem creado en "➡️Recibos y Cobros". */
   id: string
-  /** Subelementos de factura efectivamente creados, contra los que se esperaban. */
+  /**
+   * Subelementos de lo CANCELADO efectivamente creados, contra los que se esperaban: uno por
+   * factura en un cobro, y la única línea del anticipo en un anticipo.
+   */
   facturasCreadas: number
   facturasEsperadas: number
-  /** Subelementos de forma de pago efectivamente creados, contra los que se esperaban. */
+  /**
+   * Subelementos de lo RECIBIDO efectivamente creados, contra los que se esperaban: uno por forma
+   * de pago más, si el cobro no cuadró al centavo, la línea del ajuste "Dif de Caja".
+   */
   pagosCreados: number
   pagosEsperados: number
 }
@@ -236,13 +379,26 @@ export const reciboCompleto = (r: ResultadoRecibo): boolean =>
 export async function emitirRecibo(datos: DatosRecibo): Promise<ResultadoRecibo> {
   const { clienteId, nombreCliente, vendedorId, facturas, movimientos } = datos
 
+  /* Un ANTICIPO no cancela facturas: en el lugar de sus subítems va UNA sola línea, la del importe
+     entregado a cuenta. Ese "1" es lo que se espera crear, igual que en un cobro se espera una
+     línea por factura imputada. */
+  const esAnticipo = datos.tipo === 'anticipo'
+  /* Una APLICACIÓN tampoco recibe plata: lo que ocupa el lugar de las formas de pago son los
+     anticipos que ya estaban entregados y ahora se imputan. */
+  const esAplicacion = datos.tipo === 'aplicacion'
+  const anticiposAplicados = esAplicacion ? (datos.anticiposAplicados ?? []) : []
+  const importeAnticipo = round2(datos.anticipo ?? 0)
+  const canceladasEsperadas = esAnticipo ? 1 : facturas.length
+  // Lo RECIBIDO: los anticipos imputados en una aplicación, las formas de pago en el resto.
+  const recibidasEsperadas = esAplicacion ? anticiposAplicados.length : movimientos.length
+
   if (!mondayHabilitado()) {
     return {
       id: `mock-recibo-${Date.now()}`,
-      facturasCreadas: facturas.length,
-      facturasEsperadas: facturas.length,
-      pagosCreados: movimientos.length,
-      pagosEsperados: movimientos.length,
+      facturasCreadas: canceladasEsperadas,
+      facturasEsperadas: canceladasEsperadas,
+      pagosCreados: recibidasEsperadas,
+      pagosEsperados: recibidasEsperadas,
     }
   }
 
@@ -252,15 +408,44 @@ export async function emitirRecibo(datos: DatosRecibo): Promise<ResultadoRecibo>
      construcción— la suma exacta de lo que cuelga de ella, y no hay forma de que el ítem diga una
      cosa y sus subítems otra.
      La DIFERENCIA se deriva por el mismo motivo: es cancelado − recibido, no un tercer dato que
-     alguien pueda mandar desalineado. En un cobro que cerró da 0 —el paso 3 no deja avanzar de
-     otra forma—, así que un número distinto de cero en el tablero es, en sí mismo, una alarma. */
-  const totalCancelado = round2(facturas.reduce((acc, f) => acc + f.importe, 0))
-  const totalRecibido = round2(movimientos.reduce((acc, m) => acc + m.importe, 0))
+     alguien pueda mandar desalineado. En un cobro que cerró queda por debajo del peso —el paso de
+     registro no deja avanzar de otra forma, ver `TOLERANCIA_DIFERENCIA`—, así que un peso entero
+     en esa columna del tablero es, en sí mismo, una alarma. */
+  const totalCancelado = esAnticipo
+    ? importeAnticipo
+    : round2(facturas.reduce((acc, f) => acc + f.importe, 0))
+  /* Lo RECIBIDO sale de donde vino el dinero: de las formas de pago en un cobro o un anticipo, y de
+     los anticipos imputados en una aplicación —ahí no entró plata nueva, se usa la que ya estaba—. */
+  const totalRecibido = esAplicacion
+    ? round2(anticiposAplicados.reduce((acc, a) => acc + a.importe, 0))
+    : round2(movimientos.reduce((acc, m) => acc + m.importe, 0))
+  /* El descuadre entre lo que el recibo cancela y lo que entró a caja. Se calcula UNA vez y de acá
+     salen los dos lugares donde figura: la columna "🤖TOTAL $ Diferencia" de la cabecera y —si no
+     es cero— el subelemento de ajuste "Dif de Caja".
+
+     `Number.isFinite` es el cerrojo: si por lo que fuera llegara un importe que no es un número
+     (un texto con coma decimal, un NaN), la diferencia NO se escribe como ajuste en vez de mandar
+     basura a una columna numérica. */
+  const diferenciaCaja = round2(totalCancelado - totalRecibido)
+  const hayDifCaja = Number.isFinite(diferenciaCaja) && diferenciaCaja !== 0
 
   const cabecera: Record<string, unknown> = {
-    [COL.cobro.totalCancelado]: String(totalCancelado),
-    [COL.cobro.totalRecibido]: String(totalRecibido),
-    [COL.cobro.diferencia]: String(round2(totalCancelado - totalRecibido)),
+    /* Qué clase de cobro es, por ÍNDICE y no por etiqueta:
+         · POSTERIOR         · se cancelan facturas ya emitidas, así que el cobro llega después de
+                               la venta. Es el caso del recorrido de cobro.
+         · ANTICIPO          · no hay venta previa que cobrar: es dinero a cuenta.
+         · APLICACION CTA CTE· tampoco entra plata: se imputa el saldo a favor que el cliente ya
+                               tenía contra sus facturas pendientes. */
+    [COL.cobro.tipoCobro]: {
+      index: esAnticipo
+        ? TIPO_COBRO_INDEX.anticipo
+        : esAplicacion
+          ? TIPO_COBRO_INDEX.aplicacionCtaCte
+          : TIPO_COBRO_INDEX.posterior,
+    },
+    [COL.cobro.totalCancelado]: totalCancelado,
+    [COL.cobro.totalRecibido]: totalRecibido,
+    [COL.cobro.diferencia]: diferenciaCaja,
   }
   const persona = relacion(clienteId)
   if (persona) cabecera[COL.cobro.cliente] = persona
@@ -275,41 +460,111 @@ export async function emitirRecibo(datos: DatosRecibo): Promise<ResultadoRecibo>
   )
   const itemId = creado.create_item.id
 
-  /* --- MÓDULOS 2 y 3 · TODOS los subelementos, en UNA sola mutación ---
-     El orden de esta lista es el orden en que se crean: primero las facturas que el recibo cancela
-     y después las formas de pago con las que se cobraron. Los campos raíz de una mutación se
-     ejecutan en serie y en el orden del documento, así que armar la lista en este orden ES la
-     garantía de que los pagos no se adelanten a las facturas. */
-  const lineas: SubitemACrear[] = [
-    ...facturas.map((f, i) => ({
-      alias: `f${i}`,
-      nombre: `Factura ${f.nro}`,
-      columnas: columnasFactura(f.id, f.importe),
-    })),
-    ...movimientos.map((m, i) => ({
-      alias: `p${i}`,
-      nombre: m.formaPago,
-      columnas: columnasPago(m),
-    })),
-  ]
+  /* --- TODOS los subelementos, en UNA sola mutación ---
+     El recibo se arma con DOS bloques: lo que CANCELA y con qué se lo cubre (lo RECIBIDO). El orden
+     de la lista es el orden en que se crean —los campos raíz de una mutación se ejecutan en serie y
+     en el orden del documento—, así que armarla es lo que decide la jerarquía en el tablero. */
+
+  /* Bloque de lo CANCELADO. En un cobro y en una aplicación, una línea por factura imputada; en un
+     anticipo, la única línea del importe entregado a cuenta. */
+  const canceladas: SubitemACrear[] = esAnticipo
+    ? [
+        {
+          alias: 'a0',
+          nombre: 'Anticipo',
+          columnas: columnasAnticipo(
+            importeAnticipo,
+            datos.detalleAnticipo,
+            datos.vencimientoAnticipo,
+          ),
+        },
+      ]
+    : facturas.map((f, i) => ({
+        alias: `f${i}`,
+        nombre: `Factura ${f.nro}`,
+        columnas: columnasFactura(f.id, f.importe),
+      }))
+
+  /* Los movimientos, REORDENADOS: primero los medios con los que entró plata (efectivo,
+     transferencia, cheque, tarjetas) y después TODAS las retenciones. No es cosmético: una
+     retención no es dinero que entró, es impuesto que el cliente ya ingresó por su cuenta, así que
+     el tablero las quiere leídas al final del bloque, después de la caja real.
+
+     Se reordena la LISTA de movimientos y no sólo sus líneas: los comprobantes se suben después
+     emparejando por POSICIÓN contra los ids devueltos, así que si las líneas se reordenaran solas,
+     cada archivo terminaría colgado del subítem equivocado. Una sola lista, un solo orden. */
+  const movimientosOrdenados = esAplicacion
+    ? []
+    : [
+        ...movimientos.filter((m) => !esRetencion(m.formaPago)),
+        ...movimientos.filter((m) => esRetencion(m.formaPago)),
+      ]
+
+  /* Bloque de lo RECIBIDO. En una APLICACIÓN son los anticipos que se imputan —no hay formas de
+     pago ni ajuste de caja: no entró plata nueva, se usa la que ya estaba—. En el resto, una línea
+     por movimiento (medios primero, retenciones después) y, AL FINAL DE TODO, el ajuste por
+     diferencia si lo hubo: el descuadre se declara recién cuando ya está escrito todo lo que lo
+     produjo, así que ninguna línea puede quedar por debajo suyo.
+
+     Ese ajuste va en esta misma lista y no en una solicitud aparte: es parte del mismo lote y del
+     mismo documento GraphQL, así que o entra todo o no entra nada. Cuadrando perfecto, la línea ni
+     se arma: un ajuste en cero no es información, es ruido en el tablero. */
+  const recibido: SubitemACrear[] = esAplicacion
+    ? anticiposAplicados.map((a, i) => ({
+        alias: `an${i}`,
+        nombre: a.nro?.trim() ? `Anticipo ${a.nro.trim()}` : 'Anticipo',
+        columnas: columnasAnticipoAplicado(a.id, a.importe),
+      }))
+    : [
+        ...movimientosOrdenados.map((m, i) => ({
+          alias: `p${i}`,
+          nombre: m.formaPago,
+          columnas: columnasPago(m),
+        })),
+        ...(hayDifCaja
+          ? [{ alias: 'd0', nombre: 'Dif de Caja', columnas: columnasDifCaja(diferenciaCaja) }]
+          : []),
+      ]
+
+  /* El ORDEN de los dos bloques depende de la operación:
+       · APLICACIÓN · los ANTICIPOS primero y las facturas después. Es el requerimiento del
+                      tablero: primero se declara el saldo que se usa y recién después contra qué
+                      se aplica.
+       · resto      · primero lo que el recibo cancela y después con qué se pagó, para que los
+                      pagos no se adelanten a las facturas que cubren. */
+  const lineas: SubitemACrear[] = esAplicacion
+    ? [...recibido, ...canceladas]
+    : [...canceladas, ...recibido]
 
   const ids = await crearSubitems(itemId, lineas)
-  /* Los ids vuelven en el mismo orden en que se pidieron, así que la lista se parte por donde
-     termina el bloque de facturas: lo de antes es de ellas, lo de después de los pagos. */
-  const idsFacturas = ids.slice(0, facturas.length)
-  const idsPagos = ids.slice(facturas.length)
+  /* Los ids vuelven en el MISMO orden en que se pidieron, así que la lista se parte por donde
+     termina el primer bloque —y cuál es el primero lo decide `lineas`, no el nombre de la
+     variable—. Cada bloque recupera exactamente sus ids. */
+  const idsRecibido = esAplicacion
+    ? ids.slice(0, recibido.length)
+    : ids.slice(canceladas.length)
+  const idsCanceladas = esAplicacion
+    ? ids.slice(recibido.length)
+    : ids.slice(0, canceladas.length)
 
   /* --- Los comprobantes adjuntos, que necesitan el id de su subelemento ya creado ---
      Son best-effort: que falle una subida no invalida el recibo, que ya quedó escrito con todos
-     sus datos. Van igual ANTES de devolver, para que la emisión encuentre el ítem completo. */
-  await subirComprobantes(idsPagos, movimientos)
+     sus datos. Van igual ANTES de devolver, para que la emisión encuentre el ítem completo.
+
+     La correspondencia es por POSICIÓN, y se sostiene por dos cosas: se pasa la lista REORDENADA
+     —la misma con la que se armaron las líneas, no la original— y el ajuste va ÚLTIMO, así que
+     cada índice cae sobre su propio subítem y la línea de más queda fuera del recorrido. */
+  await subirComprobantes(idsRecibido, movimientosOrdenados)
 
   return {
     id: itemId,
-    facturasCreadas: idsFacturas.filter(Boolean).length,
-    facturasEsperadas: facturas.length,
-    pagosCreados: idsPagos.filter(Boolean).length,
-    pagosEsperados: movimientos.length,
+    facturasCreadas: idsCanceladas.filter(Boolean).length,
+    facturasEsperadas: canceladasEsperadas,
+    /* El ajuste de caja cuenta como una línea más de lo recibido: si se pidió y no entró, el recibo
+       está incompleto igual que si faltara una forma de pago —el descuadre quedaría sin documentar
+       y el PDF saldría sin esa línea—. En una aplicación, lo que se cuenta acá son los anticipos. */
+    pagosCreados: idsRecibido.filter(Boolean).length,
+    pagosEsperados: recibido.length,
   }
 }
 

@@ -10,6 +10,11 @@ interface ReciboAGenerarProps {
   fase: FaseEmision
   /** Etiqueta del estado que publica el tablero. Es la que se muestra mientras se emite. */
   estado: string
+  /**
+   * Importe del ANTICIPO cuando el recibo es de ese tipo; `null` en un cobro. Ocupa el lugar de la
+   * tabla de comprobantes: un anticipo no cancela facturas, declara dinero a cuenta.
+   */
+  anticipo?: number | null
 }
 
 /** Métrica de la cabecera: rótulo chico arriba y el dato debajo. */
@@ -40,11 +45,15 @@ const oDato = (valor: string) => valor || <span className="rec-sd">{SIN_DATO}</s
  * Los dos totales se muestran al pie de SU tabla, cada uno cerrando lo suyo: es lo que hace evidente
  * que lo entregado por el cliente y lo cancelado de sus facturas son el mismo importe.
  */
-export function ReciboAGenerar({ recibo, fase, estado }: ReciboAGenerarProps) {
+export function ReciboAGenerar({ recibo, fase, estado, anticipo = null }: ReciboAGenerarProps) {
   const [abierta, setAbierta] = useState(true)
-  const { comprobantes, pagos, totalCancelado, totalEntregado } = recibo
+  const { comprobantes, pagos, totalEntregado } = recibo
   const enCurso = fase === 'creando' || fase === 'emitiendo'
   const emitido = fase === 'emitido'
+  /* Un anticipo no tiene comprobantes que cancelar: lo que el recibo declara es su importe, y ése
+     es su total cancelado. Es la misma línea que se escribe como subelemento en Monday. */
+  const esAnticipo = anticipo !== null
+  const totalCancelado = esAnticipo ? anticipo : recibo.totalCancelado
 
   return (
     <div className="comprobantes">
@@ -63,12 +72,14 @@ export function ReciboAGenerar({ recibo, fase, estado }: ReciboAGenerarProps) {
             <i className={`fas fa-chevron-down comp-chev ${abierta ? 'open' : ''}`} />
             <span className="comp-tit">
               Recibo
-              <span className="pbadge">Documento de cobro</span>
+              <span className="pbadge">{esAnticipo ? 'Anticipo' : 'Documento de cobro'}</span>
             </span>
           </button>
 
           <div className="comp-head-datos">
-            <Dato rotulo="Comprobantes">{comprobantes.length}</Dato>
+            <Dato rotulo={esAnticipo ? 'Concepto' : 'Comprobantes'}>
+              {esAnticipo ? 'Anticipo' : comprobantes.length}
+            </Dato>
             <Dato rotulo="Formas de pago">{pagos.length}</Dato>
             <Dato rotulo="Importe del recibo" fuerte>
               {money(totalCancelado)}
@@ -130,8 +141,29 @@ export function ReciboAGenerar({ recibo, fase, estado }: ReciboAGenerarProps) {
               <span className="rec-total-val">{money(totalEntregado)}</span>
             </div>
 
-            {/* --- Tabla 2 · las facturas que este recibo cancela --- */}
-            <h4 className="rec-sub">Comprobantes</h4>
+            {/* --- Tabla 2 · qué cancela este recibo ---
+                En un cobro son las facturas imputadas; en un anticipo, una sola línea con el
+                importe entregado a cuenta —exactamente el subelemento "Anticipo" que se escribe en
+                el tablero—. */}
+            <h4 className="rec-sub">{esAnticipo ? 'Anticipo' : 'Comprobantes'}</h4>
+            {esAnticipo ? (
+              <table className="comp-table rec-tabla">
+                <thead>
+                  <tr>
+                    <th>Concepto</th>
+                    <th className="ta-r">Importe</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>
+                      <span className="rec-comp">Anticipo</span>
+                    </td>
+                    <td className="ta-r rec-imp">{money(totalCancelado)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            ) : (
             <table className="comp-table rec-tabla">
               <thead>
                 <tr>
@@ -151,8 +183,6 @@ export function ReciboAGenerar({ recibo, fase, estado }: ReciboAGenerarProps) {
                     <tr key={c.id}>
                       <td>
                         <span className="rec-comp">Factura {c.nro}</span>
-                        {/* Nombre del ítem en el tablero: la venta que dejó la deuda. */}
-                        {c.idVenta && <span className="rec-comp-vta">{c.idVenta}</span>}
                       </td>
                       <td className="rec-fecha">{oDato(c.emision)}</td>
                       <td className="rec-fecha">{oDato(c.vencimiento)}</td>
@@ -162,6 +192,7 @@ export function ReciboAGenerar({ recibo, fase, estado }: ReciboAGenerarProps) {
                 )}
               </tbody>
             </table>
+            )}
 
             <div className="rec-total">
               <span className="rec-total-lbl">TOTAL CANCELADO:</span>

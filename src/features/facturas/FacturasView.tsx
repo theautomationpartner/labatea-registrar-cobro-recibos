@@ -21,14 +21,19 @@ const SIGUIENTE_PASO = ETAPA.cobro
 /**
  * Paso 2: qué facturas del cliente se cancelan con este cobro y por cuánto.
  *
- * Las facturas se releen del tablero CADA vez que se entra al paso: el saldo de una factura puede
- * haber cambiado desde otro lado (otra cobranza) y una imputación contra un saldo viejo terminaría
- * cobrando de más. Las imputaciones ya cargadas se conservan si su factura sigue pendiente.
+ * Las facturas se leen UNA sola vez por cliente y quedan cacheadas en el estado global
+ * (`facturasClienteId`): ir y volver entre etapas —cosa que el stepper invita a hacer— no vuelve a
+ * consultar a Monday. La lectura se rehace sólo cuando cambia el cliente, cuando cambia qué se está
+ * cobrando o al empezar una operación nueva, que son los tres momentos en que la lista deja de
+ * corresponder. Las imputaciones ya cargadas se conservan si su factura sigue pendiente.
  */
 export function FacturasView() {
-  const { cliente, facturas, imputaciones } = useApp()
+  const { cliente, facturas, imputaciones, facturasClienteId } = useApp()
   const dispatch = useDispatch()
-  const [cargando, setCargando] = useState(true)
+  /* Con la lista ya leída para este cliente no hay espera que mostrar: el paso arranca con los
+     datos puestos, sin el parpadeo del esqueleto de carga. */
+  const enCache = !!cliente && facturasClienteId === cliente.id
+  const [cargando, setCargando] = useState(!enCache)
   // Motivo por el que no se puede avanzar, mostrado al intentarlo.
   const [aviso, setAviso] = useState<BloqueoImputacion | null>(null)
   /* Filtro por número de factura. Es sólo una VISTA sobre la lista: no toca las imputaciones, así
@@ -40,32 +45,50 @@ export function FacturasView() {
       setCargando(false)
       return
     }
+    /* Ya están leídas para ESTE cliente: se reusa lo que hay en el estado. Es el corte que evita
+       una consulta por cada vez que se pasa por el paso. */
+    if (facturasClienteId === cliente.id) {
+      setCargando(false)
+      return
+    }
     let vivo = true
     setCargando(true)
     getFacturasPendientes(cliente.id)
       .then((fs) => {
         if (!vivo) return
-        dispatch({ type: 'setFacturas', facturas: fs })
+        // El id queda como clave de caché: a partir de acá el paso no vuelve a consultar.
+        dispatch({ type: 'setFacturas', facturas: fs, clienteId: cliente.id })
         setCargando(false)
       })
       .catch(() => {
         if (!vivo) return
         /* El fallo lo comunica la ventana global; la lista queda vacía para no mostrar facturas
-           viejas como si fueran el estado actual de la deuda. */
-        dispatch({ type: 'setFacturas', facturas: [] })
+           viejas como si fueran el estado actual de la deuda. Sin clave de caché (`null`): un
+           error NO se cachea, así volver a entrar al paso reintenta la lectura. */
+        dispatch({ type: 'setFacturas', facturas: [], clienteId: null })
         dispatch({ type: 'errorMonday', accion: 'obtener las facturas pendientes del cliente' })
         setCargando(false)
       })
     return () => {
       vivo = false
     }
-  }, [cliente, dispatch])
+  }, [cliente, facturasClienteId, dispatch])
 
   const visibles = useMemo(() => filtrarFacturas(facturas, filtro), [facturas, filtro])
   const total = totalACancelar(imputaciones)
   const elegidas = Object.keys(imputaciones).length
   // Facturas ya imputadas que el filtro dejó fuera de pantalla, pero siguen sumando al total.
-  const ocultasElegidas = elegidas - visibles.filter((f) => f.id in imputaciones).length
+  const visiblesElegidas = visibles.filter((f) => f.id in imputaciones)
+  const ocultasElegidas = elegidas - visiblesElegidas.length
+  const todasElegidas = visibles.length > 0 && visiblesElegidas.length === visibles.length
+
+  /** Marca todas las facturas a la vista, o las libera si ya estaban todas marcadas. */
+  const alternarTodas = () => {
+    for (const f of visibles) {
+      const elegida = f.id in imputaciones
+      if (todasElegidas === elegida) dispatch({ type: 'toggleFactura', factura: f })
+    }
+  }
 
   /* Línea de crédito agotada: frena el paso ANTES que cualquier problema de imputación. No depende
      de lo que se haya cargado —es una condición del cliente—, así que se avisa desde que se entra
@@ -122,6 +145,20 @@ export function FacturasView() {
             </p>
           </div>
 
+          {/* La barra de filtrado es parte del encabezado del bloque, no del resultado: se monta
+              SIEMPRE —también mientras se consulta a Monday— para que su lugar no aparezca y
+              desaparezca. Lo único que cambia debajo es el contenido. */}
+          <FiltroFacturas
+            valor={filtro}
+            onValor={setFiltro}
+            onVerTodas={() => setFiltro('')}
+            hayFiltro={filtro.trim() !== ''}
+            onAlternarTodas={alternarTodas}
+            todasElegidas={todasElegidas}
+            sinFacturas={visibles.length === 0}
+            deshabilitado={cargando || !cliente}
+          />
+
           {cargando ? (
             <p className="fact-vacio">
               <i className="fas fa-spinner fa-spin" /> Buscando las facturas pendientes del
@@ -137,24 +174,14 @@ export function FacturasView() {
               <i className="fas fa-circle-check t-green" /> <strong>{cliente.name}</strong> no tiene
               facturas pendientes de cobro.
             </p>
+          ) : visibles.length === 0 ? (
+            <p className="fact-vacio">
+              <i className="fas fa-filter-circle-xmark" /> Ninguna factura coincide con{' '}
+              <strong>«{filtro.trim()}»</strong>. Probá con otro número o volvé a la lista completa
+              con "Ver todas".
+            </p>
           ) : (
-            <>
-              <FiltroFacturas
-                valor={filtro}
-                onValor={setFiltro}
-                onVerTodas={() => setFiltro('')}
-                hayFiltro={filtro.trim() !== ''}
-              />
-              {visibles.length === 0 ? (
-                <p className="fact-vacio">
-                  <i className="fas fa-filter-circle-xmark" /> Ninguna factura coincide con{' '}
-                  <strong>«{filtro.trim()}»</strong>. Probá con otro número o volvé a la lista
-                  completa con "Ver todas".
-                </p>
-              ) : (
-                <TablaFacturas facturas={visibles} imputaciones={imputaciones} />
-              )}
-            </>
+            <TablaFacturas facturas={visibles} imputaciones={imputaciones} />
           )}
         </div>
 

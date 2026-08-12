@@ -1,8 +1,11 @@
 import { hoy } from '@/lib/dates'
+import { totalACancelar, totalAplicado } from '@/lib/cobros'
 import { round2 } from '@/lib/format'
 import { indiceDePaso } from '@/lib/pasos'
 import type {
+  AnticipoPendiente,
   Cliente,
+  OperacionApp,
   CobroState,
   Contacto,
   FacturaPendiente,
@@ -10,13 +13,35 @@ import type {
   MedioEnvio,
   MovimientoPago,
   Paso,
+  TipoOperacion,
   Usuario,
   UsuarioActual,
 } from '@/types'
 
 export interface AppState {
+  /**
+   * Módulo elegido en el encabezado. "Pagos" sólo lo puede elegir un administrador (ver
+   * `puedeOperarPagos`), y hoy no tiene circuito propio: la app opera "Cobros".
+   */
+  operacionApp: OperacionApp
   /** Etapa en pantalla. La app arranca en la selección de cliente: no hay paso previo. */
   paso: Paso
+  /**
+   * Qué se está registrando (cobro, anticipo o aplicación de anticipo). Es lo que RAMIFICA el
+   * recorrido —ver `lib/pasos`— y el tipo con el que nace el recibo en Monday. null = el usuario
+   * todavía no lo eligió, y por eso no se lo deja salir del paso 1.
+   */
+  tipoOperacion: TipoOperacion | null
+  /**
+   * Sólo ANTICIPO: el importe que el cliente entrega a cuenta. Ocupa el lugar que en el cobro tiene
+   * la suma de lo imputado a las facturas: es el TOTAL A CANCELAR que las formas de pago tienen que
+   * igualar, y el que va al subelemento "Anticipo" del recibo.
+   */
+  importeAnticipo: number
+  /** Anticipo: por qué se registra. Lo escribe el usuario y viaja al recibo. */
+  detalleAnticipo: string
+  /** Anticipo: fecha de vencimiento, en dd/MM/yyyy (el formato del ERP). */
+  vencimientoAnticipo: string
   /**
    * Índice del paso MÁS AVANZADO alcanzado en la operación en curso: hasta ahí se puede navegar
    * con el stepper (los pasos futuros quedan bloqueados). Se reinicia al empezar una operación nueva.
@@ -28,6 +53,22 @@ export interface AppState {
   cliente: Cliente | null
   /** Facturas pendientes del cliente, leídas al entrar al paso 2. */
   facturas: FacturaPendiente[]
+  /**
+   * De QUÉ cliente son las facturas que están en `facturas`. Es la clave de caché del paso 2: si
+   * coincide con el cliente en curso, la lista ya se leyó y no se vuelve a consultar a Monday por
+   * navegar entre etapas. `null` = no hay nada leído todavía (o la última lectura falló, así que
+   * hay que reintentarla).
+   */
+  facturasClienteId: string | null
+  /** Sólo APLICACIÓN: anticipos con saldo a favor del cliente, leídos al entrar al paso 3. */
+  anticipos: AnticipoPendiente[]
+  /** De QUÉ cliente son los anticipos de `anticipos`. Misma clave de caché que `facturasClienteId`. */
+  anticiposClienteId: string | null
+  /**
+   * Sólo APLICACIÓN: `id de anticipo → importe aplicado`. Misma forma que `imputaciones`: que la
+   * CLAVE exista es lo que marca el anticipo como elegido, así no hay dos fuentes de verdad.
+   */
+  aplicaciones: Record<string, number>
   /**
    * Importe a cancelar por factura: `id de factura → importe`. Que la CLAVE exista es lo que
    * marca la factura como seleccionada, así no hay dos fuentes de verdad (una lista de elegidas
@@ -68,12 +109,22 @@ export interface AppState {
 const cobroVacio = (): CobroState => ({ fecha: hoy(), movimientos: [], confirmado: false })
 
 export const initialState: AppState = {
+  operacionApp: 'COBROS',
   paso: 'cliente',
+  /* Nada viene preseleccionado: qué se registra lo decide el usuario en el paso 1. */
+  tipoOperacion: null,
+  importeAnticipo: 0,
+  detalleAnticipo: '',
+  vencimientoAnticipo: '',
   pasoMaxIdx: 0,
   usuario: null,
   cliente: null,
   facturas: [],
+  facturasClienteId: null,
   imputaciones: {},
+  anticipos: [],
+  anticiposClienteId: null,
+  aplicaciones: {},
   cobro: cobroVacio(),
   reciboId: null,
   medioEnvio: 'Email',
@@ -89,12 +140,27 @@ export const initialState: AppState = {
 }
 
 export type Action =
+  | { type: 'setOperacionApp'; operacion: OperacionApp }
   | { type: 'goto'; paso: Paso }
+  | { type: 'setTipoOperacion'; tipo: TipoOperacion }
+  | { type: 'setImporteAnticipo'; importe: number }
+  | { type: 'setDetalleAnticipo'; detalle: string }
+  | { type: 'setVencimientoAnticipo'; vencimiento: string }
   | { type: 'setUsuario'; usuario: Usuario }
   | { type: 'setCliente'; cliente: Cliente }
-  | { type: 'setFacturas'; facturas: FacturaPendiente[] }
+  /**
+   * `clienteId` es de QUIÉN son las facturas que llegaron: queda como clave de caché para no
+   * volver a pedirlas al navegar. Va en `null` cuando la lectura FALLÓ —la lista se vacía pero sin
+   * darla por leída—, así el próximo ingreso al paso reintenta en vez de mostrar cero facturas
+   * para siempre.
+   */
+  | { type: 'setFacturas'; facturas: FacturaPendiente[]; clienteId: string | null }
   | { type: 'toggleFactura'; factura: FacturaPendiente }
   | { type: 'setImporteFactura'; id: string; importe: number }
+  /** `clienteId`: misma clave de caché que en `setFacturas`, con el mismo `null` ante un fallo. */
+  | { type: 'setAnticipos'; anticipos: AnticipoPendiente[]; clienteId: string | null }
+  | { type: 'toggleAnticipo'; anticipo: AnticipoPendiente }
+  | { type: 'setImporteAnticipoAplicado'; id: string; importe: number }
   | { type: 'agregarMovimientoPago'; movimiento: Omit<MovimientoPago, 'id'> }
   | { type: 'removeMovimientoPago'; id: string }
   | { type: 'setMovimientoImporte'; id: string; importe: number }
@@ -138,10 +204,81 @@ export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'goto': {
       /* Al ir a un paso se recuerda el índice MÁS AVANZADO alcanzado: volver atrás no lo baja, así
-         el stepper deja volver a saltar hacia adelante a las etapas ya completadas. */
-      const idx = indiceDePaso(action.paso)
+         el stepper deja volver a saltar hacia adelante a las etapas ya completadas. El índice es el
+         de ESTE recorrido: el del anticipo tiene una etapa menos que el del cobro. */
+      const idx = indiceDePaso(action.paso, state.tipoOperacion)
       return { ...state, paso: action.paso, pasoMaxIdx: Math.max(state.pasoMaxIdx, idx) }
     }
+
+    /* Qué se registra. Cambiarlo cambia el RECORRIDO entero, así que se descarta todo lo que se
+       hubiera armado con el anterior —facturas, imputación, cobro, recibo y su envío— y el avance
+       vuelve al paso 1: lo cargado para un cobro contra facturas no tiene dónde impactar en un
+       anticipo, y al revés. Reelegir lo MISMO no toca nada. */
+    case 'setTipoOperacion':
+      if (state.tipoOperacion === action.tipo) return state
+      return {
+        ...state,
+        tipoOperacion: action.tipo,
+        pasoMaxIdx: 0,
+        importeAnticipo: 0,
+        detalleAnticipo: '',
+        vencimientoAnticipo: '',
+        /* Las listas se descartan CON su clave de caché: dejarla puesta sobre una lista vacía haría
+           que el paso la diera por leída y no volviera a consultar a Monday nunca. */
+        facturas: [],
+        facturasClienteId: null,
+        imputaciones: {},
+        anticipos: [],
+        anticiposClienteId: null,
+        aplicaciones: {},
+        cobro: cobroVacio(),
+        reciboId: null,
+        contactos: [],
+        documentoEnviado: false,
+        log: [],
+      }
+
+    /* Importe del anticipo. Es el TOTAL A CANCELAR de ese recorrido, así que moverlo reabre el
+       cobro igual que lo hace cambiar una imputación. No se topea contra nada: el anticipo es lo
+       que el cliente decida entregar. */
+    case 'setImporteAnticipo':
+      return {
+        ...state,
+        importeAnticipo: round2(Math.max(action.importe, 0)),
+        cobro: reabrirCobro(state.cobro),
+      }
+
+    /* Detalle y vencimiento NO reabren el cobro: no mueven el total a cancelar, así que no pueden
+       desbalancear lo que ya se registró. Son datos del anticipo, no de su cuenta. */
+    case 'setDetalleAnticipo':
+      return { ...state, detalleAnticipo: action.detalle }
+
+    case 'setVencimientoAnticipo':
+      return { ...state, vencimientoAnticipo: action.vencimiento }
+
+    /* Módulo del encabezado. No reinicia nada: hoy "Pagos" no tiene circuito, así que cambiarlo no
+       descarta la cobranza en curso. */
+    /* Cambio de MÓDULO. Cobros y Pagos son operaciones independientes: no comparten etapas ni
+       pantallas, así que tampoco pueden compartir estado de trabajo. Se vuelve a foja cero —igual
+       que en `reset`— y sólo sobreviven los datos de SESIÓN (los usuarios y el logueado), que son
+       de la app y no del circuito.
+
+       Sin esto, ir a Pagos y volver reencontraría al usuario con el cobro a medio cargar de antes,
+       como si nunca hubiera cambiado de módulo. Reelegir el MISMO módulo no toca nada: no es un
+       cambio, y descartar lo cargado sería destruir trabajo por un click sin consecuencias. */
+    case 'setOperacionApp':
+      if (state.operacionApp === action.operacion) return state
+      return {
+        ...initialState,
+        operacionApp: action.operacion,
+        /* Cobro nuevo, no el que quedó armado al cargar el módulo: si la pestaña quedó abierta de
+           un día para el otro, la fecha del cobro tiene que ser la de HOY. */
+        cobro: cobroVacio(),
+        usuarios: state.usuarios,
+        usuariosCargando: state.usuariosCargando,
+        usuarioActual: state.usuarioActual,
+        usuario: usuarioPorDefecto(state.usuarios, state.usuarioActual),
+      }
 
     case 'setUsuario':
       return { ...state, usuario: action.usuario }
@@ -155,8 +292,14 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         cliente: action.cliente,
         pasoMaxIdx: indiceDePaso('cliente'),
+        /* Las dos listas se descartan CON su clave de caché: son del cliente anterior, así que hay
+           que volver a leerlas —no alcanza con vaciarlas, o el paso las daría por ya leídas—. */
         facturas: [],
+        facturasClienteId: null,
         imputaciones: {},
+        anticipos: [],
+        anticiposClienteId: null,
+        aplicaciones: {},
         /* El cobro es de ESE cliente: sus cheques, sus retenciones y sus tarjetas no tienen
            sentido para otro, así que se descarta entero junto con la imputación. */
         cobro: cobroVacio(),
@@ -176,7 +319,12 @@ export function reducer(state: AppState, action: Action): AppState {
       const imputaciones = Object.fromEntries(
         Object.entries(state.imputaciones).filter(([id]) => vigentes.has(id)),
       )
-      return { ...state, facturas: action.facturas, imputaciones }
+      return {
+        ...state,
+        facturas: action.facturas,
+        facturasClienteId: action.clienteId,
+        imputaciones,
+      }
     }
 
     /* Marcar/desmarcar una factura. Al marcarla se propone cancelarla ENTERA: el importe nace en su
@@ -204,6 +352,57 @@ export function reducer(state: AppState, action: Action): AppState {
         imputaciones: { ...state.imputaciones, [action.id]: importe },
         cobro: reabrirCobro(state.cobro),
       }
+    }
+
+    /* Llegaron los anticipos del cliente. Lo ya aplicado se conserva SÓLO si su anticipo sigue
+       estando: al recargar puede haberse consumido desde otro lado, y un importe aplicado a un
+       anticipo que ya no figura no tendría de dónde salir. */
+    case 'setAnticipos': {
+      const vigentes = new Set(action.anticipos.map((a) => a.id))
+      const aplicaciones = Object.fromEntries(
+        Object.entries(state.aplicaciones).filter(([id]) => vigentes.has(id)),
+      )
+      return {
+        ...state,
+        anticipos: action.anticipos,
+        anticiposClienteId: action.clienteId,
+        aplicaciones,
+      }
+    }
+
+    /* Marcar/desmarcar un anticipo. Al marcarlo se propone aplicar TODO su saldo pendiente —el caso
+       habitual— acotado a lo que todavía falta cubrir, y queda editable para aplicar menos.
+       DESMARCAR siempre se puede: es la salida para corregir. */
+    case 'toggleAnticipo': {
+      const { [action.anticipo.id]: actual, ...resto } = state.aplicaciones
+      if (actual !== undefined) return { ...state, aplicaciones: resto }
+
+      /* Con el total ya cubierto no se suma otro anticipo: aplicarlo dejaría la diferencia en
+         negativo, que es exactamente lo que este paso no permite emitir. El tope se impone acá
+         además de en la casilla, para que la regla no dependa de la pantalla. */
+      const falta = round2(totalACancelar(state.imputaciones) - totalAplicado(state.aplicaciones))
+      if (falta <= 0) return state
+
+      return {
+        ...state,
+        aplicaciones: {
+          ...state.aplicaciones,
+          /* Se propone lo que falta, no todo el saldo: con un anticipo más grande que la deuda,
+             proponer su total dejaría la diferencia en negativo desde el primer click. */
+          [action.anticipo.id]: Math.min(action.anticipo.pendiente, falta),
+        },
+      }
+    }
+
+    /* Importe aplicado de un anticipo ya elegido. Se topea contra su saldo pendiente: aplicar más
+       de lo que el anticipo tiene a favor es imposible, así que el tope se impone acá —en el
+       controlador— además de en el input. */
+    case 'setImporteAnticipoAplicado': {
+      if (!(action.id in state.aplicaciones)) return state
+      const anticipo = state.anticipos.find((a) => a.id === action.id)
+      const tope = anticipo?.pendiente ?? action.importe
+      const importe = round2(Math.min(Math.max(action.importe, 0), tope))
+      return { ...state, aplicaciones: { ...state.aplicaciones, [action.id]: importe } }
     }
 
     /* Un pago cargado en el formulario del paso 3. Llega ya validado —el formulario no deja
@@ -303,6 +502,9 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'reset':
       return {
         ...initialState,
+        /* El módulo es del ENCABEZADO, no de la operación: cerrar una cobranza no cambia en qué
+           circuito está parado el usuario. */
+        operacionApp: state.operacionApp,
         /* Cobro nuevo, no el que quedó armado al cargar el módulo: si la pestaña quedó abierta de
            un día para el otro, la fecha del cobro tiene que ser la de HOY. */
         cobro: cobroVacio(),

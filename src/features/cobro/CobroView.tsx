@@ -4,41 +4,71 @@ import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
 import { totalACancelar } from '@/lib/cobros'
 import { money } from '@/lib/format'
 import {
+  bloqueoAnticipo,
   bloqueoCobro,
-  chequeBloqueado,
-  diferenciaEnCero,
+  faltantesDeAnticipo,
+  diferenciaSaldada,
   resumenCobro,
   type BloqueoCobro,
 } from '@/lib/pagos'
-import { DESCRIPCION, ETAPA, numeroDePaso } from '@/lib/pasos'
+import {
+  descripcionDePaso,
+  etiquetaDePaso,
+  numeroDePaso,
+  pasoAnterior,
+  siguientePaso,
+} from '@/lib/pasos'
 import { useApp, useDispatch } from '@/state/hooks'
 import { CabeceraCobro } from './CabeceraCobro'
 import { FormularioCobro } from './FormularioCobro'
+import { DatosAnticipo } from './DatosAnticipo'
 import { TablaMovimientos } from './TablaMovimientos'
 
-/** Qué viene después de registrar el cobro. Sale de `lib/pasos`, no de un texto suelto. */
-const SIGUIENTE_PASO = ETAPA.recibo
-
 /**
- * Paso 3: con qué medios paga el cliente lo que se imputó en el paso anterior.
+ * Paso de registro: con qué medios entrega el dinero el cliente. Sirve a los DOS recorridos y la
+ * única diferencia entre ellos es de dónde sale el TOTAL A CANCELAR:
  *
- * El total a cancelar NO se calcula acá: llega de la imputación (`totalACancelar`), el mismo
- * selector que muestra el pie del paso 2. Lo que esta etapa decide es una sola cosa —que lo
- * recibido lo iguale exactamente— y esa es la única condición para avanzar.
+ *   · COBRO    · de la imputación a facturas del paso anterior (`totalACancelar`), el mismo
+ *                selector que muestra el pie de ese paso. Acá no se calcula nada.
+ *   · ANTICIPO · no hay facturas: el importe lo declara el usuario en el campo de arriba, porque
+ *                el anticipo es dinero a cuenta y su monto es la decisión del cliente.
+ *
+ * De ahí en adelante la etapa decide una sola cosa —que lo recibido iguale ese total— y esa es la
+ * única condición para avanzar, igual en los dos casos.
  */
 export function CobroView() {
-  const { cliente, imputaciones, cobro } = useApp()
+  const { cliente, imputaciones, cobro, tipoOperacion, importeAnticipo, detalleAnticipo, vencimientoAnticipo } =
+    useApp()
   const dispatch = useDispatch()
   // Motivo por el que no se puede avanzar, mostrado al intentarlo.
   const [aviso, setAviso] = useState<BloqueoCobro | null>(null)
 
-  const total = totalACancelar(imputaciones)
+  const esAnticipo = tipoOperacion === 'anticipo'
+  const total = esAnticipo ? importeAnticipo : totalACancelar(imputaciones)
   const facturasElegidas = Object.keys(imputaciones).length
   const resumen = useMemo(
     () => resumenCobro(cobro.movimientos, total),
     [cobro.movimientos, total],
   )
-  const bloqueo = bloqueoCobro(cobro.movimientos, resumen)
+  const datosAnticipo = {
+    importe: importeAnticipo,
+    detalle: detalleAnticipo,
+    vencimiento: vencimientoAnticipo,
+  }
+  const bloqueo = esAnticipo
+    ? bloqueoAnticipo(datosAnticipo, cobro.movimientos, resumen)
+    : bloqueoCobro(cobro.movimientos, resumen)
+
+  /* Sin los datos del anticipo no se puede cargar cómo lo entrega el cliente: el importe es el
+     total que esos pagos tienen que igualar, así que registrarlos antes sería cargar contra un
+     total que todavía no existe. El formulario queda cerrado hasta que estén los tres. */
+  const faltaAnticipo = esAnticipo ? faltantesDeAnticipo(datosAnticipo) : []
+
+  /* Adónde se va y de dónde se vuelve, según el recorrido: el anticipo no pasa por las ventas
+     pendientes, así que su "Volver" lleva a la selección de cliente. */
+  const destino = siguientePaso('cobro', tipoOperacion)
+  const anterior = pasoAnterior('cobro', tipoOperacion)
+  const SIGUIENTE_PASO = destino ? etiquetaDePaso(destino, tipoOperacion) : ''
 
   const continuar = () => {
     /* El botón NUNCA se apaga: si algo falta, la ventana dice exactamente qué, en vez de dejar un
@@ -48,17 +78,40 @@ export function CobroView() {
       return
     }
     dispatch({ type: 'confirmarCobro' })
-    dispatch({ type: 'goto', paso: 'recibo' })
+    if (destino) dispatch({ type: 'goto', paso: destino })
   }
 
-  /* Aviso en vivo dentro de la card: por qué el cobro todavía no cierra. Con la carga vacía no se
-     dice nada —el usuario recién empieza—; el pie del paso ya anticipa que falta registrarlo. */
-  const hint =
-    cobro.movimientos.length > 0 && !diferenciaEnCero(resumen)
-      ? resumen.diferencia > 0
-        ? `Todavía faltan ${money(resumen.diferencia)} para igualar el total a cancelar.`
-        : `El total recibido supera el total a cancelar en ${money(-resumen.diferencia)}: ajustá los importes.`
-      : null
+  /* Aviso en vivo del cobro, en UN solo lugar: cuánto falta cargar o cuánto se pasó. Los dos casos
+     comparten renglón —el mismo, debajo de la tabla— porque son la misma pregunta contestada de dos
+     maneras, y así alternar entre ellos no mueve nada de lugar.
+
+     Una diferencia de centavos NO aparece: el cobro ya se da por cancelado, así que señalarla sería
+     pedir que se corrija algo que no frena nada. */
+  const avisoDif = diferenciaSaldada(resumen)
+    ? null
+    : resumen.diferencia > 0
+      ? {
+          tono: 'info' as const,
+          icono: 'fa-circle-info',
+          texto: `Faltan ${money(resumen.diferencia)} para cubrir el total a cancelar.`,
+        }
+      : {
+          tono: 'err' as const,
+          icono: 'fa-circle-exclamation',
+          texto: `El total recibido supera el total a cancelar en ${money(-resumen.diferencia)}: ajustá los importes.`,
+        }
+
+  /* Un solo renglón de aviso para todo el paso. El bloqueo del anticipo tiene PRIORIDAD sobre la
+     diferencia: mientras falten sus datos no se puede cargar nada, así que decir cuánto falta para
+     cubrir un total que todavía no está definido sólo confundiría. */
+  const avisoDiferencia =
+    faltaAnticipo.length > 0
+      ? {
+          tono: 'info' as const,
+          icono: 'fa-circle-info',
+          texto: `Para cargar cómo entrega el anticipo el cliente, completá arriba: ${faltaAnticipo.join(', ')}.`,
+        }
+      : avisoDif
 
   return (
     <section className="view cobro-v2 paso-layout">
@@ -66,9 +119,9 @@ export function CobroView() {
 
       <div className="paso-body">
         <PasoTitulo
-          numero={numeroDePaso('cobro')}
-          titulo={ETAPA.cobro}
-          descripcion={DESCRIPCION.cobro}
+          numero={numeroDePaso('cobro', tipoOperacion)}
+          titulo={etiquetaDePaso('cobro', tipoOperacion)}
+          descripcion={descripcionDePaso('cobro', tipoOperacion)}
         />
 
         {!cliente ? (
@@ -82,29 +135,51 @@ export function CobroView() {
           </div>
         ) : (
           <div className="cobro-static">
-            <CabeceraCobro cliente={cliente} resumen={resumen} facturas={facturasElegidas} />
+            {/* Los datos del anticipo ABREN el panel: son la premisa de todo lo que sigue —de su
+                importe sale el total a cancelar—, así que se declaran antes de que las métricas
+                muestren contra qué se está comparando lo recibido. */}
+            {esAnticipo && <DatosAnticipo />}
+
+            <CabeceraCobro
+              cliente={cliente}
+              resumen={resumen}
+              /* En el anticipo no hay facturas que contar: el dato no se muestra en vez de
+                 mostrarse en cero, que sería decir que se eligieron cero facturas. */
+              facturas={esAnticipo ? null : facturasElegidas}
+            />
 
             <div className="cobro-card">
-              <h3 className="cobro-card-title">Registrar cobro</h3>
-              <p className="cobro-card-desc">Especificar cómo pagó el cliente</p>
+              <h3 className="cobro-card-title">
+                {esAnticipo ? 'Registrar anticipo' : 'Registrar cobro'}
+              </h3>
+              <p className="cobro-card-desc">
+                {esAnticipo
+                  ? 'Especificar cómo entregó el anticipo el cliente'
+                  : 'Especificar cómo pagó el cliente'}
+              </p>
 
-              {/* El CRM del cliente puede vedar el cheque ("Recibimos CHEQUE" = NO). */}
+              {/* La diferencia la usa la TARJETA para precargar su importe según en cuántos
+                  plásticos se parta el cobro. Los demás medios no la miran. */}
               <FormularioCobro
-                chequeBloqueado={chequeBloqueado(cliente)}
+                bloqueado={faltaAnticipo.length > 0}
                 diferencia={resumen.diferencia}
-                bloqueado={false}
               />
 
               <h4 className="cobro-card-sub">Cobros registrados ({cobro.movimientos.length})</h4>
               <TablaMovimientos movimientos={cobro.movimientos} />
 
-              {hint && (
-                <div className="cobro-card-acts">
-                  <span className="cobro-bloqueo-inline">
-                    <i className="fas fa-circle-exclamation" /> {hint}
+              {/* La franja del aviso se monta SIEMPRE, con o sin mensaje: es lo que reserva su
+                  lugar. Lo que aparece y desaparece es el texto de adentro, así el alto de la card
+                  no cambia y nada salta cuando el cobro pasa a cerrar. */}
+              <div className="cobro-card-acts">
+                {avisoDiferencia && (
+                  <span
+                    className={`cobro-bloqueo-inline cobro-bloqueo-inline--${avisoDiferencia.tono}`}
+                  >
+                    <i className={`fas ${avisoDiferencia.icono}`} /> {avisoDiferencia.texto}
                   </span>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -115,7 +190,7 @@ export function CobroView() {
           <button
             type="button"
             className="btn btn-out"
-            onClick={() => dispatch({ type: 'goto', paso: 'ventas' })}
+            onClick={() => anterior && dispatch({ type: 'goto', paso: anterior })}
           >
             <i className="fas fa-arrow-left" /> Volver
           </button>

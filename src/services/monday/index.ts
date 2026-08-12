@@ -2,6 +2,7 @@
 export * from './usuarios'
 export * from './clientes'
 export * from './facturas'
+export * from './anticipos'
 export * from './cuentas'
 export * from './recibos'
 export * from './envio'

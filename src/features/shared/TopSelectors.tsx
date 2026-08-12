@@ -2,9 +2,39 @@ import { type ReactNode } from 'react'
 import { Avatar } from '@/components/ui/Avatar'
 import { Dropdown } from '@/components/ui/Dropdown'
 import { LogoEmpresa } from '@/components/ui/LogoEmpresa'
-import { puedeElegirUsuario } from '@/lib/permisos'
+import { puedeElegirUsuario, puedeOperarPagos } from '@/lib/permisos'
 import { useApp, useDispatch } from '@/state/hooks'
-import type { Usuario } from '@/types'
+import type { OperacionApp, Usuario } from '@/types'
+
+/** Módulos que ofrece el encabezado. "Pagos" queda reservado a los administradores. */
+const OPERACIONES: readonly OperacionApp[] = ['COBROS', 'PAGOS']
+
+/**
+ * Módulo que se está operando. Mismo control y mismos estilos que el selector de vendedor de al
+ * lado: los dos son contexto de TODA la transacción, así que se ven y se comportan igual.
+ *
+ * "Pagos" se muestra SIEMPRE, pero sólo un administrador puede elegirlo (RBAC de `lib/permisos`,
+ * el mismo rol que habilita cambiar el vendedor): esconderlo dejaría al usuario sin saber que el
+ * módulo existe, y el tooltip explica por qué no está disponible.
+ */
+function OperacionSelector() {
+  const { operacionApp, usuarioActual } = useApp()
+  const dispatch = useDispatch()
+  const habilitado = puedeOperarPagos(usuarioActual)
+
+  return (
+    <Dropdown<OperacionApp>
+      label={<span className="selbox-val-txt">{operacionApp}</span>}
+      items={OPERACIONES}
+      itemKey={(o) => o}
+      renderItem={(o) => o}
+      itemClassName="dditem--strong"
+      itemDisabled={(o) => o === 'PAGOS' && !habilitado}
+      itemTitle={() => 'Sólo un administrador puede operar el módulo de Pagos.'}
+      onSelect={(o) => dispatch({ type: 'setOperacionApp', operacion: o })}
+    />
+  )
+}
 
 /** Item de la barra: etiqueta arriba, selector abajo. */
 function TopSel({ label, children }: { label: string; children: ReactNode }) {
@@ -77,6 +107,9 @@ export function SelectoresContexto({ children }: { children?: ReactNode }) {
     <div className="topsel">
       {/* La marca abre la barra, contra el margen izquierdo y separada de los controles. */}
       <LogoEmpresa />
+      <TopSel label="Seleccionar Operación:">
+        <OperacionSelector />
+      </TopSel>
       <TopSel label="Seleccionar Vendedor:">
         <UsuarioSelector />
       </TopSel>

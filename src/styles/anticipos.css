@@ -1,0 +1,136 @@
+/**
+ * Paso 3 del recorrido "Aplicar Anticipo contra Facturas". Hereda todo el marco de `.cobro-v2`
+ * —panel, cabecera de métricas, card y renglón de avisos—; acá sólo vive lo propio de la tabla de
+ * anticipos y del registro de lo aplicado.
+ */
+
+/* ===== Tabla de anticipos ===== */
+.anticipos-v2 .ant-tabla-wrap {
+  overflow-x: auto;
+}
+.anticipos-v2 .ant-tabla {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.anticipos-v2 .ant-tabla thead th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-text-secondary);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--c-border);
+  white-space: nowrap;
+}
+.anticipos-v2 .ant-tabla td {
+  padding: 12px;
+  border-bottom: 1px solid #f1f3f8;
+  vertical-align: middle;
+}
+.anticipos-v2 .ant-col-check {
+  width: 44px;
+}
+/* Los datos van centrados bajo su encabezado. El `th` lleva la MISMA clase y se nombra explícito:
+   la regla general del `thead` alinea a la izquierda y le gana por especificidad, así que sin esto
+   el rótulo quedaba a la izquierda y su valor centrado. */
+.anticipos-v2 .ant-col-cen,
+.anticipos-v2 .ant-tabla thead th.ant-col-cen {
+  text-align: center;
+}
+.anticipos-v2 .ant-num {
+  white-space: nowrap;
+  font-weight: 700;
+}
+/* El saldo a favor es el número que decide cuánto se puede aplicar: se destaca. */
+.anticipos-v2 .ant-pend {
+  color: var(--c-success);
+}
+.anticipos-v2 .ant-sd {
+  color: #98a2b3;
+}
+.anticipos-v2 .ant-check {
+  width: 17px;
+  height: 17px;
+  cursor: pointer;
+  accent-color: var(--c-primary);
+}
+.anticipos-v2 .ant-nro {
+  display: block;
+  font-weight: 700;
+  color: var(--c-text-main);
+}
+.anticipos-v2 .ant-detalle {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--c-text-secondary);
+}
+/* Fila elegida: el mismo azul claro del sistema que usa la selección de facturas. */
+.anticipos-v2 .ant-row--on td {
+  background: var(--tint-input);
+}
+.anticipos-v2 .ant-row--on td:first-child {
+  box-shadow: inset 3px 0 0 var(--c-primary);
+}
+.anticipos-v2 .ant-row:hover td {
+  background: #e2ecfc;
+}
+/* Anticipo que ya no hace falta: el total quedó cubierto con los elegidos. Se sigue VIENDO —el
+   usuario tiene que poder mirar todo su saldo a favor— pero apagado y sin casilla, con el motivo
+   en el tooltip de la fila. Vuelve solo en cuanto se baja o se quita un importe aplicado. */
+.anticipos-v2 .ant-row--off td {
+  color: #98a2b3;
+  background: #fcfcfd;
+}
+.anticipos-v2 .ant-row--off:hover td {
+  background: #fcfcfd;
+}
+.anticipos-v2 .ant-row--off .ant-nro,
+.anticipos-v2 .ant-row--off .ant-pend,
+.anticipos-v2 .ant-row--off .ant-restante {
+  color: inherit;
+}
+.anticipos-v2 .ant-check:disabled {
+  cursor: not-allowed;
+}
+
+/* ===== Importe a aplicar ===== */
+.anticipos-v2 .ant-aplicar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.anticipos-v2 .ant-aplicar-signo {
+  font-weight: 700;
+  color: var(--c-text-secondary);
+}
+.anticipos-v2 .ant-aplicar-in {
+  width: 130px;
+  height: 36px;
+  padding: 0 10px;
+  border: 1.5px solid #000;
+  border-radius: var(--c-radius-md);
+  background: var(--c-bg-input);
+  color: var(--c-text-main);
+  font-size: 15px;
+  font-weight: 700;
+  text-align: right;
+  outline: none;
+}
+.anticipos-v2 .ant-aplicar-in:focus {
+  border-color: var(--c-primary);
+}
+/* El estado topea el importe contra el saldo, así que este borde es el último resguardo visual. */
+.anticipos-v2 .ant-aplicar-in--error {
+  border-color: var(--c-danger);
+  background: #fff2f0;
+}
+
+/* Restante del anticipo una vez aplicada la carga. En cero se apaga: ese saldo quedó consumido. */
+.anticipos-v2 .ant-restante {
+  color: var(--c-text-main);
+}
+.anticipos-v2 .ant-restante--cero {
+  color: var(--c-text-secondary);
+  font-weight: 600;
+}

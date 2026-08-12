@@ -661,3 +661,13 @@
   color: var(--red);
   margin-right: 6px;
 }
+
+/* Opción de un desplegable que se VE pero no se puede elegir (p. ej. un módulo reservado a
+   administradores). Apagada y con el cursor de "no permitido"; el motivo va en su `title`. */
+.dditem--vedada {
+  color: #a9b0bd;
+  cursor: not-allowed;
+}
+.dditem--vedada:hover {
+  background: transparent;
+}

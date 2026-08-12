@@ -2,7 +2,7 @@
  * Datos de prueba para trabajar sin token de Monday (desarrollo local). Los servicios devuelven
  * esto cuando `mondayHabilitado()` es falso, así la app se puede recorrer entera sin cuenta.
  */
-import type { Cliente, Contacto, CuentaPropia, FacturaPendiente, Usuario } from '@/types'
+import type { AnticipoPendiente, Cliente, Contacto, CuentaPropia, FacturaPendiente, Usuario } from '@/types'
 
 export const USUARIOS: Usuario[] = [
   { id: '1001', ini: 'LT', name: 'Luciano Torres', color: 'var(--avatar-orange)' },
@@ -248,5 +248,41 @@ export const CONTACTOS_INICIALES: Contacto[] = [
     color: '#0073ea',
     status: 'NO ACEPTA RECIBO',
     ok: false,
+  },
+]
+
+/**
+ * Anticipos de prueba con saldo a favor. Cubren los casos del paso: saldo entero sin usar, saldo
+ * parcialmente aplicado y un importe chico que obliga a combinar dos anticipos para cubrir una
+ * factura.
+ */
+export const ANTICIPOS_PENDIENTES: AnticipoPendiente[] = [
+  {
+    id: 'a-1',
+    nombre: 'Anticipo - REC1001',
+    recibo: 'REC1001',
+    fecha: '2026-09-01',
+    importe: 2500,
+    pendiente: 2500,
+    comentario: 'Pago inicial recibido',
+  },
+  {
+    id: 'a-2',
+    nombre: 'Anticipo - REC1002',
+    recibo: 'REC1002',
+    fecha: '2026-09-05',
+    importe: 1800,
+    pendiente: 1800,
+    comentario: 'Monto parcial pendiente',
+  },
+  {
+    id: 'a-3',
+    nombre: 'Anticipo - REC1004',
+    recibo: 'REC1004',
+    fecha: '2026-08-20',
+    importe: 5000,
+    // Ya se aplicaron $ 1.800: lo que queda es lo único imputable.
+    pendiente: 3200,
+    comentario: 'Saldo a favor por devolución',
   },
 ]

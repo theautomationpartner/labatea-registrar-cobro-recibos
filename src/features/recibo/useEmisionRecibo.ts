@@ -106,9 +106,9 @@ export function useEmisionRecibo() {
         setIncompleto(
           [
             resultado.facturasCreadas < resultado.facturasEsperadas &&
-              `Facturas canceladas: entraron ${resultado.facturasCreadas} de ${resultado.facturasEsperadas}`,
+              `${datos.tipo === 'anticipo' ? 'Línea del anticipo' : 'Facturas canceladas'}: entraron ${resultado.facturasCreadas} de ${resultado.facturasEsperadas}`,
             resultado.pagosCreados < resultado.pagosEsperados &&
-              `Formas de pago: entraron ${resultado.pagosCreados} de ${resultado.pagosEsperados}`,
+              `Formas de pago y ajustes: entraron ${resultado.pagosCreados} de ${resultado.pagosEsperados}`,
           ].filter((x): x is string => typeof x === 'string'),
         )
         setError({

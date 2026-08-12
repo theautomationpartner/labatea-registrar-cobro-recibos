@@ -9,6 +9,7 @@ import '@/styles/components.css'
 import '@/styles/cliente.css'
 import '@/styles/facturas.css'
 import '@/styles/cobro.css'
+import '@/styles/anticipos.css'
 import '@/styles/recibo.css'
 import '@/styles/envio.css'
 

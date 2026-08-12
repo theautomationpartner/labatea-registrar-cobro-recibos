@@ -59,6 +59,13 @@ export const esAdministrador = (u: UsuarioActual | null): boolean =>
   rolUsuario(u) === 'ADMINISTRADOR'
 
 /**
+ * ¿Se puede operar el módulo de PAGOS? Sólo el administrador: el resto ve la opción en el selector
+ * del encabezado, pero no puede elegirla. Es la MISMA regla que habilita cambiar el vendedor, así
+ * que las dos responden al mismo rol y no pueden discrepar.
+ */
+export const puedeOperarPagos = (u: UsuarioActual | null): boolean => esAdministrador(u)
+
+/**
  * ¿Se puede cambiar el USUARIO responsable de la operación? Sólo el administrador, en CUALQUIER
  * etapa: el caso real es detectar a mitad del circuito que el cobro va a nombre de otro.
  */

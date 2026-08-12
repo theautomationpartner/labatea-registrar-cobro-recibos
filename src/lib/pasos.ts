@@ -1,10 +1,10 @@
-import type { Paso } from '@/types'
+import type { Paso, TipoOperacion } from '@/types'
 
 /**
- * Recorrido de la app. Es ÚNICO —no hay tipos de operación que lo ramifiquen—, así que las etapas
- * son una constante y no una función de la configuración. Toda la navegación (stepper, títulos de
- * paso, índice de avance) sale de acá: si mañana cambia el recorrido, se cambia en este archivo y
- * la app entera queda consistente.
+ * Recorrido de la app. Ya NO es único: lo ramifica lo que el usuario elige registrar en el paso 1
+ * (ver `TipoOperacion`). Toda la navegación —stepper, títulos de paso, índice de avance, botones de
+ * avanzar y volver— sale de este archivo: si mañana cambia un recorrido, se cambia acá y la app
+ * entera queda consistente.
  */
 export const ETAPA = {
   cliente: 'Selección de Cliente',
@@ -13,38 +13,109 @@ export const ETAPA = {
   recibo: 'Emitir y Enviar Recibo',
 } as const
 
-/** Etiquetas del stepper, en orden. */
-export const PASOS = [ETAPA.cliente, ETAPA.ventas, ETAPA.cobro, ETAPA.recibo] as const
+/** Etiquetas que PISAN a las de `ETAPA` en el recorrido del anticipo. */
+const ETAPA_ANTICIPO: Partial<Record<Paso, string>> = {
+  cobro: 'Registrar Anticipo',
+}
+
+/** Etiquetas que PISAN a las de `ETAPA` al aplicar un anticipo contra facturas. */
+const ETAPA_APLICACION: Partial<Record<Paso, string>> = {
+  cobro: 'Aplicar Anticipo',
+}
 
 /**
- * Claves de `Paso` en el MISMO orden que las etiquetas de `PASOS`: mapea el índice del stepper a la
- * etapa a la que se navega al hacer clic en su círculo. Las dos listas se recorren juntas, así que
- * agregar una etapa exige tocar ambas (el tipo `Paso` obliga a que la clave exista).
+ * Etapas de cada operación, en orden. El ANTICIPO no pasa por "Seleccionar Vtas Pend de Cobro": no
+ * cancela facturas, así que el importe lo declara el propio paso de registro.
+ *
+ * La APLICACIÓN recorre las mismas cuatro etapas que el cobro y REUTILIZA las dos primeras tal
+ * cual: se elige el cliente y sus facturas pendientes igual que siempre. Lo único distinto es el
+ * paso 3, donde el dinero no entra por una forma de pago sino por el saldo a favor del cliente.
  */
-export const PASOS_KEYS: readonly Paso[] = ['cliente', 'ventas', 'cobro', 'recibo']
+const RECORRIDO: Record<TipoOperacion, readonly Paso[]> = {
+  cobro: ['cliente', 'ventas', 'cobro', 'recibo'],
+  anticipo: ['cliente', 'cobro', 'recibo'],
+  aplicacion: ['cliente', 'ventas', 'cobro', 'recibo'],
+}
+
+/**
+ * Recorrido vigente. Sin operación elegida se usa el del COBRO: es el recorrido completo, así que
+ * el stepper muestra todas las etapas mientras el usuario todavía no decidió qué registrar.
+ */
+export const pasosDe = (tipo: TipoOperacion | null): readonly Paso[] => RECORRIDO[tipo ?? 'cobro']
+
+/** Etiquetas del stepper para una operación, en orden. */
+export const etiquetasDe = (tipo: TipoOperacion | null): string[] =>
+  pasosDe(tipo).map((p) => etiquetaDePaso(p, tipo))
+
+/**
+ * Cómo se llama una etapa en ESTA operación. El mismo paso `cobro` es "Registrar Cobro" cuando se
+ * cancelan facturas y "Registrar Anticipo" cuando el cliente entrega dinero a cuenta: es el mismo
+ * lugar del recorrido, con otro nombre.
+ */
+export const etiquetaDePaso = (paso: Paso, tipo: TipoOperacion | null): string => {
+  const propia = tipo === 'anticipo' ? ETAPA_ANTICIPO : tipo === 'aplicacion' ? ETAPA_APLICACION : undefined
+  return propia?.[paso] ?? ETAPA[paso]
+}
 
 /**
  * Bajada de cada etapa: la explicación que acompaña al título del paso. Vive junto a las etiquetas
  * para que el nombre y su descripción no se contradigan.
  */
 export const DESCRIPCION: Record<Paso, string> = {
-  cliente: 'Buscá y seleccioná el cliente al que se le va a registrar el cobro.',
+  cliente: 'Elegí qué vas a cobrar y buscá el cliente de la operación.',
   ventas: 'Elegí las facturas pendientes del cliente e indicá cuánto se cancela de cada una.',
   cobro: 'Registrá el cobro: medio de pago, importe e imputación sobre las ventas seleccionadas.',
   recibo: 'Emití el recibo en Monday y enviáselo al cliente.',
 }
 
+/** Bajadas que PISAN a las de `DESCRIPCION` al aplicar un anticipo contra facturas. */
+const DESCRIPCION_APLICACION: Partial<Record<Paso, string>> = {
+  cobro: 'Elegí los anticipos del cliente e indicá cuánto se aplica de cada saldo a favor.',
+  recibo: 'Emití el recibo de la aplicación en Monday y enviáselo al cliente.',
+}
+
+/** Bajadas que PISAN a las de `DESCRIPCION` en el recorrido del anticipo. */
+const DESCRIPCION_ANTICIPO: Partial<Record<Paso, string>> = {
+  cobro: 'Cargá el importe que entrega el cliente a cuenta y con qué medios lo entrega.',
+  recibo: 'Emití el recibo del anticipo en Monday y enviáselo al cliente.',
+}
+
+/** La bajada de la etapa en ESTA operación. */
+export const descripcionDePaso = (paso: Paso, tipo: TipoOperacion | null): string => {
+  const propia =
+    tipo === 'anticipo'
+      ? DESCRIPCION_ANTICIPO
+      : tipo === 'aplicacion'
+        ? DESCRIPCION_APLICACION
+        : undefined
+  return propia?.[paso] ?? DESCRIPCION[paso]
+}
+
 /**
- * En qué posición del stepper cae una etapa. Es lo que cada vista usa para marcarse como actual y
+ * En qué posición del recorrido cae una etapa. Es lo que cada vista usa para marcarse como actual y
  * para numerar su título. Se busca por la CLAVE de `Paso`, no por la etiqueta: la clave es la
  * identidad de navegación y no cambia porque se reescriba un rótulo.
  *
  * Sin la etapa en el recorrido devuelve 0: es preferible marcar la primera antes que romper.
  */
-export function indiceDePaso(paso: Paso): number {
-  const i = PASOS_KEYS.indexOf(paso)
+export function indiceDePaso(paso: Paso, tipo: TipoOperacion | null = null): number {
+  const i = pasosDe(tipo).indexOf(paso)
   return i >= 0 ? i : 0
 }
 
 /** Número de paso que se muestra en pantalla (1-based), el mismo que marca el stepper. */
-export const numeroDePaso = (paso: Paso): number => indiceDePaso(paso) + 1
+export const numeroDePaso = (paso: Paso, tipo: TipoOperacion | null = null): number =>
+  indiceDePaso(paso, tipo) + 1
+
+/** La etapa que sigue en ESTE recorrido, o `null` si la actual es la última. */
+export function siguientePaso(paso: Paso, tipo: TipoOperacion | null): Paso | null {
+  const recorrido = pasosDe(tipo)
+  return recorrido[recorrido.indexOf(paso) + 1] ?? null
+}
+
+/** La etapa anterior en ESTE recorrido, o `null` si la actual es la primera. */
+export function pasoAnterior(paso: Paso, tipo: TipoOperacion | null): Paso | null {
+  const recorrido = pasosDe(tipo)
+  const i = recorrido.indexOf(paso)
+  return i > 0 ? recorrido[i - 1] : null
+}

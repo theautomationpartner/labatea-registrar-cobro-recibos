@@ -2,24 +2,27 @@ import { useEffect, useState } from 'react'
 import { AvisoModal } from '@/components/ui/AvisoModal'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
 import { clienteBloqueado, MENSAJE_CLIENTE_BLOQUEADO } from '@/lib/credito'
-import { DESCRIPCION, ETAPA, numeroDePaso } from '@/lib/pasos'
+import {
+  descripcionDePaso,
+  etiquetaDePaso,
+  numeroDePaso,
+  siguientePaso,
+} from '@/lib/pasos'
 import { faltantesCliente } from '@/lib/validaciones'
 import { useApp, useDispatch } from '@/state/hooks'
 import { BuscarCliente, type BusquedaEstado } from './BuscarCliente'
 import { ClienteFicha } from './ClienteFicha'
-
-/** Qué viene después de confirmar el cliente. Sale de `lib/pasos`, no de un texto suelto. */
-const SIGUIENTE_PASO = ETAPA.ventas
+import { OperacionConfig } from './OperacionConfig'
 
 /**
- * Paso 1: búsqueda y validación del cliente al que se le va a registrar el cobro.
+ * Paso 1: qué se va a cobrar y a quién.
  *
- * A diferencia de la app de operaciones de venta, acá no hay configuración de operación que elegir
- * (tipo de venta, entrega, emisión del remito): el recorrido es único, así que lo único que decide
- * este paso es CON QUIÉN se opera.
+ * Son las DOS decisiones que gobiernan todo lo que sigue: el tipo de operación define el recorrido
+ * (un cobro contra facturas pasa por las ventas pendientes; un anticipo no) y el cliente define
+ * sobre quién se opera. Ninguna de las dos viene preseleccionada, y sin las dos no se avanza.
  */
 export function ClienteView() {
-  const { cliente } = useApp()
+  const { cliente, tipoOperacion } = useApp()
   const dispatch = useDispatch()
   // Estado de la búsqueda: gobierna qué se muestra en el lugar de la ficha del cliente.
   const [estadoBusqueda, setEstadoBusqueda] = useState<BusquedaEstado>('idle')
@@ -29,6 +32,8 @@ export function ClienteView() {
   const [avisoDatos, setAvisoDatos] = useState(false)
   // Aviso emergente al intentar avanzar sin un cliente cargado.
   const [avisoSinCliente, setAvisoSinCliente] = useState(false)
+  // Aviso emergente al intentar avanzar sin haber elegido qué se registra.
+  const [avisoSinOperacion, setAvisoSinOperacion] = useState(false)
   // Ventana emergente cuando la búsqueda no encuentra al cliente: es el ÚNICO aviso de ese caso.
   const [avisoNoEncontrado, setAvisoNoEncontrado] = useState(false)
 
@@ -43,7 +48,18 @@ export function ClienteView() {
   /* El cliente está confirmado: hay uno cargado y la búsqueda no está en curso ni terminó mal. */
   const clienteListo = estadoBusqueda === 'idle' && !!cliente
 
+  /* La etapa que sigue en el recorrido ELEGIDO: en un cobro son las ventas pendientes y en un
+     anticipo el registro del anticipo. Mientras no se eligió qué registrar se anticipa la del
+     cobro, que es el recorrido completo. */
+  const destino = siguientePaso('cliente', tipoOperacion)
+  const SIGUIENTE_PASO = destino ? etiquetaDePaso(destino, tipoOperacion) : ''
+
   const continuar = () => {
+    /* Sin saber QUÉ se cobra no hay recorrido posible: es lo primero que se reclama. */
+    if (!tipoOperacion) {
+      setAvisoSinOperacion(true)
+      return
+    }
     /* Sin un cliente confirmado el botón sigue a la vista: se avisa que hace falta cargarlo. */
     if (!clienteListo) {
       setAvisoSinCliente(true)
@@ -59,30 +75,37 @@ export function ClienteView() {
       setAvisoDatos(true)
       return
     }
-    dispatch({ type: 'goto', paso: 'ventas' })
+    /* Los tres recorridos tienen etapa siguiente desde acá, así que `destino` nunca es null a esta
+       altura; el guard existe para que el tipo lo refleje sin recurrir a un `!`. */
+    if (destino) dispatch({ type: 'goto', paso: destino })
   }
 
   /* Por qué todavía no se puede avanzar. Se muestra en el footer, al lado del botón. */
-  const motivoBloqueo = !clienteListo
-    ? 'Buscá y confirmá un cliente para continuar'
-    : bloqueado
-      ? 'Cliente bloqueado: no se puede operar'
-      : faltantes.length > 0
-        ? 'Al cliente le faltan datos en el sistema'
-        : undefined
+  const motivoBloqueo = !tipoOperacion
+    ? 'Indicá qué vas a cobrar para continuar'
+    : !clienteListo
+        ? 'Buscá y confirmá un cliente para continuar'
+        : bloqueado
+          ? 'Cliente bloqueado: no se puede operar'
+          : faltantes.length > 0
+            ? 'Al cliente le faltan datos en el sistema'
+            : undefined
 
   return (
     <section className="view cliente-v2 paso-layout">
       {/* ZONA 1 · contexto de la operación y navegación, siempre a la vista. */}
       <PasoHeader />
 
-      {/* ZONA 2 · el trabajo del paso: buscar y validar al cliente. */}
+      {/* ZONA 2 · el trabajo del paso: qué se registra y con qué cliente. */}
       <div className="paso-body">
         <PasoTitulo
-          numero={numeroDePaso('cliente')}
-          titulo={ETAPA.cliente}
-          descripcion={DESCRIPCION.cliente}
+          numero={numeroDePaso('cliente', tipoOperacion)}
+          titulo={etiquetaDePaso('cliente', tipoOperacion)}
+          descripcion={descripcionDePaso('cliente', tipoOperacion)}
         />
+
+        {/* Qué se va a cobrar: define el recorrido, así que va ANTES del buscador. */}
+        <OperacionConfig />
 
         {/* Buscador del cliente. El vendedor de la operación ya se ve —y se cambia— en el selector
             del encabezado, así que no se repite acá. */}
@@ -117,10 +140,23 @@ export function ClienteView() {
             )}
           </span>
           <button type="button" className="btn btn-primary" onClick={continuar}>
-            Continuar a {SIGUIENTE_PASO} <i className="fas fa-arrow-right" />
+            Continuar a {SIGUIENTE_PASO}{' '}
+            <i className="fas fa-arrow-right" />
           </button>
         </div>
       </div>
+
+      {/* Sin elegir qué se cobra no hay recorrido: es lo primero que se reclama al avanzar. */}
+      {avisoSinOperacion && (
+        <AvisoModal
+          titulo="Falta indicar qué vas a cobrar"
+          onClose={() => setAvisoSinOperacion(false)}
+        >
+          Para continuar tenés que seleccionar en <strong>¿Qué vas a cobrar?</strong> qué cobro vas
+          a realizar en el sistema: la cancelación de ventas pendientes de cobro, un anticipo o la
+          aplicación de un anticipo contra facturas.
+        </AvisoModal>
+      )}
 
       {/* Sin cliente cargado no se puede avanzar: se explica al intentarlo. */}
       {avisoSinCliente && (

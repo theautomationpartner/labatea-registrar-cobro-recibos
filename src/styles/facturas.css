@@ -180,6 +180,25 @@
   cursor: pointer;
   transition: background 0.2s, border-color 0.2s, color 0.2s;
 }
+/* Botón de dos caras ("Seleccionar todos" / "Deseleccionar todos"): las dos se apilan en la misma
+   celda de grilla y el fantasma —la etiqueta más larga— es el que fija el ancho. Así el botón mide
+   siempre lo mismo y el buscador de al lado no cambia de tamaño al marcar o desmarcar todo. */
+.fact-filtro-btn--todas {
+  display: grid;
+  align-items: center;
+  justify-items: center;
+}
+.fact-filtro-btn--todas > span {
+  grid-area: 1 / 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.fact-filtro-btn-fantasma {
+  visibility: hidden;
+}
+
 .fact-filtro-btn:hover:not(:disabled) {
   background: #eaf2fe;
   border-color: #bcd6f5;
@@ -210,6 +229,10 @@
 .fact-tabla-wrap--scroll {
   max-height: 560px;
   overflow-y: auto;
+  /* Reserva el lugar de la barra de scroll SIEMPRE: al desplegarse un panel el contenido crece y,
+     si la barra aparece recién ahí, todas las columnas se corren unos píxeles a la izquierda en
+     medio de la animación. */
+  scrollbar-gutter: stable;
 }
 /* Con la lista scrolleando, el encabezado se queda fijo: si no, a la cuarta fila ya no se sabe
    qué columna se está mirando. */
@@ -242,8 +265,13 @@
   width: 44px;
 }
 /* Los datos de columna van CENTRADOS bajo su encabezado (importes, fechas, mora y el anillo):
-   alineados a la derecha, el número quedaba lejos del título que lo nombra. */
-.fact-col-cen {
+   alineados a la derecha, el número quedaba lejos del título que lo nombra.
+
+   El `th` lleva la MISMA clase y se nombra explícito: la regla general del `thead` alinea a la
+   izquierda y le gana por especificidad, así que sin esto el rótulo quedaba a la izquierda y su
+   valor centrado —justo el desalineo que rompía la armonía de la tabla—. */
+.fact-col-cen,
+.fact-tabla thead th.fact-col-cen {
   text-align: center;
 }
 .fact-num {
@@ -298,7 +326,7 @@
   color: #98a2b3;
 }
 
-/* Pagado / Pendiente: sólo el anillo; los dos importes tienen su propia columna. */
+/* Pagado %: sólo el anillo; los dos importes tienen su propia columna. */
 .fact-pagado {
   display: flex;
   align-items: center;
@@ -379,10 +407,66 @@
 }
 
 /* ===== Panel de pago (fila expandida) ===== */
+/* El padding de abajo vive en el envoltorio interno, no acá: así también se despliega con la
+   animación en vez de aparecer de una junto con la fila. */
 .fact-exp td {
-  padding: 0 12px 18px;
+  padding: 0 12px;
   background: var(--sel-bg);
   border-bottom: 1px solid var(--c-border);
+}
+/* Despliegue del panel de pago. El alto se anima con la grilla (`0fr` → `1fr`), que es lo que
+   permite animar hacia el alto REAL del contenido sin adivinar un `max-height`: con un valor
+   estimado, un panel más alto se cortaría y uno más bajo tardaría de más en "terminar" de abrir. */
+.fact-exp-wrap {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+/* La animación NO va en la clase base: si estuviera ahí correría en cada montaje del panel —al
+   volver al paso con el stepper, por ejemplo— y las facturas ya elegidas se abrirían de nuevo. Sólo
+   se anima lo que el usuario acaba de tildar (ver `abriendo` en `TablaFacturas`). */
+.fact-exp-wrap--abriendo {
+  animation: fact-desplegar 0.24s ease-out;
+}
+.fact-exp-in {
+  /* Recorta el panel mientras la fila todavía no lo contiene entero. NO lleva padding: el relleno
+     de un elemento NO se encoge con la grilla —a `0fr` el contenido mide 0 pero el padding sigue
+     ocupando su lugar—, así que la fila arrancaba y terminaba con un salto de 18px. El aire de
+     abajo va DENTRO del área recortada, como margen del panel. */
+  overflow: hidden;
+}
+@keyframes fact-desplegar {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+}
+/* Plegado: el camino inverso, un poco más corto —cerrar puede ser más rápido que abrir, porque no
+   hay nada nuevo que leer—. Su duración tiene que coincidir con `MS_PLEGADO` en `TablaFacturas`. */
+.fact-exp-wrap--cerrando {
+  animation: fact-plegar 0.2s ease-in forwards;
+  /* Mientras se cierra ya no se opera: el panel es sólo la salida de algo que se desmarcó. */
+  pointer-events: none;
+}
+@keyframes fact-plegar {
+  from {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+  to {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+/* Con movimiento reducido el panel aparece y desaparece sin animarse: la información es la misma. */
+@media (prefers-reduced-motion: reduce) {
+  .fact-exp-wrap--abriendo,
+  .fact-exp-wrap--cerrando {
+    animation: none;
+  }
 }
 .fact-panel {
   display: flex;
@@ -390,6 +474,7 @@
   align-items: flex-start;
   gap: 32px;
   padding: 16px 18px;
+  margin-bottom: 18px;
   background: #fff;
   border: 1px solid var(--sel-bd);
   border-radius: 12px;

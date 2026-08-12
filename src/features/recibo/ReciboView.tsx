@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { AvisoModal } from '@/components/ui/AvisoModal'
 import { EnviarDocumento } from '@/features/shared/EnviarDocumento'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
-import { DESCRIPCION, ETAPA, numeroDePaso } from '@/lib/pasos'
-import { armarRecibo, NRO_RECIBO } from '@/lib/recibo'
+import { descripcionDePaso, etiquetaDePaso, numeroDePaso, pasoAnterior } from '@/lib/pasos'
+import { armarRecibo, pagosDeAnticipos, NRO_RECIBO } from '@/lib/recibo'
 import { useApp, useDispatch } from '@/state/hooks'
 import { ReciboAGenerar } from './ReciboAGenerar'
 import { ResumenRecibo } from './ResumenRecibo'
@@ -17,13 +17,22 @@ import { useEmisionRecibo } from './useEmisionRecibo'
  * que se hace es mostrar el documento que sale de eso y emitirlo.
  */
 export function ReciboView() {
-  const { cliente, usuario, facturas, imputaciones, cobro, documentoEnviado } = useApp()
+  const {
+    cliente,
+    usuario,
+    facturas,
+    imputaciones,
+    cobro,
+    tipoOperacion,
+    importeAnticipo,
+    detalleAnticipo,
+    vencimientoAnticipo,
+    anticipos,
+    aplicaciones,
+  } = useApp()
   const dispatch = useDispatch()
   // Aviso al intentar cerrar la operación sin haber emitido el recibo.
   const [aviso, setAviso] = useState(false)
-  /* El envío terminó bien en ESTA pantalla. La bandera global (`documentoEnviado`) es la que
-     persiste; ésta sólo refleja el envío recién hecho para el rótulo del pie. */
-  const [listoParaCerrar, setListoParaCerrar] = useState(false)
   /* Todo el ciclo de la emisión —escritura, pedido al tablero y seguimiento del estado— vive en el
      hook. Acá sólo se lo dispara y se reparte su estado entre las dos cards. */
   const { fase, estado, error, incompleto, puedeReintentar, emitir, limpiarIncompleto, reciboId } =
@@ -36,14 +45,41 @@ export function ReciboView() {
     if (reciboId) dispatch({ type: 'setReciboId', id: reciboId })
   }, [reciboId, dispatch])
 
-  /* Envío ya completado: la bandera global sobrevive a la navegación; el estado local cubre el
-     envío recién hecho en esta pantalla. */
-  const enviado = documentoEnviado || listoParaCerrar
+  const esAnticipo = tipoOperacion === 'anticipo'
+  const esAplicacion = tipoOperacion === 'aplicacion'
 
-  const recibo = useMemo(
-    () => armarRecibo(facturas, imputaciones, cobro.movimientos),
-    [facturas, imputaciones, cobro.movimientos],
+  /* Los anticipos que se imputan, en el orden en que se muestran —no en el que se fueron
+     marcando—: así el recibo sale siempre igual para la misma aplicación, con el mismo criterio con
+     el que `armarRecibo` recorre las facturas. Fuera de la aplicación no hay ninguno. */
+  const anticiposAplicados = useMemo(
+    () =>
+      esAplicacion
+        ? anticipos
+            .filter((a) => a.id in aplicaciones)
+            .map((a) => ({ id: a.id, nro: a.recibo || a.nombre, importe: aplicaciones[a.id] }))
+        : [],
+    [esAplicacion, anticipos, aplicaciones],
   )
+
+  /* En una APLICACIÓN las formas de pago del documento son los anticipos imputados: el cliente no
+     entrega dinero, cubre las facturas con su saldo a favor. De ahí sale el TOTAL ENTREGADO, que
+     por eso coincide con el TOTAL CANCELADO. */
+  const recibo = useMemo(
+    () =>
+      armarRecibo(
+        facturas,
+        imputaciones,
+        cobro.movimientos,
+        esAplicacion ? pagosDeAnticipos(anticiposAplicados) : undefined,
+      ),
+    [facturas, imputaciones, cobro.movimientos, esAplicacion, anticiposAplicados],
+  )
+
+  /* En un ANTICIPO no hay facturas que cancelar: lo que el recibo declara es el importe entregado a
+     cuenta, así que ése es su TOTAL CANCELADO (el que `armarRecibo` deriva de los comprobantes
+     daría 0, que sería decir que el recibo no cancela nada). */
+  const totalCancelado = esAnticipo ? importeAnticipo : recibo.totalCancelado
+  const anterior = pasoAnterior('recibo', tipoOperacion)
 
   const emitirRecibo = () => {
     if (!cliente) return
@@ -51,8 +87,15 @@ export function ReciboView() {
       clienteId: cliente.id,
       nombreCliente: cliente.name,
       vendedorId: usuario?.id ?? null,
+      tipo: esAnticipo ? 'anticipo' : esAplicacion ? 'aplicacion' : 'cobro',
       facturas: recibo.comprobantes.map((c) => ({ id: c.id, nro: c.nro, importe: c.cancelado })),
-      movimientos: cobro.movimientos,
+      /* En una aplicación no hay formas de pago: lo que cubre las facturas son los anticipos. */
+      movimientos: esAplicacion ? [] : cobro.movimientos,
+      /* Los tres datos del anticipo viajan juntos: describen la misma línea del recibo. */
+      anticipo: esAnticipo ? importeAnticipo : undefined,
+      detalleAnticipo: esAnticipo ? detalleAnticipo : undefined,
+      vencimientoAnticipo: esAnticipo ? vencimientoAnticipo : undefined,
+      anticiposAplicados: esAplicacion ? anticiposAplicados : undefined,
     })
   }
 
@@ -73,9 +116,9 @@ export function ReciboView() {
 
       <div className="paso-body">
         <PasoTitulo
-          numero={numeroDePaso('recibo')}
-          titulo={ETAPA.recibo}
-          descripcion={DESCRIPCION.recibo}
+          numero={numeroDePaso('recibo', tipoOperacion)}
+          titulo={etiquetaDePaso('recibo', tipoOperacion)}
+          descripcion={descripcionDePaso('recibo', tipoOperacion)}
         />
 
         {!cliente ? (
@@ -89,7 +132,7 @@ export function ReciboView() {
               cliente={cliente}
               fechaEmision={cobro.fecha}
               totalRecibido={recibo.totalEntregado}
-              totalCancelado={recibo.totalCancelado}
+              totalCancelado={totalCancelado}
               fase={fase}
               error={error}
               puedeReintentar={puedeReintentar}
@@ -98,15 +141,18 @@ export function ReciboView() {
 
             {/* Columna derecha: el documento y, debajo, su envío al cliente. */}
             <div className="recibo-col-der">
-              <ReciboAGenerar recibo={recibo} fase={fase} estado={estado} />
+              <ReciboAGenerar
+                recibo={recibo}
+                fase={fase}
+                estado={estado}
+                anticipo={esAnticipo ? importeAnticipo : null}
+              />
 
               {/* En la vista, el envío es una línea. La clave elige el comprobante del catálogo.
                   Intentar enviar sin haber emitido abre su propio aviso: lo resuelve el componente. */}
-              <EnviarDocumento
-                documento="recibo"
-                numero={NRO_RECIBO}
-                onEnviado={() => setListoParaCerrar(true)}
-              />
+              {/* Sin `onEnviado`: el resultado del envío lo muestra la propia card —y lo persiste
+                  en `documentoEnviado`—, así que la vista no necesita enterarse. */}
+              <EnviarDocumento documento="recibo" numero={NRO_RECIBO} />
             </div>
           </div>
         )}
@@ -116,30 +162,15 @@ export function ReciboView() {
           <button
             type="button"
             className="btn btn-out"
-            onClick={() => dispatch({ type: 'goto', paso: 'cobro' })}
+            onClick={() => anterior && dispatch({ type: 'goto', paso: anterior })}
           >
             <i className="fas fa-arrow-left" /> Volver
           </button>
 
           <div className="actions-footer-fin">
-            <span
-              className={`paso-siguiente ${fase === 'emitido' ? '' : 'paso-siguiente--bloqueo'}`}
-            >
-              {fase === 'emitido' ? (
-                <>
-                  <i className="fas fa-circle-check" /> Recibo emitido
-                  {enviado ? ' y enviado' : ' · envío pendiente'}
-                </>
-              ) : fase === 'creando' || fase === 'emitiendo' ? (
-                <>
-                  <i className="fas fa-circle-notch fa-spin" /> Emitiendo el recibo…
-                </>
-              ) : (
-                <>
-                  <i className="fas fa-circle-exclamation" /> Falta emitir el recibo
-                </>
-              )}
-            </span>
+            {/* Sin rótulo de estado al lado del botón: en qué anda la emisión ya lo dicen el propio
+                botón "Emitir el recibo" y el semáforo de la card del documento, los dos a la vista.
+                Repetirlo acá era decir tres veces lo mismo. */}
             <button type="button" className="btn btn-primary" onClick={finalizar}>
               <i className="fas fa-flag-checkered" /> Finalizar Operación
             </button>

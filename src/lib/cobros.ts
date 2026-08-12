@@ -4,7 +4,7 @@
  * responden todas al mismo criterio.
  */
 import { money, round2 } from '@/lib/format'
-import type { FacturaPendiente } from '@/types'
+import type { AnticipoPendiente, FacturaPendiente } from '@/types'
 
 /** `id de factura → importe a cancelar`. Que la clave exista marca la factura como seleccionada. */
 export type Imputaciones = Record<string, number>
@@ -132,4 +132,79 @@ export function impactoImputacion(
     aCobrar,
     pendienteResultante: round2(Math.max(factura.pendiente - aCobrar, 0)),
   }
+}
+
+/* ===== Aplicación de anticipos contra facturas ===== */
+
+/** `id de anticipo → importe aplicado`. Que la clave exista marca el anticipo como elegido. */
+export type Aplicaciones = Record<string, number>
+
+/** TOTAL APLICADO: la suma de lo que se le imputa a las facturas desde los anticipos. */
+export const totalAplicado = (aplicaciones: Aplicaciones): number =>
+  round2(Object.values(aplicaciones).reduce((acc, n) => acc + (Number.isFinite(n) ? n : 0), 0))
+
+/** Anticipos elegidos, en el orden en que se muestran. */
+export const anticiposElegidos = (
+  anticipos: readonly AnticipoPendiente[],
+  aplicaciones: Aplicaciones,
+): AnticipoPendiente[] => anticipos.filter((a) => a.id in aplicaciones)
+
+/** El importe aplicado supera el saldo a favor del anticipo: no se puede aplicar lo que no hay. */
+export const excedeAnticipo = (anticipo: AnticipoPendiente, importe: number): boolean =>
+  Number.isFinite(importe) && round2(importe) > round2(anticipo.pendiente)
+
+/**
+ * Qué impide emitir el recibo de una aplicación de anticipos.
+ *
+ * La regla dura es la DIFERENCIA EN CERO ABSOLUTO: lo aplicado tiene que cubrir exactamente lo
+ * imputado a las facturas, ni un peso de más ni de menos. A diferencia del cobro con dinero —donde
+ * una diferencia de centavos se tolera porque el redondeo del efectivo es real—, acá los dos lados
+ * de la cuenta son saldos del sistema: si no cierran, el que está mal es el dato.
+ */
+export function bloqueoAplicacion(
+  anticipos: readonly AnticipoPendiente[],
+  aplicaciones: Aplicaciones,
+  aCancelar: number,
+): BloqueoImputacion | null {
+  const elegidos = anticiposElegidos(anticipos, aplicaciones)
+  if (elegidos.length === 0) {
+    return {
+      titulo: 'No seleccionaste ningún anticipo',
+      mensaje:
+        'Para continuar tenés que elegir al menos un anticipo del cliente e indicar cuánto se aplica de su saldo a favor.',
+      faltantes: [],
+    }
+  }
+  const sinImporte = elegidos.filter((a) => !(aplicaciones[a.id] > 0))
+  if (sinImporte.length > 0) {
+    return {
+      titulo: 'Falta el importe a aplicar',
+      mensaje:
+        'Todos los anticipos seleccionados tienen que tener un importe mayor a $ 0. Completalo o desmarcá el anticipo.',
+      faltantes: sinImporte.map((a) => `Anticipo ${a.recibo || a.nombre}`),
+    }
+  }
+  const excedidos = elegidos.filter((a) => excedeAnticipo(a, aplicaciones[a.id]))
+  if (excedidos.length > 0) {
+    return {
+      titulo: 'El importe supera el saldo del anticipo',
+      mensaje: 'No se puede aplicar más de lo que el anticipo tiene pendiente de aplicar.',
+      faltantes: excedidos.map(
+        (a) => `Anticipo ${a.recibo || a.nombre} · máximo ${money(a.pendiente)}`,
+      ),
+    }
+  }
+
+  const diferencia = round2(aCancelar - totalAplicado(aplicaciones))
+  if (diferencia !== 0) {
+    return {
+      titulo: 'La diferencia tiene que ser $ 0,00',
+      mensaje:
+        diferencia > 0
+          ? `Todavía faltan ${money(diferencia)} para cubrir el total de las facturas seleccionadas. El recibo sólo se emite cuando los anticipos aplicados cubren exactamente ese total.`
+          : `Los anticipos aplicados superan en ${money(-diferencia)} el total de las facturas seleccionadas. El recibo sólo se emite cuando la diferencia es exactamente $ 0,00.`,
+      faltantes: [],
+    }
+  }
+  return null
 }

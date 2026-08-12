@@ -102,8 +102,12 @@ export function BuscarCliente({ estado, onEstado }: BuscarClienteProps) {
             onKeyDown={(e) => e.key === 'Enter' && !buscando && buscar()}
           />
         </div>
-        <span className={`search-helper ${errorInput ? 'search-helper--error' : ''}`}>
-          {errorInput || 'Buscar por razón social, código de cliente o Cuil/CUIT.'}
+        {/* El renglón se monta SIEMPRE, con o sin texto: es lo que reserva su lugar. Sólo lleva
+            contenido cuando hay algo que corregir —el campo vacío—, así el error no empuja al
+            buscador ni a la ficha de abajo al aparecer. La ayuda fija se fue: el placeholder del
+            campo ya dice por dónde se puede buscar. */}
+        <span className="search-helper search-helper--error" role="alert">
+          {errorInput}
         </span>
 
         {/* Varios clientes con el mismo nombre: se elige por código. */}

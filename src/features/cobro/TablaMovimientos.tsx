@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { esPagoConTarjeta, esRetencion, valorPorCuota, formatearNroTarjeta } from '@/lib/pagos'
+import { esPagoConTarjeta, esRetencion } from '@/lib/pagos'
 import { money } from '@/lib/format'
 import { useDispatch } from '@/state/hooks'
 import type { MovimientoPago } from '@/types'
@@ -35,23 +35,18 @@ function detalleDe(m: MovimientoPago): Dato[] {
   }
   // Retenciones: lo único que agregan al importe es el comprobante que las respalda.
   if (esRetencion(m.formaPago)) {
-    return [{ label: 'Comprobante', valor: m.comprobanteNombre || '—' }]
+    return [
+      { label: 'Año', valor: m.anioRetencion || '—' },
+      { label: 'Nro Comprobante', valor: m.nroComprobanteRetencion?.trim() || '—' },
+      { label: 'Comprobante', valor: m.comprobanteNombre || '—' },
+    ]
   }
   if (esPagoConTarjeta(m.formaPago)) {
-    const porCuota = valorPorCuota(m.importe, m.cuotas)
     const filas: Dato[] = [
-      { label: 'Titular', valor: m.titularTarjeta || '—' },
       { label: 'Banco emisor', valor: m.bancoTarjeta || '—' },
       { label: 'Tipo', valor: m.tipoTarjeta || '—' },
-      { label: 'Nro. Tarjeta', valor: formatearNroTarjeta(m.numeroTarjeta ?? '').texto || '—' },
       { label: 'Fecha de Venc.', valor: m.vencimientoTarjeta || '—' },
     ]
-    /* Las cuotas sólo existen en el crédito. El valor por cuota se recalcula con el importe, así
-       que editarlo en la tabla actualiza el plan en el momento. */
-    if (m.formaPago === 'Tarjeta de crédito') {
-      filas.push({ label: 'Cant. Cuotas', valor: m.cuotas ? String(m.cuotas) : '—' })
-      filas.push({ label: 'Valor x Cuota', valor: porCuota == null ? '—' : money(porCuota) })
-    }
     filas.push({ label: 'Nro Cupon', valor: m.numeroCupon?.trim() || '—' })
     filas.push({ label: 'Comprobante', valor: m.comprobanteNombre || '—' })
     filas.push({ label: 'Banco de Acreditación', valor: m.cuentaPropia || '—' })

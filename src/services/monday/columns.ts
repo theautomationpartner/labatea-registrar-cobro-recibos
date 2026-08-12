@@ -31,6 +31,8 @@ export const BOARDS = {
   ctasBancarias: 18421723667,
   /** "📈Ventas": la venta cerrada. */
   ventas: 18421035510,
+  /** "Anticipos Pends de Aplicar": el saldo a favor del cliente, listo para imputarse a facturas. */
+  anticipos: 18426066447,
   config: 18421035530,
 } as const
 
@@ -70,6 +72,17 @@ export const FACT_PENDIENTE_ESTADOS_COBRABLES: readonly number[] = [
   FACT_PENDIENTE_ESTADO_INDEX.canceladaParcialmente,
 ]
 
+/**
+ * Índices de "Status" (color_mm64qza0) en "Anticipos Pends de Aplicar". Leídos del tablero:
+ * {"0":"Cancelado","13":"Nada","17":"Pend de Aplicar"}. NO son correlativos —el aplicable es el
+ * 17—, así que el filtro va por índice y nunca por el texto de la etiqueta.
+ */
+export const ANTICIPO_ESTADO_INDEX = {
+  cancelado: 0,
+  nada: 13,
+  pendienteDeAplicar: 17,
+} as const
+
 export const COL = {
   cliente: {
     categoria: 'dropdown_mm54e5ag', // multi-valor: se filtra por "contiene Cliente"
@@ -98,6 +111,14 @@ export const COL = {
     venta: 'board_relation_mm4d3nn0',
     /** "🤖ID Fact Pend Cobro": el número del comprobante que ve el usuario (FPENCOB-042). */
     nro: 'pulse_id_mm5pxaym',
+    /**
+     * "🤖Fecha Emision" (date, ISO). Es la fecha que el RECIBO declara para el comprobante que
+     * cancela. Vive en la propia factura: antes se leía de la venta vinculada, que muchas facturas
+     * del tablero no tienen conectada y las dejaba sin fecha.
+     */
+    fechaEmision: 'date_mm648d33',
+    /** "🤖Fecha Vto" (date, ISO): de acá salen el vencimiento de la fila y sus días de mora. */
+    fechaVencimiento: 'date_mm647vwr',
     /** "🤖Vta $": importe total de la venta. */
     total: 'numeric_mkwbck5d',
     /** "🤖Cobrado $" (mirror): lo que ya se cobró históricamente de esta factura. */
@@ -109,15 +130,33 @@ export const COL = {
     /** "🤖Estado": ver `FACT_PENDIENTE_ESTADO_INDEX`. */
     estado: 'color_mkwb727e',
   },
-  /* "📈Ventas" (18421035510). La factura pendiente sólo guarda importes: el número de la venta y
-     su vencimiento viven acá y se leen a través de la relación `factPendiente.venta`. */
+  /* "📈Ventas" (18421035510). Lo ÚNICO que la factura pendiente busca acá es el NOMBRE de la venta
+     que dejó la deuda, a través de la relación `factPendiente.venta`. Las fechas ya no: viven en la
+     propia factura (`factPendiente.fechaEmision` / `fechaVencimiento`), que las tiene siempre,
+     tenga o no su venta conectada. */
   venta: {
     /** "🤖ID Venta": el identificador que ve el usuario ("VTA-094"). */
     idVenta: 'pulse_id_mkw8wzn1',
-    /** "🤖Fecha Emision Fact" (date, ISO). */
-    fechaEmision: 'date_mm5n6z7j',
-    /** "🤖Fecha Venc Fact" (date, ISO): de acá salen el vencimiento y los días de mora. */
-    fechaVencimiento: 'date_mm5nkdj0',
+  },
+  /* "Anticipos Pends de Aplicar" (18426066447): un ítem por anticipo con saldo a favor. De acá salen
+     los anticipos que se eligen para cancelar facturas. Los ids se verificaron contra el tablero. */
+  anticipo: {
+    /** "Cliente" (board_relation → Personas): de quién es el anticipo. Es por donde se filtra. */
+    cliente: 'board_relation_mm64zh21',
+    /** "Fecha de Anticipo" (date, ISO). */
+    fecha: 'date_mm64k479',
+    /** "Comentarios" (text): por qué se registró. */
+    comentario: 'text_mm64a1zb',
+    /** "Importe $" (numbers): con cuánto nació el anticipo. */
+    importe: 'numeric_mm64h18',
+    /** "Total Aplicado $" (mirror): cuánto ya se imputó a facturas. */
+    aplicado: 'lookup_mm643zg',
+    /** "Pend de Aplicar" (fórmula): el saldo a favor que queda. Es el TOPE de lo que se puede imputar. */
+    pendiente: 'formula_mm641qex',
+    /** "Status": ver `ANTICIPO_ESTADO_INDEX`. */
+    estado: 'color_mm64qza0',
+    /** "Recibo y Cobro" (text): el comprobante con el que entró el anticipo. */
+    recibo: 'text_mm64bf3r',
   },
   /* Board de Cta Cte. El crédito se arma con las columnas BASE, no con las fórmulas del tablero:
      así la app no depende de que el board las tenga al día. Las mirror se leen por `display_value`
@@ -136,6 +175,8 @@ export const COL = {
     vendedor: 'multiple_person_mm5s28s6',
     /** "🤖Persona" (board_relation → Personas): a quién se le cobró. */
     cliente: 'board_relation_mkwb7fmp',
+    /** "🤖Tipo de Cobro" (status): siempre "Posterior". Ver `TIPO_COBRO_INDEX`. */
+    tipoCobro: 'color_mm5yh0gs',
     /**
      * "🤖 TOTAL $ Vta" (numbers): el TOTAL CANCELADO, o sea la suma de lo imputado a las facturas.
      * El rótulo del tablero habla de "Vta" porque el mismo board recibe los recibos de la app de
@@ -174,14 +215,39 @@ export const COL = {
     paraEnviar: 'dropdown_mm57p8ja',
     cliente: 'contact_account',
   },
-  /* Subelementos del recibo (18421035599). El MISMO board recibe los dos tipos de subítem que crea
-     la emisión, y cada uno completa su propio juego de columnas:
-       · FACTURA CANCELADA → la relación a la factura + "🤖Importe Cancelado $".
-       · FORMA DE PAGO     → "✋Caja" + "🤖Importe Cobrado $" + lo propio de su medio.
+  /* Subelementos del recibo (18421035599). El MISMO board recibe todos los tipos de subítem que
+     crea la emisión, y cada uno completa su propio juego de columnas —siempre con "✋Caja" como
+     rótulo de qué es la línea—:
+       · FACTURA CANCELADA → "✋Caja" + la relación a la factura + "🤖Importe Cancelado $".
+       · ANTICIPO          → "✋Caja" + "🤖Importe Cancelado $" (no cancela facturas: es a cuenta).
+       · FORMA DE PAGO     → "✋Caja" + "🤖Importe Recibido $" + lo propio de su medio.
+       · DIF DE CAJA       → "✋Caja" + "🤖Importe Recibido $" con el descuadre, sólo si lo hubo.
      Los ids se verificaron contra el esquema del tablero. */
   cobroSub: {
-    /** "✋Caja" (status): con qué medio entró la plata. Se escribe por ÍNDICE (ver `CAJA_INDEX`). */
+    /**
+     * "✋Caja" (status): qué declara el subelemento. Se escribe SIEMPRE por ÍNDICE y cubre los tres
+     * tipos de línea del recibo: el medio con el que entró la plata (`CAJA_INDEX`), la factura que
+     * se cancela (`CAJA_FACT_CANCELADA_INDEX`), el anticipo entregado (`CAJA_ANTICIPO_INDEX`) y su
+     * eventual ajuste de caja (`CAJA_DIF_INDEX`).
+     */
     caja: 'status',
+    /**
+     * "🤖Nro Comprobante" (TEXT): el número del documento que respalda el movimiento. Es UNA sola
+     * columna para los TRES medios que traen uno —el certificado de la retención, el cheque y el
+     * cupón de la tarjeta—, que nunca conviven en el mismo subítem, así que no se pisan.
+     *
+     * Es de TEXTO, no numérica: el número viaja tal como se cargó, sin recortarle nada.
+     */
+    nroComprobante: 'text_mm654900',
+    /**
+     * "🤖Detalle" (long_text): el texto libre del movimiento. Hoy lo usa el ANTICIPO —el motivo que
+     * escribe el usuario al declarar el importe—, y queda disponible para cualquier otra línea que
+     * necesite explicarse.
+     */
+    detalle: 'long_text_mm65mm0k',
+    /* --- Retenciones --- */
+    /** "🤖Año" (numbers): el ejercicio al que corresponde la retención. */
+    anioRetencion: 'numeric_mm64dwpx',
     /** "💰Fact Vtas Pends de Cobro" (board_relation): la factura que este subítem cancela. */
     factura: 'board_relation_mm63pczd',
     /** "🤖Importe Cancelado $": cuánto se le imputa a esa factura. */
@@ -190,8 +256,9 @@ export const COL = {
     importeCobrado: 'numeric_mm63j1mv',
     /** "🤖Banco de Acreditacion" (board_relation → Configuración): la cuenta propia que recibe. */
     bancoAcreditacion: 'board_relation_mm5y22zv',
-    /* --- Cheque --- */
-    nroCheque: 'numeric_mm5rrwjg',
+    /* --- Cheque ---
+       El número del cheque NO tiene columna propia: va a "🤖Nro Comprobante" (`nroComprobante`),
+       la misma que usa el certificado de retención. */
     /** "🤖CUIT Emisor" (text): va con los guiones, tal como se cargó. */
     cuit: 'text_mm5ydwp2',
     /** "🤖Origen Cheque" (dropdown): papel o electrónico (ver `CHEQUE_ORIGEN_LABEL`). */
@@ -200,16 +267,14 @@ export const COL = {
     fechaEmision: 'date_mm5rxdpk',
     /** "🤖Banco Emisor" (dropdown): lo comparten el cheque y la tarjeta. */
     bancoEmisor: 'dropdown_mm5yfd8n',
-    /* --- Tarjeta --- */
-    nroTarjeta: 'text_mm5ybw7q',
-    titularTarjeta: 'text_mm5yr164',
+    /* --- Tarjeta ---
+       El número del cupón tampoco tiene columna propia: va a "🤖Nro Comprobante"
+       (`nroComprobante`). La columna "🤖Numero Cupon" (text_mm5zs69e) del tablero queda sin usar. */
     tipoTarjeta: 'dropdown_mm5rx800',
-    nroCupon: 'text_mm5zs69e',
-    cuotas: 'numeric_mm5ydy8',
-    valorCuota: 'numeric_mm5yx0ec',
     /**
-     * "🤖Fecha Venc" (date). Es UNA sola columna para los dos medios: el vencimiento del cheque y
-     * el del plástico. Nunca conviven en el mismo subítem, así que no se pisan.
+     * "🤖Fecha Venc" (date). Es UNA sola columna para tres líneas distintas: el vencimiento del
+     * cheque, el del plástico y el del anticipo. Nunca conviven en el mismo subítem, así que no se
+     * pisan.
      */
     vencimiento: 'date_mm5y4zxa',
     /* --- Comprobantes adjuntos (columnas `file`) ---
@@ -268,6 +333,49 @@ export const CAJA_INDEX: Record<FormaPago, number> = {
  * "10":"Cancelacion"}. Igual que en las demás columnas status, los índices NO siguen el orden en
  * que se ven en pantalla, así que se escriben y comparan por índice y nunca por el rótulo.
  */
+/**
+ * Índices de "🤖Tipo de Cobro" (color_mm5yh0gs) del recibo. Leídos del tablero:
+ * {"0":"Posterior","1":"Simultaneo","2":"Anticipo","3":"Aplicacion Cta Cte"}.
+ *
+ * De los cuatro, esta app escribe dos:
+ *
+ *   · POSTERIOR · el cobro de facturas que ya estaban emitidas y esperando en "💰Fact Vtas Pends de
+ *                 Cobro": el cobro llega después de la venta por definición del recorrido.
+ *   · ANTICIPO  · el cliente entrega dinero a cuenta, sin facturas que cancelar.
+ *
+ * El "Simultaneo" es del otro flujo —la app de operaciones de venta, que cobra en el mismo acto en
+ * que factura— y comparte este tablero. "Aplicacion Cta Cte" queda declarado para el recorrido de
+ * aplicación de anticipos, todavía sin implementar.
+ */
+export const TIPO_COBRO_INDEX = {
+  posterior: 0,
+  simultaneo: 1,
+  anticipo: 2,
+  aplicacionCtaCte: 3,
+} as const
+
+/**
+ * Índice de "Anticipo" en "✋Caja" (columna `status` del subelemento). No entra en `CAJA_INDEX`
+ * porque NO es una forma de pago: es la línea que declara QUÉ se está cancelando —el anticipo
+ * entregado—, el lugar que en un cobro ocupan los subítems de factura.
+ */
+export const CAJA_ANTICIPO_INDEX = 11
+
+/**
+ * Índice de "Dif de Caja" en "✋Caja". Tampoco es una forma de pago: es la línea de AJUSTE con la
+ * que el recibo documenta el descuadre por centavos entre lo que se cancela y lo que entró a caja
+ * (ver `TOLERANCIA_DIFERENCIA` en `lib/pagos`). Sólo se escribe cuando ese descuadre existe.
+ */
+export const CAJA_DIF_INDEX = 9
+
+/**
+ * Índice de "Fact Cancelada" en "✋Caja". Es el rótulo de los subelementos de FACTURA: dicen qué
+ * comprobante cancela el recibo, no con qué medio se pagó. Con él, las tres cosas que puede
+ * declarar un subítem —una factura cancelada, un anticipo o una forma de pago— quedan distinguidas
+ * por la misma columna en el tablero.
+ */
+export const CAJA_FACT_CANCELADA_INDEX = 10
+
 export const ESTADO_EMISION_INDEX = {
   /** Lo ÚNICO que escribe la app: pide la emisión. */
   aEmitir: 3,
