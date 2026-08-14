@@ -1,15 +1,18 @@
 /**
  * Acceso a los escenarios de Make.com.
  *
- * Se pega DIRECTO contra el webhook, sin proxy: a diferencia de Monday —donde el token no puede
- * viajar en el bundle y CORS está cerrado—, el hook de Make responde con `access-control-allow-origin: *`
- * y no lleva credenciales, así que el navegador puede llamarlo desde cualquier origen. La URL es
- * pública por diseño: es el escenario el que decide qué hace con lo que recibe.
+ * NUNCA se pega directo contra el webhook: la llamada pasa por un proxy propio que guarda su
+ * dirección del lado del servidor (`MAKE_WEBHOOK_COMPROBANTES`, ver `api/make-comprobantes.ts`).
+ * El hook no lleva credenciales, pero sí es la llave para hacer correr el escenario: publicada en el
+ * bundle, cualquiera la lee con las herramientas del navegador y gasta las operaciones de la cuenta.
+ * Mismo esquema que Monday —Vite en desarrollo, función serverless en producción—, sólo que acá lo
+ * que se esconde es el destino y no un token.
  *
  * El cuerpo va SIEMPRE como `multipart/form-data`: los documentos son binarios (PDF o imagen) y
  * meterlos en un JSON obligaría a pasarlos por base64, que los infla un tercio y obliga a Make a
  * reconstruirlos antes de leerlos.
  */
+const ENDPOINT = import.meta.env.DEV ? '/make-comprobantes' : '/api/make-comprobantes'
 
 /**
  * Cuánto se espera la respuesta del escenario. Es un techo generoso a propósito: del otro lado hay
@@ -121,13 +124,12 @@ export interface OpcionesWebhook {
  * mandarle el documento sólo lo haría procesarlo de nuevo.
  */
 export async function postWebhook(
-  url: string,
   form: FormData,
   { signal, onReintento }: OpcionesWebhook = {},
 ): Promise<RespuestaMake> {
   for (let intento = 1; ; intento++) {
     try {
-      return await unIntento(url, form, signal)
+      return await unIntento(form, signal)
     } catch (e) {
       const espera = ESPERAS_MS[intento - 1]
       // Se reintenta sólo lo que puede cambiar solo, y mientras queden intentos y nadie cancele.
@@ -149,11 +151,7 @@ export async function postWebhook(
  * llama (el usuario cargó otro documento, o se fue de la pantalla) y el vencimiento del tiempo de
  * espera. Se distinguen por la bandera `vencio`, porque una es un error que se muestra y la otra no.
  */
-async function unIntento(
-  url: string,
-  form: FormData,
-  signal?: AbortSignal,
-): Promise<RespuestaMake> {
+async function unIntento(form: FormData, signal?: AbortSignal): Promise<RespuestaMake> {
   const ctrl = new AbortController()
   let vencio = false
 
@@ -165,7 +163,7 @@ async function unIntento(
   signal?.addEventListener('abort', cancelar)
 
   try {
-    const res = await fetch(url, { method: 'POST', body: form, signal: ctrl.signal })
+    const res = await fetch(ENDPOINT, { method: 'POST', body: form, signal: ctrl.signal })
     const texto = await res.text()
     if (!res.ok) {
       /* 410 es el caso típico y merece su propio mensaje: el escenario existe pero no está

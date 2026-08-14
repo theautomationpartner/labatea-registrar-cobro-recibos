@@ -27,22 +27,20 @@ import { round2 } from '@/lib/format'
 import type { FormaPago, FormatoCheque } from '@/types'
 import { mensajeDelEscenario, nuevoJobId, postWebhook, type OpcionesWebhook } from './sdk'
 
-/**
- * Webhook del escenario que lee los comprobantes.
- *
- * Viaja por entorno y no escrita acá porque el repositorio es público: una URL de hook commiteada la
- * encuentran los bots que rastrean GitHub, y con ella cualquiera dispara el escenario y consume las
- * operaciones de la cuenta de Make. En el bundle termina igual —esto corre en el navegador—, pero
- * eso expone el hook a quien usa la app, no a quien mira el repositorio.
- */
-export const WEBHOOK_COMPROBANTES =
-  (import.meta.env.VITE_MAKE_WEBHOOK_COMPROBANTES as string | undefined)?.trim() || ''
+/* La dirección del webhook NO está acá ni en ninguna parte del cliente: vive en el servidor, y la
+   llamada sale contra el proxy propio (ver `sdk.ts` y `api/make-comprobantes.ts`). */
 
 /** Qué se acepta subir: el `accept` del input y el filtro que corre antes de gastar una llamada. */
 export const ACEPTA_ARCHIVO = 'application/pdf,image/*'
 
-/** Tope de tamaño. Un comprobante es una hoja: por encima de esto hay un archivo equivocado. */
-const MAX_MB = 10
+/**
+ * Tope de tamaño. Un comprobante es una hoja: por encima de esto hay un archivo equivocado.
+ *
+ * El número lo fija la plataforma, no el criterio: al pasar por `/api/make-comprobantes` el cuerpo
+ * de la petición topa en 4,5 MB, y un archivo más grande lo rechaza Vercel con un 413 que no explica
+ * nada. Se valida acá para que el aviso llegue en el acto y diga cuál es el límite de verdad.
+ */
+const MAX_MB = 4
 
 /**
  * Por qué NO se puede leer este archivo, o `null` si está bien. Se valida ANTES de llamar al
@@ -126,12 +124,6 @@ export async function procesarComprobante(
   formaPago: FormaPago,
   opciones: OpcionesWebhook = {},
 ): Promise<LecturaComprobante> {
-  /* Sin webhook configurado no hay a quién preguntarle. Se corta acá y con el nombre de la variable
-     que falta: dejarlo seguir daría un fallo de red contra una URL vacía, que no dice qué arreglar. */
-  if (!WEBHOOK_COMPROBANTES) {
-    throw new Error('Falta configurar VITE_MAKE_WEBHOOK_COMPROBANTES para poder leer comprobantes.')
-  }
-
   const jobId = nuevoJobId()
 
   const form = new FormData()
@@ -146,7 +138,7 @@ export async function procesarComprobante(
      leer el documento y devolver los campos, y recién ahí la promesa se resuelve. Del lado de Make
      eso exige que el escenario termine con un módulo "Webhook response": sin él, Make contesta
      "Accepted" apenas recibe el archivo y corta la llamada antes de que la IA haya leído nada. */
-  const { texto, json } = await postWebhook(WEBHOOK_COMPROBANTES, form, opciones)
+  const { texto, json } = await postWebhook(form, opciones)
 
   // Sin JSON no hubo respuesta de verdad. No se inventa un éxito: se devuelve vacío y la UI advierte.
   if (json === null) {
