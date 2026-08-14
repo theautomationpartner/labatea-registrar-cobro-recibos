@@ -63,9 +63,6 @@ const FORMATOS_CHEQUE: { valor: FormatoCheque; rotulo: string }[] = [
 /** En qué quedó la validación del CUIT del emisor: sin validar, validado o rechazado. */
 type EstadoCuit = 'pendiente' | 'ok' | 'error'
 
-/** Falta el clic en "Validar": el cheque no se registra con un CUIT sin contrastar. */
-const MSG_CUIT_SIN_VALIDAR = 'Validá el CUIT'
-
 /** Dígitos del año de la retención: se pide el ejercicio completo (2026), no dos cifras. */
 const ANIO_DIGITOS = 4
 
@@ -162,7 +159,6 @@ function CampoCuit({
   forzarError,
   errorExterno,
   estado,
-  onValidar,
   onCambio,
 }: {
   valor: string
@@ -172,7 +168,6 @@ function CampoCuit({
   errorExterno?: string
   /** En qué quedó la validación del CUIT: sin validar, validado o rechazado. */
   estado: EstadoCuit
-  onValidar: () => void
   onCambio: (cuit: string) => void
 }) {
   const [tocados, setTocados] = useState([false, false, false])
@@ -196,9 +191,6 @@ function CampoCuit({
     : partes.findIndex((p, i) => tocados[i] && p.length > 0 && p.length < CUIT_TRAMOS[i].digitos)
 
   const validado = estado === 'ok'
-  /* Sin los once dígitos no hay nada que comparar contra el cliente: el botón espera. Ya validado,
-     el CUIT queda congelado: no se edita lo que se dio por bueno. */
-  const puedeValidar = cuitCompleto(valor) && !validado
 
   return (
     <div className="cobro-form-campo cobro-form-campo--val cobro-campo--cuit">
@@ -225,7 +217,6 @@ function CampoCuit({
               placeholder={'0'.repeat(t.digitos)}
               aria-label={t.aria}
               aria-invalid={iMal === i || undefined}
-              disabled={validado}
               value={partes[i]}
               onChange={(e) => escribir(i, e.target.value)}
               onBlur={() => setTocados((prev) => prev.map((v, j) => (j === i ? true : v)))}
@@ -233,39 +224,32 @@ function CampoCuit({
           </Fragment>
         ))}
 
-        {/* Validar el CUIT contra el cliente es un paso EXPLÍCITO, y el color del botón es todo el
-            feedback: verde con tilde si el cheque se puede registrar, rojo con cruz si es del
-            cliente y no le tomamos cheques. */}
-        <button
-          type="button"
-          className={`cobro-cuit-validar ${
-            validado
-              ? 'cobro-cuit-validar--ok'
-              : estado === 'error'
-                ? 'cobro-cuit-validar--err'
-                : ''
+        {/* RESULTADO de la validación, no un control: el CUIT se contrasta contra el cliente solo,
+            apenas se completan los once dígitos —los tipee el usuario o los traiga la lectura del
+            cheque—. El color es todo el feedback: verde con tilde si el cheque se puede registrar,
+            rojo con cruz si es del cliente y no le tomamos cheques.
+
+            El recuadro se dibuja SIEMPRE, aunque esté vacío: así los tramos no se corren de lugar
+            cuando aparece el resultado. */}
+        <span
+          className={`cobro-cuit-estado ${
+            validado ? 'cobro-cuit-estado--ok' : estado === 'error' ? 'cobro-cuit-estado--err' : ''
           }`}
-          disabled={!puedeValidar}
+          role={estado === 'pendiente' ? undefined : 'img'}
           aria-label={
-            validado ? 'CUIT validado' : estado === 'error' ? 'CUIT rechazado' : 'Validar el CUIT'
-          }
-          title={
             validado
-              ? 'CUIT validado'
-              : cuitCompleto(valor)
-                ? 'Validar el CUIT contra el cliente'
-                : 'Completá los once dígitos del CUIT para validarlo'
+              ? 'CUIT válido para recibir el cheque'
+              : estado === 'error'
+                ? 'CUIT rechazado'
+                : undefined
           }
-          onClick={onValidar}
         >
           {validado ? (
             <i className="fas fa-check" />
           ) : estado === 'error' ? (
             <i className="fas fa-xmark" />
-          ) : (
-            'Validar'
-          )}
-        </button>
+          ) : null}
+        </span>
       </div>
       {/* El tramo incompleto manda: sin un CUIT bien escrito no hay nada que validar contra el
           cliente. */}
@@ -393,18 +377,24 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
   const chequeRechazado = esCheque && estadoCuit === 'error'
 
   /**
-   * Valida el CUIT contra el cliente del paso 1. Rechazado, se BORRA el CUIT cargado: hay que
-   * ingresar otro, y dejar a la vista el que no sirve sólo invita a reintentar con el mismo. El
-   * mensaje queda hasta que se escriba uno nuevo.
+   * Valida el CUIT del emisor contra el cliente del paso 1, SOLA, apenas están los once dígitos.
+   *
+   * Corre por igual con lo que tipea el usuario y con lo que devuelve la lectura del cheque: el dato
+   * es el mismo y la regla también, así que pedir además un clic en "Validar" era un trámite que no
+   * agregaba ninguna decisión. Con el CUIT incompleto vuelve a "pendiente": no hay nada que
+   * comparar, y un veredicto viejo sobre un número a medio escribir sería mentira.
+   *
+   * El CUIT rechazado NO se borra: queda a la vista, en rojo, para que se vea cuál fue el que no
+   * sirve mientras se escribe otro.
    */
-  const validarCuit = () => {
-    if (validarCuitEmisor(cliente, borrador.cuitEmisor) === 'ok') {
-      setEstadoCuit('ok')
+  useEffect(() => {
+    if (!esCheque) return
+    if (!cuitCompleto(borrador.cuitEmisor)) {
+      setEstadoCuit('pendiente')
       return
     }
-    setEstadoCuit('error')
-    setBorrador((b) => ({ ...b, cuitEmisor: '' }))
-  }
+    setEstadoCuit(validarCuitEmisor(cliente, borrador.cuitEmisor) === 'ok' ? 'ok' : 'error')
+  }, [esCheque, borrador.cuitEmisor, cliente])
 
   /* El vencimiento tiene que ser el día de hoy, el del recibo (ver `MSG_CHEQUE_VENC_CORTO`). Avisa
      apenas se carga una fecha que incumple la regla; vacío, recién al intentar agregar —o cuando la
@@ -419,9 +409,9 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
     bancoEmisor: esCheque && !borrador.bancoEmisor?.trim(),
     cuit: esCheque && !cuitCompleto(borrador.cuitEmisor),
     numeroCheque: esCheque && !borrador.numeroCheque?.trim(),
-    /* El CUIT tiene que estar VALIDADO antes de agregar el cheque: sin ese clic no se registra,
-       ni siquiera con todo lo demás completo. */
-    cuitValidado: esCheque && estadoCuit !== 'ok',
+    /* El CUIT rechazado frena el alta aunque todo lo demás esté completo. No se mira "sin validar":
+       la validación corre sola con los once dígitos, y que falten los cubre `cuit`. */
+    cuitValidado: esCheque && estadoCuit === 'error',
     /* La emisión del cheque se pide cargada y nada más: es la fecha en que lo libró su emisor, y
        puede ser de cualquier día anterior. */
     fechaEmision: esCheque && !borrador.fechaEmisionCheque?.trim(),
@@ -942,20 +932,11 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
               <CampoCuit
                 valor={borrador.cuitEmisor ?? ''}
                 forzarError={mal('cuit')}
-                errorExterno={
-                  chequeRechazado
-                    ? MSG_CHEQUE_CLIENTE_NO
-                    : intento && faltantes.cuitValidado && cuitCompleto(borrador.cuitEmisor)
-                      ? MSG_CUIT_SIN_VALIDAR
-                      : undefined
-                }
+                errorExterno={chequeRechazado ? MSG_CHEQUE_CLIENTE_NO : undefined}
                 estado={estadoCuit}
-                onValidar={validarCuit}
-                /* Editar el CUIT invalida el visto bueno: era de ESE número, no del campo. */
-                onCambio={(cuitEmisor) => {
-                  setEstadoCuit('pendiente')
-                  setBorrador({ ...borrador, cuitEmisor })
-                }}
+                /* El veredicto lo recalcula el efecto de arriba con cada cambio: era de ESE
+                   número, no del campo. */
+                onCambio={(cuitEmisor) => setBorrador({ ...borrador, cuitEmisor })}
               />
 
               {/* Corte de renglón: el banco y el "+ Agregar" cierran abajo, en su propia línea. */}

@@ -535,59 +535,31 @@
   color: var(--c-text-main);
   cursor: not-allowed;
 }
-/* Botón "Validar", pegado a la derecha del CUIT. Mismo alto que los tramos; una vez resuelto se
-   queda sólo con el ícono, porque el color ya dice todo lo que hay que saber. */
-/* En reposo es la MISMA caja que los tramos del CUIT —alto, padding, borde y radio de `.cobro-in`—,
-   así el botón se lee como parte del campo y no como un elemento ajeno pegado al lado. Al pasar el
-   mouse se llena de azul: recién ahí se lee como la acción a ejecutar. */
-.cobro-v2 .cobro-cuit-validar {
+/* RESULTADO de la validación del CUIT, pegado a la derecha de los tres tramos. Ya no es un botón:
+   el CUIT se contrasta contra el cliente solo, apenas están los once dígitos.
+
+   Mide lo mismo que un tramo y se dibuja SIEMPRE, aunque esté vacío: si apareciera recién con el
+   veredicto, los tramos se correrían de lugar en el momento justo en que se termina de tipear. */
+.cobro-v2 .cobro-cuit-estado {
   flex: 0 0 auto;
+  width: 40px;
   height: 40px;
   margin-left: 2px;
-  padding: 0 14px;
-  border: 1.5px solid #000;
   border-radius: var(--c-radius-md);
-  background: var(--c-bg-input);
-  color: var(--c-text-main);
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-.cobro-v2 .cobro-cuit-validar:hover:not(:disabled) {
-  background: var(--c-primary);
-  border-color: var(--c-primary);
+  font-size: 15px;
   color: #fff;
+  transition: background 0.15s;
 }
-/* Sin los once dígitos no hay nada que validar: el botón espera apagado. */
-.cobro-v2 .cobro-cuit-validar:disabled {
-  border-color: var(--c-border);
-  color: #a9b0bd;
-  background: #fbfbfc;
-  cursor: not-allowed;
+/* Se puede recibir: verde con el tilde en blanco. */
+.cobro-v2 .cobro-cuit-estado--ok {
+  background: var(--c-success);
 }
-/* Validado: verde con el tilde en blanco. Queda deshabilitado —ya no hay nada que revalidar—,
-   así que pisa también el estilo de :disabled. */
-.cobro-v2 .cobro-cuit-validar--ok,
-.cobro-v2 .cobro-cuit-validar--ok:disabled {
-  width: 40px;
-  padding: 0;
-  background: var(--c-success, #00c875);
-  border-color: var(--c-success, #00c875);
-  color: #fff;
-  cursor: default;
-}
-/* Rechazado: rojo con la cruz en blanco. Sigue habilitado para revalidar el CUIT nuevo. */
-.cobro-v2 .cobro-cuit-validar--err,
-.cobro-v2 .cobro-cuit-validar--err:disabled {
-  width: 40px;
-  padding: 0;
+/* Es del cliente y no le tomamos cheques: rojo con la cruz. El mensaje va debajo del campo. */
+.cobro-v2 .cobro-cuit-estado--err {
   background: var(--c-danger);
-  border-color: var(--c-danger);
-  color: #fff;
 }
 /* Retención: el año es corto y el número del certificado acompaña; el adjunto se queda con el
    resto del renglón. */

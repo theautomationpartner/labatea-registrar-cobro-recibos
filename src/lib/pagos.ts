@@ -52,8 +52,7 @@ export const esPagoConTarjeta = (forma: FormaPago | null | undefined): boolean =
 /* ===== Cheque ===== */
 
 /** Error bajo el CUIT del emisor cuando el cheque es del propio cliente y no se le reciben. */
-export const MSG_CHEQUE_CLIENTE_NO =
-  'No se reciben cheques del cliente seleccionado. Ingrese otro CUIT.'
+export const MSG_CHEQUE_CLIENTE_NO = 'No se reciben cheques de este cliente: ingresá otro CUIT'
 
 /** Sólo los dígitos: el mismo CUIT con guiones o sin ellos es el mismo CUIT. */
 const digitosCuit = (cuit: string | undefined): string => (cuit ?? '').replace(/\D/g, '')
