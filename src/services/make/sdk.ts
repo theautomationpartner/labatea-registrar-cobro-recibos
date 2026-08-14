@@ -36,7 +36,7 @@ export interface RespuestaMake {
 /** El escenario tardó más de lo aceptable. Se distingue de un fallo para poder ofrecer reintentar. */
 export class TimeoutMake extends Error {
   constructor() {
-    super('El escenario de Make tardó demasiado en responder. Probá de nuevo.')
+    super('El servidor tardó demasiado en responder. Probá de nuevo.')
     this.name = 'TimeoutMake'
   }
 }
@@ -171,20 +171,20 @@ async function unIntento(form: FormData, signal?: AbortSignal): Promise<Respuest
          Nada corrió del otro lado, así que se reintenta: activarlo alcanza para que la carga siga. */
       if (res.status === 410) {
         throw new FalloTransitorio(
-          'El escenario de Make no está activo: activalo para poder procesar el documento.',
+          'El servicio de lectura no está disponible en este momento. Probá de nuevo en unos minutos.',
         )
       }
       /* 5xx y 429 son de la infraestructura de Make, no del escenario: puede andar en el próximo
          intento. Un 4xx es una respuesta del escenario y no cambia por insistir. */
       if (res.status >= 500 || res.status === 429) {
-        throw new FalloTransitorio(mensajeDeFallo(texto, res.status))
+        throw new FalloTransitorio(mensajeDeFallo(texto))
       }
       /* El archivo no se pudo convertir a PDF: es del documento, no del escenario ni del momento.
          Se lanza aparte para que la pantalla lo trate como lo que es —un error fatal de ESTE
          archivo— en vez de invitar a reintentar. */
       const fatal = mensajeFatal(texto)
       if (fatal) throw new ErrorFatalMake(fatal)
-      throw new Error(mensajeDeFallo(texto, res.status))
+      throw new Error(mensajeDeFallo(texto))
     }
     return { texto, json: parsearJson(texto) }
   } catch (e) {
@@ -192,7 +192,7 @@ async function unIntento(form: FormData, signal?: AbortSignal): Promise<Respuest
     /* La red se cayó o el servidor no atendió: `fetch` sólo rechaza por eso, y es lo más
        transitorio que hay. Se distingue de los errores que se lanzan acá arriba a propósito. */
     if (e instanceof TypeError) {
-      throw new FalloTransitorio('No se pudo conectar con Make. Revisá la conexión.')
+      throw new FalloTransitorio('No se pudo conectar con el servidor. Revisá la conexión.')
     }
     throw e
   } finally {
@@ -264,30 +264,23 @@ export function mensajeDelEscenario(cuerpo: unknown, profundidad = 2): string {
 const recortar = (mensaje: string): string =>
   mensaje.length <= MAX_MENSAJE ? mensaje : `${mensaje.slice(0, MAX_MENSAJE).trimEnd()}…`
 
+/** Lo único que se dice cuando el fallo no trae un mensaje pensado para el usuario. */
+export const MSG_ERROR_SERVIDOR = 'Error de servidor. Probá de nuevo en unos minutos.'
+
 /**
- * Qué se le muestra al usuario cuando Make responde con un código de error.
+ * Qué se le muestra al usuario cuando la lectura responde con un código de error.
  *
- * El orden es: el mensaje que mandó el escenario, el código de error si sólo vino eso, y recién al
- * final uno genérico con el HTTP. Lo que NUNCA se muestra es el cuerpo crudo —JSON o HTML—: para
- * quien está cargando una cobranza es ruido, y el detalle técnico ya está en el historial de Make.
+ * Se muestra ÚNICAMENTE el mensaje que viaja en el JSON de la respuesta, que es texto redactado
+ * para que alguien lo lea. Todo lo demás —un cuerpo de texto plano, una página HTML, el diagnóstico
+ * de la plataforma— se reemplaza por un error genérico.
+ *
+ * La regla no es de estilo: un cuerpo crudo trae identificadores de infraestructura (el id de la
+ * invocación, la región, el nombre de la función) y ponerlos en pantalla es contarle a cualquiera
+ * que pase por ahí cómo está armada la app, sin que además le sirva de nada para resolver su cobro.
  */
-function mensajeDeFallo(texto: string, status: number): string {
-  const cuerpo = parsearJson(texto)
-  if (cuerpo === null) {
-    /* Sin JSON, el cuerpo suele ser una línea de texto legible. Se muestra salvo que sea una página
-       HTML de error, que no le dice nada a nadie. */
-    const plano = texto.trim()
-    if (plano && !plano.startsWith('<')) return recortar(plano)
-    return `El escenario de Make falló (HTTP ${status}). Volvé a intentar en unos segundos.`
-  }
-
-  const mensaje = mensajeDelEscenario(cuerpo)
-  if (mensaje) return recortar(mensaje)
-
-  const codigo = codigoDelEscenario(cuerpo)
-  return codigo
-    ? `El escenario de Make falló con el error "${codigo}". Volvé a intentar en unos segundos.`
-    : `El escenario de Make falló (HTTP ${status}). Volvé a intentar en unos segundos.`
+function mensajeDeFallo(texto: string): string {
+  const mensaje = mensajeDelEscenario(parsearJson(texto))
+  return mensaje ? recortar(mensaje) : MSG_ERROR_SERVIDOR
 }
 
 /**

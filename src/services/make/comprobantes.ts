@@ -25,7 +25,13 @@
  */
 import { round2 } from '@/lib/format'
 import type { FormaPago, FormatoCheque } from '@/types'
-import { mensajeDelEscenario, nuevoJobId, postWebhook, type OpcionesWebhook } from './sdk'
+import {
+  mensajeDelEscenario,
+  MSG_ERROR_SERVIDOR,
+  nuevoJobId,
+  postWebhook,
+  type OpcionesWebhook,
+} from './sdk'
 
 /* La dirección del webhook NO está acá ni en ninguna parte del cliente: vive en el servidor, y la
    llamada sale contra el proxy propio (ver `sdk.ts` y `api/make-comprobantes.ts`). */
@@ -140,9 +146,11 @@ export async function procesarComprobante(
      "Accepted" apenas recibe el archivo y corta la llamada antes de que la IA haya leído nada. */
   const { texto, json } = await postWebhook(form, opciones)
 
-  // Sin JSON no hubo respuesta de verdad. No se inventa un éxito: se devuelve vacío y la UI advierte.
+  /* Sin JSON no hubo respuesta de verdad. No se inventa un éxito: se devuelve vacío y la UI
+     advierte. Si además el cuerpo dice "error", se lanza como fallo del servidor SIN reproducirlo:
+     un cuerpo que no es JSON no es un mensaje para el usuario, es diagnóstico de la plataforma. */
   if (json === null) {
-    if (/error|failed/i.test(texto)) throw new Error(texto.slice(0, 200))
+    if (/error|failed/i.test(texto)) throw new Error(MSG_ERROR_SERVIDOR)
     return { jobId, datos: {}, campos: 0, respondioJson: false }
   }
 
@@ -151,7 +159,7 @@ export async function procesarComprobante(
      cualquier texto que pueda inventar la app. Se extrae con el mismo criterio que el de un HTTP de
      error —nunca se muestra el JSON crudo—. */
   if (raiz.ok === false || raiz.error) {
-    throw new Error(mensajeDelEscenario(raiz) || 'El escenario no pudo leer el documento.')
+    throw new Error(mensajeDelEscenario(raiz) || 'No se pudo leer el documento.')
   }
 
   /* La IA rechazó el documento: leyó bien, y lo que leyó no es el comprobante que se esperaba. Es

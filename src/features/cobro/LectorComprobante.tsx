@@ -166,7 +166,7 @@ export function LectorComprobante({
         onReintento: (intento, total, esperaMs) => {
           if (ctrl.signal.aborted) return
           setDetalle(
-            `El escenario no está respondiendo. Reintentamos en ${Math.round(esperaMs / 1000)} segundos (intento ${intento} de ${total - 1}).`,
+            `El servidor no está respondiendo. Reintentamos en ${Math.round(esperaMs / 1000)} segundos (intento ${intento} de ${total - 1}).`,
           )
         },
       })
@@ -184,10 +184,10 @@ export function LectorComprobante({
         setEstado('sin-datos')
         setDetalle(
           !lectura.respondioJson
-            ? 'El escenario recibió el documento pero no devolvió datos: tiene que terminar con un módulo "Webhook response", y responder antes del tiempo que Make espera. Cargá los campos a mano o volvé a intentar.'
+            ? 'El servidor recibió el documento pero no devolvió ningún dato. Cargá los campos a mano o volvé a intentar.'
             : lectura.campos === 0
-              ? 'El escenario respondió, pero sin los datos esperados: revisá que la IA los devuelva en el JSON de respuesta. Cargá los campos a mano o volvé a intentar.'
-              : `El escenario devolvió datos, pero ninguno corresponde a ${formaPago}. Revisá que el documento sea el del medio de cobro elegido.`,
+              ? 'El documento se leyó, pero no se reconoció ningún dato. Cargá los campos a mano o volvé a intentar.'
+              : `Los datos leídos no corresponden a ${formaPago}. Revisá que el documento sea el del medio de cobro elegido.`,
         )
         return
       }

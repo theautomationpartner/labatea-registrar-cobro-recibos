@@ -11,37 +11,44 @@
  * multipart, y sin él Make no puede separar el archivo del resto de los campos.
  *
  * Equivale al proxy de Vite (`/make-comprobantes`) que sólo existe en desarrollo.
+ *
+ * ── Por qué la firma es (req, res) y no (Request) → Response ──
+ * Esta función corre en el runtime de NODE, no en el edge, y ahí Vercel invoca al `export default`
+ * con los objetos de `node:http` —el `req` es un `IncomingMessage`, no un `Request` del estándar
+ * web—. Escrita con la firma web, la primera línea que tocaba `req.headers.get(...)` reventaba con
+ * un TypeError y Vercel devolvía `FUNCTION_INVOCATION_FAILED` antes de llegar a Make.
+ *
+ * Los proxies de Monday sí usan la firma web porque declaran `runtime: 'edge'`, donde ESA es la
+ * correcta. Acá el edge no sirve: corta la respuesta mucho antes de lo que tarda el módulo de IA en
+ * leer un documento, y por eso esta función se quedó en Node con su `maxDuration`.
  */
+import type { IncomingMessage, ServerResponse } from 'node:http'
 
 /*
- * Runtime `nodejs` —no `edge` como los proxies de Monday— por el tiempo que tarda la respuesta: del
- * otro lado hay un módulo de IA leyendo un documento, no una consulta a una base. Las funciones edge
- * cortan bastante antes, y un corte acá se vería como un fallo del escenario cuando en realidad
- * estaba por contestar bien.
- *
  * 60 s es el techo del plan Hobby. En Pro se puede subir hasta 300 s, más cerca del tope que espera
  * el cliente (ver `TIMEOUT_MS` en `src/services/make/sdk.ts`).
  */
 export const config = { maxDuration: 60 }
 
-export default async function handler(req: Request): Promise<Response> {
+/** El cuerpo puede venir ya leído por el runtime, según el `Content-Type` que haya reconocido. */
+type Pedido = IncomingMessage & { body?: unknown }
+
+export default async function handler(req: Pedido, res: ServerResponse): Promise<void> {
   if (req.method !== 'POST') {
-    return new Response('Method Not Allowed', { status: 405 })
+    return responder(res, 405, { error: 'Method Not Allowed' })
   }
 
   const webhook = process.env.MAKE_WEBHOOK_COMPROBANTES?.trim()
   if (!webhook) {
-    return json({ error: 'MAKE_WEBHOOK_COMPROBANTES no está configurado en el servidor.' }, 500)
+    return responder(res, 500, { error: 'El servicio de lectura no está configurado.' })
   }
 
-  const contentType = req.headers.get('content-type')
+  const contentType = req.headers['content-type']
   if (!contentType?.startsWith('multipart/form-data')) {
-    return json({ error: 'El comprobante tiene que viajar como multipart.' }, 400)
+    return responder(res, 400, { error: 'El comprobante tiene que viajar como multipart.' })
   }
 
-  /* Se bufferea el cuerpo en lugar de reenviar el stream: es un comprobante —una hoja— y evita
-     depender del soporte de `duplex: 'half'` del runtime. Mismo criterio que `/api/monday-upload`. */
-  const body = await req.arrayBuffer()
+  const body = await leerCuerpo(req)
 
   let upstream: Response
   try {
@@ -54,21 +61,39 @@ export default async function handler(req: Request): Promise<Response> {
     /* No se pudo llegar a Make. Se responde 502 —y no 500— porque el sdk trata los 5xx como fallo
        transitorio y reintenta, que es exactamente lo que corresponde acá. El detalle del error no se
        reenvía: diría el hostname del hook, que es justo lo que esta función existe para no mostrar. */
-    return json({ error: 'No se pudo conectar con Make.' }, 502)
+    return responder(res, 502, { error: 'No se pudo contactar el servicio de lectura.' })
   }
 
   /* La respuesta del escenario se devuelve intacta —cuerpo y status—: el cliente ya sabe leerla,
      incluidos los errores que Make declara con un 200 y el 410 del escenario apagado. */
-  const text = await upstream.text()
-  return new Response(text, {
-    status: upstream.status,
-    headers: { 'content-type': upstream.headers.get('content-type') ?? 'application/json' },
-  })
+  const texto = await upstream.text()
+  res.statusCode = upstream.status
+  res.setHeader('content-type', upstream.headers.get('content-type') ?? 'application/json')
+  res.end(texto)
 }
 
-function json(data: unknown, status: number): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  })
+/**
+ * El cuerpo crudo del pedido.
+ *
+ * El runtime parsea solo lo que reconoce (JSON, formularios simples) y deja el multipart sin tocar,
+ * así que casi siempre hay que leer el stream. Se contempla igual el caso de que ya venga leído:
+ * consumir un stream vacío devolvería un cuerpo de cero bytes y Make recibiría un multipart sin
+ * partes, que es más difícil de diagnosticar que un error.
+ *
+ * Devuelve un `Uint8Array` —del que `Buffer` es una especialización— porque es lo que acepta el
+ * `body` de `fetch` sin pedirle al tipado que confíe en nadie.
+ */
+async function leerCuerpo(req: Pedido): Promise<Uint8Array> {
+  if (Buffer.isBuffer(req.body)) return req.body
+  if (typeof req.body === 'string') return Buffer.from(req.body)
+
+  const partes: Buffer[] = []
+  for await (const trozo of req) partes.push(Buffer.from(trozo))
+  return Buffer.concat(partes)
+}
+
+function responder(res: ServerResponse, status: number, data: unknown): void {
+  res.statusCode = status
+  res.setHeader('content-type', 'application/json')
+  res.end(JSON.stringify(data))
 }
