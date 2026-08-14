@@ -240,8 +240,20 @@ export function LectorComprobante({
      archivo, el mensaje del error dice algo más útil que "cargá el comprobante". */
   const reclamo = estado === 'vacio' ? error : undefined
   const listoYCompleto = estado === 'listo' && faltantes.length === 0
-  /** El recuadro no acepta nada: por el formulario cerrado o porque ya cumplió su función. */
-  const cerrado = deshabilitado || listoYCompleto
+  /**
+   * El recuadro NO acepta nada. Son tres motivos distintos con el mismo efecto:
+   *
+   *   · el formulario está cerrado —el cobro ya se registró—;
+   *   · hay una lectura EN CURSO: hasta que termine no entra otro documento. Aceptarlo abortaría la
+   *     llamada a mitad de camino y dispararía una segunda, con el escenario procesando dos veces
+   *     el mismo cobro y los campos completándose con lo que devuelva la que conteste última;
+   *   · ya se procesó uno y de él salieron todos los datos que este medio necesita, así que un
+   *     documento nuevo sólo borraría campos que están bien para volver a leerlos.
+   *
+   * Lo del medio se reabre solo al terminar la lectura; lo último, si alguno de esos campos queda
+   * vacío: ahí sí un comprobante nuevo tiene algo que aportar.
+   */
+  const cerrado = deshabilitado || estado === 'procesando' || listoYCompleto
 
   return (
     /* El recuadro ENTERO es la zona de soltado, y adentro pasa todo: la consigna, el estado de la
@@ -277,18 +289,22 @@ export function LectorComprobante({
            no muestra el cursor de mano. La zona deja de ser un control. */
         disabled={cerrado}
         title={
-          listoYCompleto
-            ? 'El comprobante ya se procesó y completó todos los datos'
-            : archivo
-              ? 'Reemplazar el comprobante cargado'
-              : 'Arrastrá para subir · PDF o imagen, hasta 10 MB'
+          estado === 'procesando'
+            ? 'Esperá a que termine de procesarse el documento'
+            : listoYCompleto
+              ? 'El comprobante ya se procesó y completó todos los datos'
+              : archivo
+                ? 'Reemplazar el comprobante cargado'
+                : 'Arrastrá para subir · PDF o imagen, hasta 4 MB'
         }
         aria-label={
-          listoYCompleto
-            ? `Comprobante procesado: ${archivo?.name ?? ''}. Ya completó todos los datos`
-            : archivo
-              ? `Comprobante cargado: ${archivo.name}. Hacé click para reemplazarlo`
-              : 'Subir el comprobante: arrastrá el archivo o hacé click para elegirlo'
+          estado === 'procesando'
+            ? 'Procesando el documento: esperá a que termine para cargar otro'
+            : listoYCompleto
+              ? `Comprobante procesado: ${archivo?.name ?? ''}. Ya completó todos los datos`
+              : archivo
+                ? `Comprobante cargado: ${archivo.name}. Hacé click para reemplazarlo`
+                : 'Subir el comprobante: arrastrá el archivo o hacé click para elegirlo'
         }
         onClick={abrirBuscador}
       />

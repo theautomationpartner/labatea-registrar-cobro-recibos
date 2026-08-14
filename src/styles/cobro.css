@@ -725,9 +725,17 @@
    mensajes de campos vecinos—. Como pueden envolver en dos renglones, el campo reserva abajo el
    alto de los dos: mostrar el error nunca empuja la fila siguiente. */
 .cobro-v2 .cobro-lector-campos .cobro-form-campo--val {
-  padding-bottom: 34px;
+  /* Alto reservado abajo: dos renglones de mensaje. Va en una variable porque el mensaje se
+     posiciona contra ella. */
+  --reserva-err: 34px;
+
+  padding-bottom: var(--reserva-err);
 }
 .cobro-v2 .cobro-lector-campos .cobro-in-err {
+  /* PEGADO al input, no al borde inferior del campo. El mensaje es absoluto y se ancla al campo,
+     que mide input + reserva; sin descontar la reserva, el aire que existe para que el mensaje
+     crezca hacia abajo quedaba ARRIBA de él, separándolo del input que explica. */
+  top: calc(100% - var(--reserva-err) + 2px);
   width: auto;
   min-width: 0;
   max-width: 100%;
