@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useOpcionesRecordadas } from './useOpcionesRecordadas'
+import { opcionCanonica, useOpcionesRecordadas } from './useOpcionesRecordadas'
 
 /** Valor centinela de la opción que abre el alta de una opción nueva. */
 const OPCION_NUEVO = '__nuevo__'
@@ -56,11 +56,17 @@ export function SelectConAlta({
 
   const opciones = value && !guardadas.includes(value) ? [...guardadas, value] : guardadas
 
+  /**
+   * Confirma el alta. Si lo tipeado es una opción que YA existe —escrita distinto: "banco nacion"
+   * contra "Banco Nación"—, se elige esa en lugar de dar de alta un duplicado: en el selector
+   * quedarían dos veces el mismo banco, y en Monday dos etiquetas para el mismo dato.
+   */
   const confirmarNuevo = () => {
     const limpio = nuevo.trim()
     if (!limpio) return
-    agregar(limpio)
-    onChange(limpio)
+    const yaExistente = opcionCanonica(limpio, opciones)
+    if (!yaExistente) agregar(limpio)
+    onChange(yaExistente ?? limpio)
     setNuevo('')
     setAgregando(false)
   }

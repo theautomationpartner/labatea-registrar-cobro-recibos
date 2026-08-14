@@ -33,6 +33,11 @@ export const BOARDS = {
   ventas: 18421035510,
   /** "Anticipos Pends de Aplicar": el saldo a favor del cliente, listo para imputarse a facturas. */
   anticipos: 18426066447,
+  /**
+   * Cuenta corriente del cliente: un ítem por cliente y, colgando de él, un SUBÍTEM por movimiento.
+   * De ahí salen los dos saldos que muestra la ficha (pendiente de cancelar y anticipos).
+   */
+  ctaCte: 18421858736,
   config: 18421035530,
 } as const
 
@@ -248,8 +253,15 @@ export const COL = {
     /* --- Retenciones --- */
     /** "🤖Año" (numbers): el ejercicio al que corresponde la retención. */
     anioRetencion: 'numeric_mm64dwpx',
-    /** "💰Fact Vtas Pends de Cobro" (board_relation): la factura que este subítem cancela. */
+    /** "💰Fact Cancelada" (board_relation → 18421035508): la factura que este subítem cancela. */
     factura: 'board_relation_mm63pczd',
+    /**
+     * "Anticipos Pends de Aplicar" (board_relation → 18426066447): el anticipo cuyo saldo se usa.
+     *
+     * Es una columna PROPIA y no la de facturas: "💰Fact Cancelada" sólo conecta con los tableros de
+     * facturas (18421035508 / 18422405731), así que un id de anticipo escrito ahí no linkea nada.
+     */
+    anticipoAplicado: 'board_relation_mm659pd1',
     /** "🤖Importe Cancelado $": cuánto se le imputa a esa factura. */
     importeCancelado: 'numeric_mm4e61yk',
     /** "🤖Importe Cobrado $": cuánto entregó el cliente con esa forma de pago. */
@@ -293,13 +305,46 @@ export const COL = {
     remitosPendFacturar: 'numeric_mm5f2npa',
     /** "🤖Limite de credito": el límite del cliente, espejado en su cuenta. */
     limite: 'lookup_mm585jgv',
+    /** Relación al cliente (board de Personas). Es por donde se busca SU cuenta corriente. */
+    cliente: 'board_relation_mm58dyn',
   },
+  /* SUBELEMENTOS de la cuenta corriente: un movimiento por fila. El tipo de movimiento decide qué
+     columna de importe hay que leer —cada clase de saldo tiene la suya—, así que las tres se
+     interpretan juntas. */
+  ctaCteSub: {
+    /** Tipo de movimiento (status): "Vta Pend de Cobro", "Anticipo"… Ver `CTA_CTE_MOV`. */
+    tipo: 'color_mm5z46ht',
+    /** Importe pendiente de cancelar. Sólo lo llevan los movimientos "Vta Pend de Cobro". */
+    pendiente: 'numeric_mm5gdhkt',
+    /** Importe del anticipo. Sólo lo llevan los movimientos "Anticipo". */
+    anticipo: 'numeric_mm5gtxav',
+  },
+} as const
+
+/**
+ * Etiquetas de "tipo de movimiento" (color_mm5z46ht) que la ficha suma por separado.
+ *
+ * Se comparan por TEXTO y no por índice: son los rótulos que llegaron por especificación y no se
+ * pudieron verificar contra el tablero, así que atarlos a un índice inventado sería peor —un índice
+ * equivocado suma en silencio el movimiento que no es—. La comparación normaliza mayúsculas y
+ * espacios, para que un rótulo con otra capitalización siga entrando.
+ */
+export const CTA_CTE_MOV = {
+  pendienteDeCobro: 'Vta Pend de Cobro',
+  anticipo: 'Anticipo',
 } as const
 
 /* ===== Etiquetas del recibo =====
    Los tres mapas de acá abajo traducen el vocabulario de la APP al del TABLERO. Existen porque no
-   coinciden: la app dice "Retencion GAN" y el board "Retencion IG", la app "Galicia" y el board
-   "Banco Galicia". Sin la traducción, cada cobro ensuciaría el tablero con etiquetas duplicadas. */
+   coinciden: la app dice "Retencion GAN" y el board "Retencion IG", la app "Banco BBVA" y el board
+   "BBVA". Sin la traducción, cada cobro ensuciaría el tablero con etiquetas duplicadas. */
+
+/**
+ * Formas de pago que TODAVÍA no tienen su etiqueta en "✋Caja" y por eso se escriben por texto en
+ * vez de por índice (ver `CAJA_LABEL`). Es una lista de excepciones, no la regla: en cuanto el
+ * tablero tenga la etiqueta y se sepa su índice, la forma se mueve a `CAJA_INDEX` y sale de acá.
+ */
+export type FormaPagoSinIndice = 'Retencion SUSS'
 
 /**
  * Forma de pago de la app → ÍNDICE de "✋Caja" (columna `status`) del subelemento. Se escribe por
@@ -308,9 +353,16 @@ export const COL = {
  *
  * Los índices salen del propio tablero: {"0":"Transferencia","1":"Cheque","2":"Efectivo",
  * "3":"Tarjeta de Debito","4":"Tarjeta de Crédito","6":"Retencion IIBB","7":"Retencion IG",
- * "8":"Retencion IVA","9":"Dif de Caja"} — OJO, no siguen el orden en que se ven y falta el 5.
+ * "8":"Retencion IVA","9":"Dif de Caja","10":"Fact Cancelada","11":"Anticipo",
+ * "12":"Retencion IIBB","13":"Retencion CCSS"} — OJO, no siguen el orden en que se ven, falta el 5,
+ * y el 12 es un DUPLICADO de "Retencion IIBB": las retenciones de IIBB se escriben en el 6, que es
+ * donde están las que ya se registraron.
+ *
+ * El tipo excluye SÓLO a las formas de `FORMAS_PAGO_SIN_INDICE`: sumar un medio de cobro al
+ * catálogo sin darle su caja no compila, así que ninguna forma de pago puede llegar al tablero sin
+ * una caja resuelta —por índice acá, o por etiqueta en `CAJA_LABEL`—.
  */
-export const CAJA_INDEX: Record<FormaPago, number> = {
+export const CAJA_INDEX: Record<Exclude<FormaPago, FormaPagoSinIndice>, number> = {
   Transferencia: 0,
   Cheque: 1,
   Efectivo: 2,
@@ -320,6 +372,33 @@ export const CAJA_INDEX: Record<FormaPago, number> = {
   // "Retencion GAN" en la app es "Retencion IG" (Impuesto a las Ganancias) en el tablero.
   'Retencion GAN': 7,
   'Retencion IVA': 8,
+  /* Contribuciones de Seguridad Social. Es la única caja que NO comparte el bloque 6-8: se sumó al
+     tablero después, así que quedó al final de la lista de etiquetas. */
+  'Retencion CCSS': 13,
+}
+
+/**
+ * Formas de pago que se escriben por ETIQUETA en "✋Caja". Es la excepción al criterio del índice y
+ * existe por un motivo concreto: la etiqueta todavía no está en el tablero, así que no hay índice
+ * que usar. La crea el propio alta del subelemento (`create_labels_if_missing: true`).
+ *
+ * Tiene la contra que el índice evita: si en el board le cambian el rótulo a esa caja, el próximo
+ * cobro crearía una etiqueta nueva en vez de caer en la existente. Por eso conviene pasarla a
+ * `CAJA_INDEX` en cuanto se sepa qué índice le tocó.
+ */
+export const CAJA_LABEL: Record<FormaPagoSinIndice, string> = {
+  'Retencion SUSS': 'Retencion SUSS',
+}
+
+/**
+ * Valor de "✋Caja" para una forma de pago: por índice cuando lo tiene y por etiqueta cuando no.
+ * Es el ÚNICO lugar donde se decide entre las dos formas, así que quien escribe el subelemento no
+ * tiene que saber cuál le toca a cada medio.
+ */
+export function cajaDeFormaPago(forma: FormaPago): { index: number } | { label: string } {
+  const label = (CAJA_LABEL as Partial<Record<FormaPago, string>>)[forma]
+  if (label) return { label }
+  return { index: (CAJA_INDEX as Record<FormaPago, number>)[forma] }
 }
 
 /**
@@ -423,22 +502,18 @@ export const CHEQUE_ORIGEN_LABEL: Record<FormatoCheque, string> = {
 }
 
 /**
- * Banco del selector de la app → etiqueta de "🤖Banco Emisor" (dropdown_mm5yfd8n). El selector
- * nombra los bancos cortos ("Galicia") y el tablero los tiene completos ("Banco Galicia").
+ * Banco del selector de la app → etiqueta de "🤖Banco Emisor" (dropdown_mm5yfd8n).
  *
- * Lo que NO está en este mapa viaja tal cual: son los bancos que el usuario agrega desde el propio
- * formulario ("➕ Otro banco…"), y su etiqueta se crea sola al escribir el subelemento
- * (`create_labels_if_missing`). Por eso el mapa cubre los fijos y no pretende ser exhaustivo.
+ * El catálogo de la app nombra a TODOS los bancos con la palabra adelante ("Banco HSBC"), que es el
+ * estándar del selector (ver `BANCOS_EMISORES_BASE`). El tablero coincide en casi todos; las dos
+ * excepciones son las que están acá, y se traducen para no dar de alta una etiqueta nueva al lado
+ * de la que ya existe —la mutación crea las que faltan (`create_labels_if_missing`), así que una
+ * diferencia de una palabra terminaría duplicando el banco en el board—.
+ *
+ * Lo que NO está en este mapa viaja tal cual: los demás fijos ya calzan letra por letra, y los que
+ * el usuario agrega desde el formulario ("➕ Otro banco…") son bancos nuevos de verdad.
  */
 export const BANCO_EMISOR_LABEL: Record<string, string> = {
-  Galicia: 'Banco Galicia',
-  Provincia: 'Banco Provincia',
-  Nacion: 'Banco Nación',
-  HSBC: 'HSBC',
-  Credicop: 'Banco Credicoop',
-  Santander: 'Banco Santander',
-  BBVA: 'BBVA',
-  Hipotecario: 'Banco Hipotecario',
-  Patagonia: 'Banco Patagonia',
-  Supervielle: 'Banco Supervielle',
+  'Banco HSBC': 'HSBC',
+  'Banco BBVA': 'BBVA',
 }

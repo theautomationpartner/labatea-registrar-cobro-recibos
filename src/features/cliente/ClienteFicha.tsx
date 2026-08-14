@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { aplicaCredito, motivoCreditoIgnorado, tieneValoresCredito } from '@/lib/credito'
 import { money } from '@/lib/format'
 import { creditoCliente } from '@/lib/selectors'
-import type { Cliente } from '@/types'
+import type { Cliente, SaldosCliente } from '@/types'
 
 const colorActividad = (c: Cliente) => (c.activity === 'Activo' ? 'var(--green)' : 'var(--red)')
 
@@ -25,6 +25,12 @@ interface ClienteFichaProps {
   cliente: Cliente | null
   /** La consulta a Monday está en curso: se mantiene el skeleton. */
   cargando?: boolean
+  /**
+   * Saldos de la cuenta corriente. Viajan APARTE del cliente porque salen de otro tablero y de otra
+   * consulta: llegan después, así que sus dos cajas se resuelven solas —siguen en skeleton mientras
+   * el resto de la ficha ya se ve—. `null` = todavía no llegaron.
+   */
+  saldos?: SaldosCliente | null
   /** Contenido opcional debajo del separador. */
   children?: ReactNode
 }
@@ -39,7 +45,12 @@ interface ClienteFichaProps {
  * contexto. Cuando el límite no rige la operación, el grupo se apaga: los datos siguen a la vista,
  * pero se lee de un golpe que no van a usarse, y debajo se aclara por qué.
  */
-export function ClienteFicha({ cliente, cargando = false, children }: ClienteFichaProps) {
+export function ClienteFicha({
+  cliente,
+  cargando = false,
+  saldos = null,
+  children,
+}: ClienteFichaProps) {
   const credito = cliente ? creditoCliente(cliente) : null
   const claseImporte = credito?.bloqueado ? 'v-gray' : ''
   const rigeCredito = cliente ? aplicaCredito(cliente) : false
@@ -56,6 +67,16 @@ export function ClienteFicha({ cliente, cargando = false, children }: ClienteFic
       <span className="skeleton skeleton--valor" />
     ) : (
       <span className={`kpi-value ${clase}`}>{contenido}</span>
+    )
+
+  /* Los saldos de cuenta corriente llegan de OTRA consulta que la ficha del cliente, así que tienen
+     su propio skeleton: mientras el resto de la ficha ya se ve, estas dos cajas siguen cargando en
+     vez de mostrar un cero que después cambia solo. */
+  const valSaldo = (importe: number | undefined) =>
+    vacio || !saldos ? (
+      <span className="skeleton skeleton--valor" />
+    ) : (
+      <span className={`kpi-value ${claseImporte}`}>{money(importe ?? 0)}</span>
     )
 
   return (
@@ -154,11 +175,22 @@ export function ClienteFicha({ cliente, cargando = false, children }: ClienteFic
       {muestraValores && (
         <>
         <section className={`credito-grupo ${!vacio && !rigeCredito ? 'credito-grupo--off' : ''}`}>
-          {/* FILA 1: tres cajas, con la deuda de cuenta corriente al frente. */}
-          <div className="kpi-grid kpi-grid--3">
+          {/* FILA 1: la deuda de cuenta corriente al frente y, a su derecha, cómo se compone —qué
+              queda por cancelar y qué saldo a favor tiene el cliente—; después el contexto de
+              crédito. Los dos saldos salen de los subelementos de la cuenta corriente, no del
+              board de Personas. */}
+          <div className="kpi-grid kpi-grid--5">
             <div className="kpi-card">
               <span className="kpi-label">Saldo Cta Cte (deuda)</span>
               {val(money(cliente?.saldoCtaCte ?? 0), claseImporte)}
+            </div>
+            <div className="kpi-card">
+              <span className="kpi-label">Saldo Pend de Cancelar</span>
+              {valSaldo(saldos?.pendienteDeCancelar)}
+            </div>
+            <div className="kpi-card">
+              <span className="kpi-label">Saldo por Anticipos</span>
+              {valSaldo(saldos?.anticipos)}
             </div>
             <div className="kpi-card">
               <span className="kpi-label">Límite asignado</span>

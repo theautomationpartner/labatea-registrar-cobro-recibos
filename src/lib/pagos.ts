@@ -25,6 +25,8 @@ export const FORMAS_PAGO: readonly FormaPago[] = [
   'Retencion IVA',
   'Retencion IIBB',
   'Retencion GAN',
+  'Retencion CCSS',
+  'Retencion SUSS',
   'Tarjeta de débito',
   'Tarjeta de crédito',
 ]
@@ -83,24 +85,39 @@ export function validarCuitEmisor(
   return digitosCuit(cuitEmisor) === delCliente ? 'cliente-no-acepta' : 'ok'
 }
 
-/** Mensaje único de la regla de vencimiento del cheque: lo comparten el formulario y el bloqueo. */
-export const MSG_CHEQUE_VENCIMIENTO = 'La fecha de vencimiento debe ser como máximo la fecha de hoy'
+/**
+ * REGLA DEL CHEQUE: el VENCIMIENTO tiene que ser el día de hoy, que es la fecha con la que se emite
+ * el recibo y se registra el cobro. Un cheque cuyo vencimiento no es hoy —diferido o ya vencido—
+ * dejaría asentado un ingreso de dinero que no ocurrió en esta operación.
+ *
+ * La fecha de EMISIÓN del cheque no entra en la regla: es un dato del documento —cuándo lo libró su
+ * emisor— y puede ser de cualquier día anterior. Se pide cargada, nada más.
+ *
+ * Se compara por DÍA —hoy a la medianoche—, nunca por hora.
+ */
+export const MSG_CHEQUE_VENCIMIENTO =
+  'El cheque tiene que vencer HOY, en la fecha del recibo: no se reciben diferidos ni vencidos'
 
 /**
- * Regla de negocio del cheque: el vencimiento NO puede ser posterior al día de hoy (venc <= hoy),
- * así que sólo se aceptan cheques ya vencidos o que vencen en el día. Se compara por DÍA —hoy a la
- * medianoche—, no por hora, para que un cheque con fecha de hoy sea siempre válido.
+ * La misma regla, dicha en el ancho de un campo. Debajo de un input hay lugar para un renglón, no
+ * para la explicación entera: ahí se dice QUÉ tiene que pasar, y el porqué queda para el aviso del
+ * pie del paso, que sí tiene el ancho de la pantalla.
  */
+export const MSG_CHEQUE_VENC_CORTO = 'El vencimiento tiene que ser hoy'
+
+/** El vencimiento del cheque no es hoy (o no está cargado). */
 export function vencimientoChequeInvalido(vencimiento: string | undefined): boolean {
   const venc = parseDate(vencimiento ?? '')
   if (!venc) return true
   const hoy = new Date()
   hoy.setHours(0, 0, 0, 0)
-  return venc.getTime() > hoy.getTime()
+  return venc.getTime() !== hoy.getTime()
 }
 
-/** El cheque tiene una fecha de vencimiento que incumple la regla (o no la tiene cargada). */
-export function chequeInvalido(m: Pick<MovimientoPago, 'formaPago' | 'chequeVencimiento'>): boolean {
+/** El cheque tiene un vencimiento que incumple la regla (o no lo tiene cargado). */
+export function chequeInvalido(
+  m: Pick<MovimientoPago, 'formaPago' | 'chequeVencimiento'>,
+): boolean {
   if (m.formaPago !== 'Cheque') return false
   return vencimientoChequeInvalido(m.chequeVencimiento)
 }
@@ -266,12 +283,12 @@ export function bloqueoCobro(
     }
   }
 
-  const vencidos = movimientos.filter(chequeInvalido)
-  if (vencidos.length > 0) {
+  const fueraDeFecha = movimientos.filter(chequeInvalido)
+  if (fueraDeFecha.length > 0) {
     return {
-      titulo: 'Hay un cheque con el vencimiento mal cargado',
+      titulo: 'Hay un cheque que no vence hoy',
       mensaje: `${MSG_CHEQUE_VENCIMIENTO}.`,
-      faltantes: vencidos.map((m) => `Cheque ${m.numeroCheque?.trim() || 's/nro'}`),
+      faltantes: fueraDeFecha.map((m) => `Cheque ${m.numeroCheque?.trim() || 's/nro'}`),
     }
   }
 

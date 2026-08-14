@@ -102,6 +102,18 @@ export interface FacturaPendiente {
   parcial: boolean
 }
 
+/**
+ * Los dos saldos que la ficha del cliente lee de su CUENTA CORRIENTE, sumando los subelementos de
+ * esa cuenta por tipo de movimiento. Son importes, nunca `null`: una cuenta sin movimientos da cero
+ * en los dos, que es un dato y no un faltante.
+ */
+export interface SaldosCliente {
+  /** Suma de los movimientos "Vta Pend de Cobro": lo que queda por cancelar. */
+  pendienteDeCancelar: number
+  /** Suma de los movimientos "Anticipo": el saldo a favor del cliente. */
+  anticipos: number
+}
+
 /* ===== Cliente ===== */
 
 export type ActividadCliente = 'Activo' | 'Inactivo'
@@ -180,6 +192,8 @@ export type FormaPago =
   | 'Retencion IVA'
   | 'Retencion IIBB'
   | 'Retencion GAN'
+  | 'Retencion CCSS'
+  | 'Retencion SUSS'
   | 'Tarjeta de débito'
   | 'Tarjeta de crédito'
 
@@ -187,9 +201,12 @@ export type FormaPago =
 export type FormatoCheque = 'FISICO' | 'eCheq'
 
 /**
- * Etiqueta de "🤖Tipo Tarjeta" del recibo (VISA, MASTERCARD…). Es `string` y no una unión cerrada
- * porque el catálogo se amplía desde la UI: la etiqueta nueva se crea sola al escribir el
- * subelemento (`create_labels_if_missing`).
+ * Etiqueta de "🤖Tipo Tarjeta" del recibo. La etiqueta dice marca Y medio —"Visa-Debito",
+ * "Master-Credito"—, así que el catálogo que se ofrece depende de la forma de pago (ver
+ * `TIPOS_TARJETA_DEBITO` / `TIPOS_TARJETA_CREDITO`).
+ *
+ * Es `string` y no una unión cerrada porque el catálogo se amplía desde la UI: la etiqueta nueva se
+ * crea sola al escribir el subelemento (`create_labels_if_missing`).
  */
 export type TarjetaTipo = string
 
@@ -223,6 +240,12 @@ export interface MovimientoPago {
    */
   anioRetencion?: string
   nroComprobanteRetencion?: string
+  /**
+   * Transferencia: número de la operación que figura en el comprobante bancario. Es la referencia
+   * con la que se concilia el movimiento contra el extracto, y viaja a la misma columna
+   * "🤖Nro Comprobante" que el número del cheque, el del cupón y el del certificado.
+   */
+  nroComprobanteTransferencia?: string
   /** Cheque: formato del documento, físico o electrónico (eCheq). */
   formatoCheque?: FormatoCheque
   /**

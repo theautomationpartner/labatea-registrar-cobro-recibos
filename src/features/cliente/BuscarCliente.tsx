@@ -69,10 +69,14 @@ export function BuscarCliente({ estado, onEstado }: BuscarClienteProps) {
     }
   }
 
+  /* Hay resultados desplegados. Se calcula una sola vez porque lo miran los dos: el campo, para
+     pegarse a la lista, y la lista, para mostrarse. */
+  const desplegado = abierto && resultados.length > 0
+
   return (
     <>
       <div className="search-container" ref={ref}>
-        <div className="search-wrapper">
+        <div className={`search-wrapper ${desplegado ? 'search-wrapper--abierto' : ''}`}>
           <svg
             width="18"
             height="18"
@@ -111,7 +115,7 @@ export function BuscarCliente({ estado, onEstado }: BuscarClienteProps) {
         </span>
 
         {/* Varios clientes con el mismo nombre: se elige por código. */}
-        {abierto && resultados.length > 0 && (
+        {desplegado && (
           <div className="results">
             {resultados.map((c) => (
               <div className="ritem" key={c.id} onClick={() => elegir(c)}>

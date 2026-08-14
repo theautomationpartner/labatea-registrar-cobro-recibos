@@ -14,7 +14,7 @@ import { FACTURAS_PENDIENTES } from '@/data/mock'
 import { parseIso } from '@/lib/dates'
 import type { FacturaPendiente } from '@/types'
 import { COL, BOARDS, FACT_PENDIENTE_ESTADO_INDEX, FACT_PENDIENTE_ESTADOS_COBRABLES } from './columns'
-import { byId, num, valor, type MondayItem } from './parse'
+import { byId, num, sumaMirror, valor, type MondayItem } from './parse'
 import { mondayApi, mondayHabilitado } from './sdk'
 
 /** Tope de facturas que trae la consulta. Un cliente con más deuda que esto es un caso a mirar aparte. */
@@ -78,8 +78,12 @@ function mapFactura(item: MondayItem): FacturaPendiente {
     emision: c[COL.factPendiente.fechaEmision]?.text?.trim() ?? '',
     vencimiento: c[COL.factPendiente.fechaVencimiento]?.text?.trim() ?? '',
     total: num(valor(c[COL.factPendiente.total])),
-    // Sin cobros previos la mirror llega vacía: son 0 pesos cobrados, no un dato faltante.
-    cobrado: num(valor(c[COL.factPendiente.cobrado])),
+    /* "🤖Cobrado $" refleja VARIOS cobros: con más de uno su `display_value` llega como lista
+       ("500000, 500000, 900000"), así que hay que SUMARLA. Pasarla por `num()` de una daba
+       cualquier cosa —borra las comas y concatena—: 0 cuando el pegote tenía dos puntos decimales,
+       y un número astronómico cuando no. Sin cobros previos la lista viene vacía y suma 0, que son
+       cero pesos cobrados y no un dato faltante. */
+    cobrado: sumaMirror(c[COL.factPendiente.cobrado]),
     // El porcentaje llega como "19%": `num` se queda con el número.
     cobradoPct: num(valor(c[COL.factPendiente.cobradoPct])),
     pendiente: num(valor(c[COL.factPendiente.pendiente])),

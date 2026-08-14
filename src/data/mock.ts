@@ -2,7 +2,15 @@
  * Datos de prueba para trabajar sin token de Monday (desarrollo local). Los servicios devuelven
  * esto cuando `mondayHabilitado()` es falso, así la app se puede recorrer entera sin cuenta.
  */
-import type { AnticipoPendiente, Cliente, Contacto, CuentaPropia, FacturaPendiente, Usuario } from '@/types'
+import type {
+  AnticipoPendiente,
+  Cliente,
+  Contacto,
+  CuentaPropia,
+  FacturaPendiente,
+  SaldosCliente,
+  Usuario,
+} from '@/types'
 
 export const USUARIOS: Usuario[] = [
   { id: '1001', ini: 'LT', name: 'Luciano Torres', color: 'var(--avatar-orange)' },
@@ -286,3 +294,13 @@ export const ANTICIPOS_PENDIENTES: AnticipoPendiente[] = [
     comentario: 'Saldo a favor por devolución',
   },
 ]
+
+/**
+ * Saldos de cuenta corriente del cliente. Los dos son consistentes con el resto del mock: el
+ * pendiente de cancelar acompaña a las facturas de `FACTURAS_PENDIENTES` y los anticipos, al saldo
+ * a favor de `ANTICIPOS_PENDIENTES`.
+ */
+export const SALDOS_CLIENTE: SaldosCliente = {
+  pendienteDeCancelar: 272513.05,
+  anticipos: 8000,
+}

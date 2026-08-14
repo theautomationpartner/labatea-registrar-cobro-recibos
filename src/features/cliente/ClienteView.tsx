@@ -8,6 +8,7 @@ import {
   numeroDePaso,
   siguientePaso,
 } from '@/lib/pasos'
+import { getSaldosCliente } from '@/services/monday'
 import { faltantesCliente } from '@/lib/validaciones'
 import { useApp, useDispatch } from '@/state/hooks'
 import { BuscarCliente, type BusquedaEstado } from './BuscarCliente'
@@ -22,7 +23,7 @@ import { OperacionConfig } from './OperacionConfig'
  * sobre quién se opera. Ninguna de las dos viene preseleccionada, y sin las dos no se avanza.
  */
 export function ClienteView() {
-  const { cliente, tipoOperacion } = useApp()
+  const { cliente, tipoOperacion, saldos, saldosClienteId } = useApp()
   const dispatch = useDispatch()
   // Estado de la búsqueda: gobierna qué se muestra en el lugar de la ficha del cliente.
   const [estadoBusqueda, setEstadoBusqueda] = useState<BusquedaEstado>('idle')
@@ -41,6 +42,30 @@ export function ClienteView() {
   useEffect(() => {
     if (estadoBusqueda === 'no-encontrado') setAvisoNoEncontrado(true)
   }, [estadoBusqueda])
+
+  /* Saldos de la cuenta corriente del cliente. Van en su PROPIA consulta —salen de otro tablero, y
+     sumando los subelementos de la cuenta— y por eso llegan después que la ficha: sus dos cajas se
+     completan solas cuando resuelve, sin frenar al resto de la pantalla.
+
+     Se leen UNA vez por cliente (`saldosClienteId`), con el mismo criterio de caché que las
+     facturas y los anticipos: volver al paso 1 desde el stepper no vuelve a consultar. */
+  useEffect(() => {
+    if (!cliente || saldosClienteId === cliente.id) return
+    let vivo = true
+    getSaldosCliente(cliente.id)
+      .then((s) => vivo && dispatch({ type: 'setSaldos', saldos: s, clienteId: cliente.id }))
+      .catch(() => {
+        if (!vivo) return
+        /* El fallo lo comunica la ventana global. Sin clave de caché (`null`): un error NO se
+           cachea, así el próximo intento vuelve a leer en vez de dejar las cajas cargando para
+           siempre. */
+        dispatch({ type: 'setSaldos', saldos: null, clienteId: null })
+        dispatch({ type: 'errorMonday', accion: 'obtener los saldos del cliente' })
+      })
+    return () => {
+      vivo = false
+    }
+  }, [cliente, saldosClienteId, dispatch])
 
   const bloqueado = clienteBloqueado(cliente)
   // Sin condición fiscal ni condición de pago no se puede emitir el recibo ni saber qué se cobra.
@@ -123,6 +148,7 @@ export function ClienteView() {
         <ClienteFicha
           cliente={estadoBusqueda === 'idle' ? cliente : null}
           cargando={estadoBusqueda === 'buscando'}
+          saldos={saldos}
         />
 
         {/* El avance queda SIEMPRE a la vista, haya o no cliente. El botón NUNCA se apaga: si falta

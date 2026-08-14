@@ -15,6 +15,8 @@
   --c-primary-hover: #0043a6;
   --c-success: #00c875;
   --c-danger: #e44258;
+  /* Ámbar de Monday: lo que no salió bien pero tampoco falló: hay que mirarlo, no corregir un error. */
+  --c-warning: #fdab3d;
   /* Violeta de la ficha del cliente: el mismo con el que se destaca un dato de contexto. */
   --c-cond: #6c4cf1;
   --c-radius-md: 8px;
@@ -610,9 +612,6 @@
   flex: 0 0 42%;
   max-width: 42%;
 }
-.cobro-v2 .cobro-form-campo--drop {
-  flex: 2 1 320px;
-}
 
 /* --- Tarjeta: dos renglones (datos del plástico · respaldo del cobro) --- */
 /* Cada campo pide su propio ancho; el orden de la maqueta es el del circuito de carga. */
@@ -643,9 +642,6 @@
 .cobro-v2 .cobro-cond--tarjeta .cobro-campo--nrocupon {
   flex: 0 0 150px;
 }
-.cobro-v2 .cobro-cond--tarjeta .cobro-campo--cupon {
-  flex: 1 1 259px;
-}
 /* Doble clase, igual que la regla de la transferencia: si no, la cuenta de destino (42%) le gana
    por especificidad al banco de acreditación y los dos renglones quedan con anchos distintos. */
 .cobro-v2 .cobro-cond--tarjeta .cobro-form-campo.cobro-form-campo--cuenta {
@@ -675,54 +671,370 @@
   color: var(--c-danger);
   font-weight: 700;
 }
-/* Zona de arrastrar y soltar el comprobante. */
-.cobro-v2 .cobro-drop {
+/* --- Lector automático del comprobante (escenario de Make.com) --- */
+/* Bloque de carga: el recuadro donde se suelta el documento y, A SU DERECHA, los campos que esa
+   lectura completa. Es el orden en que se trabaja —primero el papel, después lo que salió de él—,
+   y por eso van juntos en un renglón propio en vez de uno arriba y los otros sueltos abajo.
+
+   Envuelve solo: si los campos no entran en el ancho que sobra, bajan enteros debajo del recuadro
+   —nunca partidos a la mitad—, y ahí siguen acomodándose de a uno por renglón. */
+.cobro-v2 .cobro-lector-bloque {
+  flex: 1 0 100%;
+  width: 100%;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 40px;
-  padding: 10px 12px;
-  border: 1.5px dashed var(--c-border);
-  border-radius: var(--c-radius-md);
-  background: var(--c-bg-input);
-  color: var(--c-text-secondary);
-  font-size: 13px;
-  text-align: center;
-  cursor: pointer;
-  transition:
-    border-color 0.2s,
-    background 0.2s;
+  flex-wrap: wrap;
+  /* Los campos arrancan ARRIBA, al ras del borde superior del recuadro: así el primer renglón de
+     carga queda a la misma altura que la consigna y la lectura se lee de izquierda a derecha, en
+     lugar de flotar en el medio de los 300px del recuadro. */
+  align-items: flex-start;
+  gap: 20px;
 }
-.cobro-v2 .cobro-drop.is-over {
-  border-color: var(--c-primary);
-  background: #eef4ff;
+/* Suelto —cheque, transferencia, tarjeta—, el recuadro se queda con el renglón entero y los campos
+   de ese medio van abajo. Las dos clases encadenadas ganan por especificidad al `flex` que los
+   renglones condicionales le imponen a todo campo. */
+.cobro-v2 .cobro-form .cobro-form-campo.cobro-form-campo--lector {
+  flex: 1 0 100%;
+  max-width: 100%;
+  /* No reserva el alto del mensaje de error: acá el error va debajo, en flujo normal. */
+  padding-bottom: 0;
 }
-.cobro-v2 .cobro-drop.has-file {
-  border-style: solid;
-  border-color: var(--c-success);
-  color: var(--c-text-main);
+/* Dentro del bloque, en cambio, no se estira ni se encoge: su medida ES el diseño, y lo que sobra
+   es para los campos de al lado. */
+.cobro-v2 .cobro-form .cobro-lector-bloque .cobro-form-campo--lector {
+  flex: 0 0 auto;
 }
-.cobro-v2 .cobro-drop-hint,
-.cobro-v2 .cobro-drop-file {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+/* Los campos que se completan solos, al costado. Toman TODO el ancho que sobra y se reparten en
+   partes iguales; el ancho base de 170px es el que decide cuántos entran por renglón. */
+.cobro-v2 .cobro-cond .cobro-lector-campos {
+  flex: 1 1 340px;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px;
+  /* Entre renglones alcanza con un respiro corto: cada campo ya reserva abajo el alto de su
+     mensaje de error, así que sumarle el gap completo los separaría de más. */
+  row-gap: 4px;
 }
-.cobro-v2 .cobro-drop-x {
-  border: none;
-  background: none;
-  color: var(--c-text-secondary);
-  cursor: pointer;
-  padding: 0 2px;
-  line-height: 1;
+.cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo {
+  flex: 1 1 170px;
+  max-width: none;
 }
-.cobro-v2 .cobro-drop-x:hover {
-  color: var(--c-danger);
+/* Los mensajes de error de ESTE bloque se quedan dentro del ancho de su campo, en lugar de crecer
+   hacia el costado hasta meterse en la columna de al lado —que es como terminaban solapados dos
+   mensajes de campos vecinos—. Como pueden envolver en dos renglones, el campo reserva abajo el
+   alto de los dos: mostrar el error nunca empuja la fila siguiente. */
+.cobro-v2 .cobro-lector-campos .cobro-form-campo--val {
+  padding-bottom: 34px;
+}
+.cobro-v2 .cobro-lector-campos .cobro-in-err {
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+}
+/* Cheque: los campos que no entran en la medida de todos los demás. Cada uno pide lo que su
+   contenido necesita —el CUIT son tres tramos más el botón "Validar", el tipo son dos palabras
+   cortas—, y con esas bases el renglón se parte solo en dos líneas parejas. */
+.cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-campo--formato {
+  flex: 0 0 120px;
+}
+.cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-campo--nro {
+  flex: 1 1 180px;
+}
+.cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-campo--fecha {
+  flex: 0 1 165px;
+}
+/* El CUIT NO crece: estirándolo se alargaría el tramo de ocho dígitos hasta desfigurar el número. */
+.cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-campo--cuit {
+  flex: 0 1 330px;
+}
+/* El banco cierra el bloque en su propio renglón, junto al "+ Agregar". Tampoco crece: un select de
+   dos palabras estirado a todo el ancho sobrante se lee como un campo roto. */
+.cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-campo--banco {
+  flex: 0 1 300px;
+}
+/* Transferencia: el número de la operación bancaria, que suele ser largo. */
+.cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-campo--nrotransf {
+  flex: 1 1 200px;
+}
+/* Tarjeta: dos opciones de un dígito, así que le alcanza con el ancho de su rótulo. */
+.cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-campo--pagos {
+  flex: 0 0 110px;
+}
+.cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-campo--nrocupon {
+  flex: 1 1 160px;
+}
+/* La cuenta propia —destino de la transferencia o banco de acreditación— lleva nombres largos, pero
+   tampoco se estira a todo el sobrante. */
+.cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-form-campo--cuenta {
+  flex: 0 1 280px;
+}
+/* Transferencia: la cuenta cierra el bloque en su propio renglón y se lleva TODO el ancho que
+   sobra hasta el "+ Agregar".
+   Es a propósito: el nombre de una cuenta trae el CBU completo ("Cta Cte $ Banco Credicoop CBU:
+   19101363550136…"), y un select angosto lo recorta con puntos suspensivos mientras el desplegable
+   —que el navegador dibuja al ancho de su opción más larga— se abre mucho más ancho que el campo.
+   Dándole el renglón entero, lo cerrado y lo desplegado miden lo mismo y el CBU se lee sin abrir. */
+.cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-campo--ctatransf {
+  flex: 1 1 420px;
+  max-width: none;
+}
+/* Corte de renglón: una línea vacía que empuja a la siguiente lo que venga después. El margen
+   negativo cancela el `row-gap` que ESA línea agrega, así la separación entre renglones sigue
+   siendo exactamente la misma en todo el bloque. */
+.cobro-v2 .cobro-lector-campos .cobro-lector-corte {
+  flex: 1 0 100%;
+  height: 0;
+  margin-top: -4px;
+}
+/* El "+ Agregar" mide lo que mide el botón, esté donde esté. */
+.cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-form-campo--accion {
+  flex: 0 0 auto;
 }
 
+/* Medidas del recuadro. Es GRANDE a propósito: es el blanco del arrastre y adentro entra todo —la
+   consigna, el estado de la lectura y el documento cargado con sus acciones—. Van en variables
+   porque más de una regla depende de ellas. */
+.cobro-v2 .cobro-lector {
+  --lector-ancho: 500px;
+  --lector-alto: 300px;
+
+  position: relative;
+  width: var(--lector-ancho);
+  height: var(--lector-alto);
+  /* En pantallas angostas el recuadro cede antes que romper el renglón del formulario. */
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px 32px;
+  border: 2px dashed var(--c-primary);
+  border-radius: var(--c-radius-lg);
+  background: #f2f7ff;
+  color: var(--c-primary);
+  font-size: 46px;
+  /* SIN `overflow: hidden`: recortaría el anillo de foco del botón que cubre el recuadro, que se
+     dibuja por fuera del borde. Adentro ya no hay nada que se desborde. */
+  transition:
+    border-color 0.2s,
+    background 0.2s,
+    transform 0.12s;
+}
+/* Botón que cubre el recuadro entero: es el que abre el buscador y el que recibe el foco. Va por
+   ENCIMA del texto —transparente, así que no lo tapa— y por debajo de las acciones del archivo. */
+.cobro-v2 .cobro-lector-hit {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+}
+.cobro-v2 .cobro-lector-hit:hover:not(:disabled) {
+  background: rgba(0, 82, 204, 0.04);
+}
+/* Cumplida su función, la zona deja de comportarse como un control: sin cursor de mano y sin el
+   realce del arrastre. El borde verde y el visto siguen contando que el documento está procesado. */
+.cobro-v2 .cobro-lector-hit:disabled {
+  cursor: default;
+}
+/* Anillo de foco del recuadro. Va en el propio botón y con `:focus-visible` —no en el contenedor
+   con `:focus-within`—: ese par mostraba el anillo TAMBIÉN al clickear, y como el foco se queda en
+   el botón después de elegir el archivo, el azul convivía con el borde verde del resultado como si
+   fueran dos bordes del mismo recuadro. Con `:focus-visible` sólo aparece navegando con teclado,
+   que es para quien existe. El botón cubre el recuadro entero, así que su anillo lo rodea. */
+.cobro-v2 .cobro-lector-hit:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
+  border-radius: var(--c-radius-lg);
+}
+/* Falta el comprobante obligatorio: se marca el recuadro entero, que es donde se carga. El reclamo
+   va ADENTRO (ver `.cobro-lector-reclamo`), así aparecer o desaparecer no le cambia el alto al
+   bloque —afuera, cada intento de agregar movía todo lo que estaba abajo—. */
+.cobro-v2 .cobro-lector.is-falta {
+  border-color: var(--c-danger);
+}
+/* La ranura está SIEMPRE en la cara, con o sin mensaje: su alto —una línea— queda reservado, así
+   que el reclamo aparece y desaparece sin correr el título ni el ícono que tiene arriba. Es el
+   mismo criterio del renglón de ayuda del buscador de clientes (`.search-helper`). */
+.cobro-v2 .cobro-lector-reclamo {
+  display: block;
+  max-width: 340px;
+  min-height: 1.35em;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+  color: #c0273c;
+}
+/* Soltando encima: el recuadro se agranda apenas y pasa a línea llena, para que se vea que soltar
+   ahí es la acción y no un adorno. */
+.cobro-v2 .cobro-lector.is-over {
+  border-style: solid;
+  background: #e4eeff;
+  transform: scale(1.01);
+}
+/* Con un documento adentro el punteado ya no invita a nada: el borde se cierra y toma el color del
+   estado. El recuadro entero es el que informa —el color se ve antes que el texto—. */
+.cobro-v2 .cobro-lector--procesando,
+.cobro-v2 .cobro-lector--listo,
+.cobro-v2 .cobro-lector--sin-datos,
+.cobro-v2 .cobro-lector--error {
+  border-style: solid;
+}
+.cobro-v2 .cobro-lector--procesando {
+  background: var(--c-bg-input);
+}
+.cobro-v2 .cobro-lector--listo {
+  border-color: var(--c-success);
+  background: #f2fbf7;
+}
+.cobro-v2 .cobro-lector--sin-datos {
+  border-color: var(--c-warning);
+  background: #fffaf0;
+}
+.cobro-v2 .cobro-lector--error {
+  border-color: var(--c-danger);
+  background: #fff6f6;
+}
+/* Cara del recuadro: lo que muestra según el estado —consigna, espera o resultado—, siempre
+   centrado y en el mismo lugar. Es la que cambia; el recuadro y sus medidas no se mueven. */
+.cobro-v2 .cobro-lector-cara {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+}
+/* El color del estado lo pone la cara y lo hereda el ícono, que es lo primero que se ve. El TÍTULO
+   va un tono más oscuro: los colores plenos de Monday brillan como ícono de 46px, pero un texto de
+   16px sobre blanco necesita más contraste para leerse cómodo. */
+.cobro-v2 .cobro-lector-cara--listo {
+  color: var(--c-success);
+}
+.cobro-v2 .cobro-lector-cara--listo .cobro-lector-titulo {
+  color: #0b7a4b;
+}
+.cobro-v2 .cobro-lector-cara--sin-datos {
+  color: var(--c-warning);
+}
+.cobro-v2 .cobro-lector-cara--sin-datos .cobro-lector-titulo {
+  color: #b26a00;
+}
+.cobro-v2 .cobro-lector-cara--error {
+  color: var(--c-danger);
+}
+.cobro-v2 .cobro-lector-cara--error .cobro-lector-titulo {
+  color: #c0273c;
+}
+/* Consigna de la zona, adentro del recuadro. El título en el color del texto y no en el del ícono:
+   es una instrucción para leer, no un elemento más de la decoración. */
+.cobro-v2 .cobro-lector-titulo {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--c-text-main);
+}
+.cobro-v2 .cobro-lector-consigna {
+  max-width: 340px;
+  font-size: 13.5px;
+  font-weight: 400;
+  line-height: 1.45;
+  color: var(--c-text-secondary);
+}
+/* Animación de la espera: ocupa el mismo lugar que después toma el visto verde, así que terminar
+   de procesar no reacomoda nada. */
+.cobro-v2 .cobro-lector-spin {
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  border: 3px solid #d5dceb;
+  border-top-color: var(--c-primary);
+  border-radius: 50%;
+  animation: cobro-lector-giro 0.7s linear infinite;
+}
+@keyframes cobro-lector-giro {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* Sin animación: el giro se hace lento en lugar de desaparecer, porque es lo ÚNICO que dice que la
+   lectura sigue en curso. */
+@media (prefers-reduced-motion: reduce) {
+  .cobro-v2 .cobro-lector-spin {
+    animation-duration: 2.4s;
+  }
+  .cobro-v2 .cobro-lector.is-over {
+    transform: none;
+  }
+}
+/* El documento cargado y sus acciones, debajo del mensaje de estado y centrado con él. Va por
+   encima del botón que cubre el recuadro: si no, "Reemplazar" y "Quitar" no se podrían clickear. */
+.cobro-v2 .cobro-lector-archivo {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 100%;
+  font-size: 12px;
+  color: var(--c-text-secondary);
+}
+/* El nombre cede antes que las acciones: un archivo con nombre largo no las empuja fuera. */
+.cobro-v2 .cobro-lector-nombre {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+  color: var(--c-text-main);
+}
+.cobro-v2 .cobro-lector-accion {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--c-primary);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.cobro-v2 .cobro-lector-accion:hover {
+  color: var(--c-primary-hover);
+}
+/* Lo que la lectura no pudo completar, al pie del recuadro. Va DEBAJO del archivo y sus acciones,
+   que es el orden en que se lee lo que pasó: se procesó, este es el documento, y esto quedó
+   pendiente. En rojo porque frena el alta del movimiento, aunque el procesamiento haya salido bien. */
+.cobro-v2 .cobro-lector-falta {
+  position: relative;
+  z-index: 2;
+  max-width: 380px;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+  color: #c0273c;
+}
+.cobro-v2 .cobro-lector-falta strong {
+  font-weight: 700;
+}
 /* --- Tabla de cobros registrados --- */
+/* `table-layout: fixed`: las columnas se reparten el ancho en PARTES IGUALES en vez de medirse por
+   su contenido. Es lo que da el mismo espaciado entre las tres —el medio de cobro, el importe y la
+   papelera arrancan cada uno a la misma distancia del anterior—, en lugar de dejar a "Acciones"
+   colgada del margen derecho, a media pantalla del importe que borra.
+   Y se acomoda solo cuando la columna de acciones no está: registrado el cobro quedan dos columnas,
+   que se reparten la misma mitad cada una sin regla aparte. */
 .cobro-v2 .cobro-tabla {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -744,28 +1056,65 @@
   color: var(--c-text-main);
   border-bottom: 1px solid #f0f1f4;
 }
-.cobro-v2 .cobro-tabla .ta-r {
-  text-align: right;
+/* Columna "Acciones": el rótulo se queda a la IZQUIERDA, en el mismo eje que las otras dos columnas,
+   y lo único que se centra es la papelera, debajo de la palabra. Centrar la columna entera no sirve:
+   mide un tercio de la tabla, así que mandaba el ícono al medio, lejos del importe que borra.
+   El ancho del rótulo no se estima con un número: la celda monta una copia INVISIBLE del mismo
+   texto (`ROTULO_ACCIONES`, una sola constante para el encabezado y para la copia) y el ícono se
+   centra dentro de ese espacio. Si el título cambia, el eje lo sigue solo. */
+.cobro-v2 .cobro-acc-caja {
+  display: inline-block;
+}
+/* Ocupa ancho pero no alto: sólo está para medir. Copia el cuerpo del encabezado —la celda usa otro
+   tamaño de letra— para reservar exactamente lo mismo que él. */
+.cobro-v2 .cobro-acc-fantasma {
+  display: block;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* La papelera ocupa todo ese ancho y centra su ícono: de paso el área clickeable deja de ser el
+   glifo suelto y pasa a ser la columna del rótulo. */
+.cobro-v2 .cobro-acc-caja .cobro-tabla-del {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
 }
 .cobro-v2 .cobro-tabla-vacia td {
   color: var(--c-text-secondary);
   font-style: italic;
 }
+/* Papelera de la fila. Es el MISMO ícono que usa la app de operaciones de venta (`.trash`): suelto,
+   sin caja ni borde y en rojo desde el reposo —la acción se reconoce por el ícono, y el recuadro
+   sólo le daba peso de botón a algo que se usa de a ratos—. Mismos colores exactos: `--red` en
+   reposo (el token vale #e2445c en las dos apps) y #bd2a40 al pasar el mouse.
+
+   El tamaño se HEREDA de la celda, igual que allá: así la papelera acompaña al texto de la fila en
+   lugar de fijar un cuerpo propio que se desalinee si la tabla cambia de escala.
+
+   A diferencia de la referencia —que usa un `<i role="button">`— acá sigue siendo un `<button>` de
+   verdad, para poder accionarlo con el teclado; por eso conserva un foco visible, que el ícono
+   suelto no necesita porque nunca lo recibe. */
 .cobro-v2 .cobro-tabla-del {
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--c-border);
-  border-radius: 6px;
-  background: var(--c-bg-card);
-  color: var(--c-text-secondary);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--red);
+  line-height: 1;
   cursor: pointer;
-  transition:
-    color 0.2s,
-    border-color 0.2s;
+  transition: color 0.2s;
 }
 .cobro-v2 .cobro-tabla-del:hover {
-  color: var(--c-danger);
-  border-color: var(--c-danger);
+  color: #bd2a40;
+}
+.cobro-v2 .cobro-tabla-del:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 /* Importe editable de un pago cargado: caja con prefijo "$" para ajustar la DIFERENCIA a 0. */
 .cobro-v2 .cobro-imp-edit {
@@ -831,16 +1180,76 @@
 .cobro-v2 .cobro-fila--abierta > td {
   border-bottom-color: transparent;
 }
+/* El relleno NO va acá sino en el detalle de adentro: el padding de un elemento no se encoge con
+   la grilla —a `0fr` el contenido mide 0 pero el padding sigue ocupando su lugar—, así que la fila
+   arrancaría y terminaría con un salto de 28px. */
 .cobro-v2 .cobro-fila-detalle > td {
   background: var(--c-bg-panel);
-  padding: 14px 12px 14px 40px;
+  padding: 0;
   white-space: normal;
 }
+/* Despliegue del detalle del pago. Es la MISMA animación del panel de las facturas pendientes
+   (`fact-desplegar` / `fact-plegar` en `facturas.css`): las dos tablas abren un detalle debajo de
+   una fila, y abrirlo tiene que sentirse igual en las dos.
+   El alto se anima con la grilla (`0fr` → `1fr`), que es lo que permite animar hacia el alto REAL
+   del contenido sin adivinar un `max-height`: con un valor estimado, un detalle más alto se
+   cortaría y uno más bajo tardaría de más en "terminar" de abrir. */
+.cobro-v2 .cobro-exp-wrap {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+/* La animación NO va en la clase base: ahí correría en cada montaje de la fila —al volver al paso
+   con el stepper— y los detalles ya abiertos se desplegarían de nuevo solos. Sólo se anima lo que
+   el usuario acaba de abrir (ver `abriendo` en `TablaMovimientos`). */
+.cobro-v2 .cobro-exp-wrap--abriendo {
+  animation: cobro-desplegar 0.24s ease-out;
+}
+@keyframes cobro-desplegar {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+}
+/* Plegado: el camino inverso, un poco más corto —cerrar puede ser más rápido que abrir, porque no
+   hay nada nuevo que leer—. Su duración tiene que coincidir con `MS_PLEGADO` en
+   `TablaMovimientos`. */
+.cobro-v2 .cobro-exp-wrap--cerrando {
+  animation: cobro-plegar 0.2s ease-in forwards;
+  /* Mientras se cierra ya no se opera: el detalle es sólo la salida de algo que se cerró. */
+  pointer-events: none;
+}
+@keyframes cobro-plegar {
+  from {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+  to {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+/* Recorta el detalle mientras la fila todavía no lo contiene entero. */
+.cobro-v2 .cobro-exp-in {
+  overflow: hidden;
+}
+/* Con movimiento reducido el detalle aparece y desaparece sin animarse: la información es la misma. */
+@media (prefers-reduced-motion: reduce) {
+  .cobro-v2 .cobro-exp-wrap--abriendo,
+  .cobro-v2 .cobro-exp-wrap--cerrando {
+    animation: none;
+  }
+}
+/* El relleno que dejó de estar en la celda: acá adentro sí se despliega junto con el detalle. */
 .cobro-v2 .cobro-detalle-grid {
   display: flex;
   flex-wrap: wrap;
   gap: 12px 40px;
   margin: 0;
+  padding: 14px 12px 14px 40px;
 }
 .cobro-v2 .cobro-detalle-item dt {
   font-size: 11px;

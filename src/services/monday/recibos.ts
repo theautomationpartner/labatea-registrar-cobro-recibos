@@ -16,9 +16,9 @@
  *        4. el ajuste por DIFERENCIA DE CAJA (`d0`), ÚLTIMO sin excepción y sólo si lo hubo: el
  *           descuadre se declara recién cuando ya está escrito todo lo que lo produjo.
  *
- *      La APLICACIÓN DE ANTICIPOS invierte los dos primeros bloques a propósito: primero los
- *      anticipos que se imputan (`an0`, `an1`…) y después las facturas que cancelan. No tiene ni
- *      retenciones ni ajuste: ahí no entra plata nueva.
+ *      La APLICACIÓN DE ANTICIPOS sigue el mismo orden: las facturas que se cancelan primero y,
+ *      ÚLTIMO, el subítem del anticipo que las cubre (`an0`, `an1`…), rotulado "Anticipo" y linkeado
+ *      al ítem del anticipo usado. No tiene ni retenciones ni ajuste: ahí no entra plata nueva.
  *
  * Los dos lotes van JUNTOS y en ESE orden. Que estén en un solo documento no los desordena: el
  * spec de GraphQL obliga a ejecutar los campos raíz de una `mutation` EN SERIE y en el orden en que
@@ -48,7 +48,7 @@ import {
   CAJA_ANTICIPO_INDEX,
   CAJA_DIF_INDEX,
   CAJA_FACT_CANCELADA_INDEX,
-  CAJA_INDEX,
+  cajaDeFormaPago,
   CHEQUE_ORIGEN_LABEL,
   COL,
   ESTADO_EMISION_INDEX,
@@ -131,10 +131,10 @@ function columnasFactura(facturaId: string, importe: number): Record<string, unk
  * RECIBIDO en una aplicación —el lugar que en un cobro ocupan las formas de pago—, porque acá el
  * dinero no entra en el acto: ya estaba entregado y lo que se hace es imputarlo.
  *
- * Va por la MISMA relación que las facturas ("💰Fact Cancelada", board_relation_mm63pczd): la
- * columna conecta con tres tableros —entre ellos "Anticipos Pends de Aplicar"—, así que un anticipo
- * y una factura se linkean por ahí sin necesidad de una columna aparte. Lo que distingue a la línea
- * es su caja: "Anticipo".
+ * Se rotula con la caja "Anticipo" y se linkea por su columna PROPIA, "Anticipos Pends de Aplicar"
+ * (board_relation_mm659pd1). No por la de facturas: "💰Fact Cancelada" conecta únicamente con los
+ * tableros de facturas, así que un id de anticipo escrito ahí no linkea nada —y no falla, que es lo
+ * peor: el subítem se crea igual, sin el anticipo—.
  */
 function columnasAnticipoAplicado(anticipoId: string, importe: number): Record<string, unknown> {
   const cv: Record<string, unknown> = {
@@ -142,7 +142,7 @@ function columnasAnticipoAplicado(anticipoId: string, importe: number): Record<s
     [COL.cobroSub.importeCobrado]: round2(importe),
   }
   const anticipo = relacion(anticipoId)
-  if (anticipo) cv[COL.cobroSub.factura] = anticipo
+  if (anticipo) cv[COL.cobroSub.anticipoAplicado] = anticipo
   return cv
 }
 
@@ -201,7 +201,7 @@ function columnasDifCaja(diferencia: number): Record<string, unknown> {
  * Columnas del subelemento de una FORMA DE PAGO. Las dos primeras —caja e importe— las lleva TODO
  * movimiento; a partir de ahí, cada medio completa lo suyo y nada más:
  *
- *   · Transferencia → la cuenta propia que recibió el dinero.
+ *   · Transferencia → la cuenta propia que recibió el dinero y el número de la operación.
  *   · Cheque        → número, CUIT del emisor, emisión, vencimiento, origen y banco.
  *   · Tarjeta       → banco emisor, tipo, cupón, vencimiento y cuenta de acreditación.
  *   · Retención     → nada extra acá: lo único que agrega es su comprobante, que es un archivo.
@@ -212,8 +212,9 @@ function columnasDifCaja(diferencia: number): Record<string, unknown> {
  */
 function columnasPago(m: MovimientoPago): Record<string, unknown> {
   const cv: Record<string, unknown> = {
-    // Por índice, no por etiqueta: es la identidad de la caja en el board (ver `CAJA_INDEX`).
-    [COL.cobroSub.caja]: { index: CAJA_INDEX[m.formaPago] },
+    /* Por índice siempre que la caja lo tenga —es su identidad en el board—, y por etiqueta en las
+       pocas que todavía no están en el tablero (ver `cajaDeFormaPago`). */
+    [COL.cobroSub.caja]: cajaDeFormaPago(m.formaPago),
     [COL.cobroSub.importeCobrado]: round2(m.importe),
   }
 
@@ -223,6 +224,10 @@ function columnasPago(m: MovimientoPago): Record<string, unknown> {
     // Cuenta PROPIA de La Batea donde entró el dinero.
     const banco = relacion(m.cuentaPropiaId)
     if (banco) cv[COL.cobroSub.bancoAcreditacion] = banco
+    /* Número de la operación bancaria, en la misma columna de TEXTO que usan el cheque, el cupón y
+       el certificado: se escribe tal cual, que un número de operación puede llevar letras. */
+    const nro = m.nroComprobanteTransferencia?.trim()
+    if (nro) cv[COL.cobroSub.nroComprobante] = nro
     return cv
   }
 
@@ -318,7 +323,7 @@ export interface AnticipoAAplicar {
  *
  *   · cobro      · facturas canceladas + formas de pago.
  *   · anticipo   · la línea del anticipo entregado + formas de pago.
- *   · aplicacion · anticipos aplicados PRIMERO y facturas canceladas DESPUÉS. Sin formas de pago:
+ *   · aplicacion · facturas canceladas PRIMERO y anticipos aplicados DESPUÉS. Sin formas de pago:
  *                  el dinero ya había entrado, esto sólo lo imputa.
  */
 export type TipoRecibo = 'cobro' | 'anticipo' | 'aplicacion'
@@ -526,26 +531,16 @@ export async function emitirRecibo(datos: DatosRecibo): Promise<ResultadoRecibo>
           : []),
       ]
 
-  /* El ORDEN de los dos bloques depende de la operación:
-       · APLICACIÓN · los ANTICIPOS primero y las facturas después. Es el requerimiento del
-                      tablero: primero se declara el saldo que se usa y recién después contra qué
-                      se aplica.
-       · resto      · primero lo que el recibo cancela y después con qué se pagó, para que los
-                      pagos no se adelanten a las facturas que cubren. */
-  const lineas: SubitemACrear[] = esAplicacion
-    ? [...recibido, ...canceladas]
-    : [...canceladas, ...recibido]
+  /* Primero lo que el recibo CANCELA y después con qué se cubrió. Vale para las tres operaciones,
+     la aplicación incluida: las líneas de "Fact Cancelada" van antes y el o los subítems de
+     "Anticipo" cierran el lote, para que ninguna factura quede por debajo del saldo que la paga. */
+  const lineas: SubitemACrear[] = [...canceladas, ...recibido]
 
   const ids = await crearSubitems(itemId, lineas)
   /* Los ids vuelven en el MISMO orden en que se pidieron, así que la lista se parte por donde
-     termina el primer bloque —y cuál es el primero lo decide `lineas`, no el nombre de la
-     variable—. Cada bloque recupera exactamente sus ids. */
-  const idsRecibido = esAplicacion
-    ? ids.slice(0, recibido.length)
-    : ids.slice(canceladas.length)
-  const idsCanceladas = esAplicacion
-    ? ids.slice(recibido.length)
-    : ids.slice(0, canceladas.length)
+     termina el primer bloque. */
+  const idsCanceladas = ids.slice(0, canceladas.length)
+  const idsRecibido = ids.slice(canceladas.length)
 
   /* --- Los comprobantes adjuntos, que necesitan el id de su subelemento ya creado ---
      Son best-effort: que falle una subida no invalida el recibo, que ya quedó escrito con todos

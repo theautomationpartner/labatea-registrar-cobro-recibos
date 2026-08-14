@@ -13,6 +13,7 @@ import type {
   MedioEnvio,
   MovimientoPago,
   Paso,
+  SaldosCliente,
   TipoOperacion,
   Usuario,
   UsuarioActual,
@@ -51,6 +52,13 @@ export interface AppState {
   usuario: Usuario | null
   /** Cliente al que se le registra el cobro. null = todavía no se buscó/confirmó ninguno. */
   cliente: Cliente | null
+  /**
+   * Saldos de la cuenta corriente del cliente (pendiente de cancelar y anticipos), que muestra la
+   * ficha del paso 1. `null` = todavía no se leyeron: la ficha deja esas dos cajas en skeleton.
+   */
+  saldos: SaldosCliente | null
+  /** De QUÉ cliente son los saldos. Misma clave de caché que `facturasClienteId`. */
+  saldosClienteId: string | null
   /** Facturas pendientes del cliente, leídas al entrar al paso 2. */
   facturas: FacturaPendiente[]
   /**
@@ -119,6 +127,8 @@ export const initialState: AppState = {
   pasoMaxIdx: 0,
   usuario: null,
   cliente: null,
+  saldos: null,
+  saldosClienteId: null,
   facturas: [],
   facturasClienteId: null,
   imputaciones: {},
@@ -148,6 +158,8 @@ export type Action =
   | { type: 'setVencimientoAnticipo'; vencimiento: string }
   | { type: 'setUsuario'; usuario: Usuario }
   | { type: 'setCliente'; cliente: Cliente }
+  /** `clienteId`: misma clave de caché que en `setFacturas`, con el mismo `null` ante un fallo. */
+  | { type: 'setSaldos'; saldos: SaldosCliente | null; clienteId: string | null }
   /**
    * `clienteId` es de QUIÉN son las facturas que llegaron: queda como clave de caché para no
    * volver a pedirlas al navegar. Va en `null` cuando la lectura FALLÓ —la lista se vacía pero sin
@@ -225,6 +237,8 @@ export function reducer(state: AppState, action: Action): AppState {
         vencimientoAnticipo: '',
         /* Las listas se descartan CON su clave de caché: dejarla puesta sobre una lista vacía haría
            que el paso la diera por leída y no volviera a consultar a Monday nunca. */
+        saldos: null,
+        saldosClienteId: null,
         facturas: [],
         facturasClienteId: null,
         imputaciones: {},
@@ -292,8 +306,11 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         cliente: action.cliente,
         pasoMaxIdx: indiceDePaso('cliente'),
-        /* Las dos listas se descartan CON su clave de caché: son del cliente anterior, así que hay
-           que volver a leerlas —no alcanza con vaciarlas, o el paso las daría por ya leídas—. */
+        /* Los saldos y las dos listas se descartan CON su clave de caché: son del cliente anterior,
+           así que hay que volver a leerlos —no alcanza con vaciarlos, o el paso los daría por ya
+           leídos—. */
+        saldos: null,
+        saldosClienteId: null,
         facturas: [],
         facturasClienteId: null,
         imputaciones: {},
@@ -310,6 +327,12 @@ export function reducer(state: AppState, action: Action): AppState {
         documentoEnviado: false,
         log: [],
       }
+
+    /* Llegaron los saldos de la cuenta corriente del cliente. Van al estado global —y no al estado
+       local de la ficha— para que sobrevivan a la navegación del stepper: volver al paso 1 no tiene
+       que disparar otra consulta. */
+    case 'setSaldos':
+      return { ...state, saldos: action.saldos, saldosClienteId: action.clienteId }
 
     /* Llegaron las facturas del cliente. Las imputaciones ya hechas se conservan SÓLO si su factura
        sigue estando: al recargar puede haberse cobrado alguna desde otro lado, y un importe

@@ -122,6 +122,10 @@
   gap: 16px;
   padding: 20px 24px;
   margin-bottom: 0;
+  /* Alto del campo y del botón de buscar. Es una variable y no un número repetido porque de él
+     depende también DÓNDE arranca el desplegable de resultados, que va pegado abajo del campo:
+     sueltos, cambiar el alto del input dejaría al desplegable flotando o pisándolo. */
+  --alto-campo: 46px;
 }
 .cliente-v2 .search-container {
   flex-grow: 1;
@@ -141,10 +145,16 @@
   border-radius: 8px;
   overflow: hidden;
   transition: border-color 0.2s;
-  height: 46px;
+  height: var(--alto-campo);
 }
 .cliente-v2 .search-wrapper:focus-within {
   border-color: var(--c-primary);
+}
+/* Con el desplegable abierto, campo y resultados son UN solo bloque: el campo suelta sus esquinas
+   de abajo para que la lista continúe su caja en lugar de asomar por detrás de las curvas. */
+.cliente-v2 .search-wrapper--abierto {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 .cliente-v2 .search-wrapper > svg {
   position: absolute;
@@ -184,7 +194,7 @@
 /* Botón de búsqueda: azul sólido con la lupa, a la altura del campo. */
 .cliente-v2 .btn-buscar {
   flex-shrink: 0;
-  height: 46px;
+  height: var(--alto-campo);
   padding: 0 24px;
   border: none;
   border-radius: 8px;
@@ -205,10 +215,16 @@
   background: #9dbdf5;
   cursor: not-allowed;
 }
+/* Los resultados cuelgan del CAMPO, no del contenedor. `top: 100%` los mandaba al pie del
+   contenedor, que además del campo incluye el renglón reservado para el mensaje de error: por eso
+   quedaban flotando ~30px más abajo, separados de lo que los origina. Se anclan al alto del campo
+   y el `-1px` hace que los dos bordes se pisen en una sola línea, en vez de dibujar dos. */
 .cliente-v2 .results {
   right: auto;
   width: 100%;
-  border-radius: 8px;
+  top: var(--alto-campo);
+  margin-top: -1px;
+  border-radius: 0 0 8px 8px;
   border-color: var(--c-border);
   max-height: 260px;
 }
@@ -327,6 +343,11 @@
 /* Fila superior con exactamente TRES cajas (saldo, límite, remitos pendientes). */
 .cliente-v2 .kpi-grid--3 {
   grid-template-columns: repeat(3, 1fr);
+}
+/* Fila superior con las CINCO cajas: la deuda, cómo se compone (pendiente de cancelar y anticipos)
+   y el contexto de crédito (límite y remitos). */
+.cliente-v2 .kpi-grid--5 {
+  grid-template-columns: repeat(5, 1fr);
 }
 .cliente-v2 .kpi-card {
   background: #f8fafc;
@@ -482,7 +503,8 @@
 /* En anchos angostos (widget/modal de Monday) las filas se apilan sin desbordar. */
 @media (max-width: 680px) {
   .cliente-v2 .kpi-grid,
-  .cliente-v2 .kpi-grid--3 {
+  .cliente-v2 .kpi-grid--3,
+  .cliente-v2 .kpi-grid--5 {
     grid-template-columns: repeat(2, 1fr);
   }
   .cliente-v2 .credito-fila-inferior {
