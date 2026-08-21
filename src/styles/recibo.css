@@ -300,17 +300,6 @@
   gap: 8px;
   flex-shrink: 0;
 }
-.recibo-v2 .comp-estado-txt {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--r-text-label);
-}
-.recibo-v2 .comp-estado-txt--err {
-  color: var(--r-danger);
-}
 /* Tilde en rojo: el tablero devolvió un error de emisión. */
 .recibo-v2 .comp-ok--err {
   background: var(--r-danger);
@@ -333,6 +322,59 @@
 
 /* --- Cuerpo: el documento --- */
 /* Scrollea en horizontal si las tablas no entran: el paso nunca desborda su columna. */
+/* ===== Despliegue del cuerpo de la card =====
+   El MISMO mecanismo que el panel de una factura pendiente (`fact-exp-wrap`): el envoltorio de
+   afuera anima su alto de `0fr` a `1fr` y el de adentro recorta lo que todavía no entra. Mismos
+   tiempos y mismas curvas, porque abrir y cerrar algo tiene que sentirse igual en toda la app. */
+.recibo-v2 .rec-exp-wrap {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+/* La animación NO va en la clase base: ahí correría en cada montaje —al volver al paso, o cada vez
+   que avanza el estado de la emisión— y la card se desplegaría sola delante del usuario. Sólo se
+   anima lo que se acaba de abrir (ver `abriendo` en `ReciboAGenerar`). */
+.recibo-v2 .rec-exp-wrap--abriendo {
+  animation: rec-desplegar 0.24s ease-out;
+}
+.recibo-v2 .rec-exp-in {
+  /* Recorta el cuerpo mientras la card todavía no lo contiene entero. El relleno vive ADENTRO, en
+     `comp-body`: acá arriba no se encogería con la grilla y dejaría un salto al empezar y terminar. */
+  overflow: hidden;
+}
+@keyframes rec-desplegar {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+}
+/* Plegado: el camino inverso, un poco más corto —cerrar puede ser más rápido que abrir, porque no
+   hay nada nuevo que leer—. Su duración tiene que coincidir con `MS_PLEGADO` en `ReciboAGenerar`. */
+.recibo-v2 .rec-exp-wrap--cerrando {
+  animation: rec-plegar 0.2s ease-in forwards;
+  /* Mientras se cierra ya no se opera: el cuerpo es sólo la salida de algo que se cerró. */
+  pointer-events: none;
+}
+@keyframes rec-plegar {
+  from {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+  to {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+/* Con movimiento reducido el cuerpo aparece y desaparece sin animarse: la información es la misma. */
+@media (prefers-reduced-motion: reduce) {
+  .recibo-v2 .rec-exp-wrap--abriendo,
+  .recibo-v2 .rec-exp-wrap--cerrando {
+    animation: none;
+  }
+}
 .recibo-v2 .comp-body {
   border-top: 1px solid var(--r-border);
   padding: 18px;

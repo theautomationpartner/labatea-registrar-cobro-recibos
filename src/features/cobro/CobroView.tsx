@@ -7,7 +7,10 @@ import {
   bloqueoAnticipo,
   bloqueoCobro,
   faltantesDeAnticipo,
+  cobroCubierto,
   diferenciaSaldada,
+  MSG_COBRO_CUBIERTO,
+  MSG_EXCESO,
   resumenCobro,
   type BloqueoCobro,
 } from '@/lib/pagos'
@@ -64,6 +67,11 @@ export function CobroView() {
      total que todavía no existe. El formulario queda cerrado hasta que estén los tres. */
   const faltaAnticipo = esAnticipo ? faltantesDeAnticipo(datosAnticipo) : []
 
+  /* Con el cobro ya cubierto el formulario se cierra: otro movimiento sólo podría pasarse del total
+     (ver `cobroCubierto`). La tabla NO se toca —sus importes siguen editables y sus filas se pueden
+     quitar—, que es justamente por dónde se vuelve a abrir. */
+  const cubierto = cobroCubierto(resumen)
+
   /* Adónde se va y de dónde se vuelve, según el recorrido: el anticipo no pasa por las ventas
      pendientes, así que su "Volver" lleva a la selección de cliente. */
   const destino = siguientePaso('cobro', tipoOperacion)
@@ -96,9 +104,11 @@ export function CobroView() {
           texto: `Faltan ${money(resumen.diferencia)} para cubrir el total a cancelar.`,
         }
       : {
+          /* El MISMO texto que la ventana de bloqueo: es el mismo problema, y decirlo distinto en
+             cada lugar haría dudar de si son dos. */
           tono: 'err' as const,
           icono: 'fa-circle-exclamation',
-          texto: `El total recibido supera el total a cancelar en ${money(-resumen.diferencia)}: ajustá los importes.`,
+          texto: MSG_EXCESO(-resumen.diferencia, !esAnticipo),
         }
 
   /* Un solo renglón de aviso para todo el paso. El bloqueo del anticipo tiene PRIORIDAD sobre la
@@ -111,7 +121,16 @@ export function CobroView() {
           icono: 'fa-circle-info',
           texto: `Para cargar cómo entrega el anticipo el cliente, completá arriba: ${faltaAnticipo.join(', ')}.`,
         }
-      : avisoDif
+      : /* Cubierto: el formulario está cerrado y hay que decir POR QUÉ. Sin este renglón el paso
+           quedaba gris y mudo justo cuando el cobro terminó bien, que se lee como una falla. Va en
+           verde: no es un problema a corregir, es el trabajo terminado. */
+        cubierto
+        ? {
+            tono: 'ok' as const,
+            icono: 'fa-circle-check',
+            texto: MSG_COBRO_CUBIERTO,
+          }
+        : avisoDif
 
   return (
     <section className="view cobro-v2 paso-layout">
@@ -161,7 +180,7 @@ export function CobroView() {
               {/* La diferencia la usa la TARJETA para precargar su importe según en cuántos
                   plásticos se parta el cobro. Los demás medios no la miran. */}
               <FormularioCobro
-                bloqueado={faltaAnticipo.length > 0}
+                bloqueado={faltaAnticipo.length > 0 || cubierto}
                 diferencia={resumen.diferencia}
               />
 

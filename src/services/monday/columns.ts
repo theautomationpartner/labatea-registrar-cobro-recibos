@@ -78,15 +78,29 @@ export const FACT_PENDIENTE_ESTADOS_COBRABLES: readonly number[] = [
 ]
 
 /**
- * Índices de "Status" (color_mm64qza0) en "Anticipos Pends de Aplicar". Leídos del tablero:
- * {"0":"Cancelado","13":"Nada","17":"Pend de Aplicar"}. NO son correlativos —el aplicable es el
- * 17—, así que el filtro va por índice y nunca por el texto de la etiqueta.
+ * Índices de "Estado" (color_mm64qza0) en "Anticipos y Credito x pase de Saldo - Pends de Aplicar".
+ * Leídos del tablero: {"0":"100% Aplicado","1":"Aplicado Parcialmente","17":"Pend de Aplicar"}.
+ *
+ * NO son correlativos, así que el filtro va por ÍNDICE y nunca por el texto de la etiqueta —que ya
+ * cambió una vez: el 0 se llamaba "Cancelado" y el 13, "Nada", una etiqueta que hoy no existe—.
  */
 export const ANTICIPO_ESTADO_INDEX = {
-  cancelado: 0,
-  nada: 13,
+  aplicado: 0,
+  aplicadoParcialmente: 1,
   pendienteDeAplicar: 17,
 } as const
+
+/**
+ * Anticipos con saldo a favor DISPONIBLE: los que todavía no se aplicaron y los que se aplicaron en
+ * parte. Los dos tienen algo que dar, y CUÁNTO lo dice su "Pend de Aplicar", no su etiqueta.
+ *
+ * Queda afuera el 100% aplicado, que es el único sin nada que ofrecer. Los dos índices viajan como
+ * regla de la consulta, con el mismo criterio que los estados cobrables de una factura.
+ */
+export const ANTICIPO_ESTADOS_APLICABLES: readonly number[] = [
+  ANTICIPO_ESTADO_INDEX.pendienteDeAplicar,
+  ANTICIPO_ESTADO_INDEX.aplicadoParcialmente,
+]
 
 export const COL = {
   cliente: {
@@ -199,8 +213,26 @@ export const COL = {
      * TABLERO (ver `ESTADO_EMISION_INDEX` y `ENVIO_RECIBO_INDEX`).
      */
     estadoEmision: 'color_mkwbzd3f',
+    /**
+     * "🤖Estado Registro de Cobro" (status): el semáforo con el que el TABLERO procesa el ítem.
+     * La app lo pone en "Registrar" y de ahí en más lo mueve la automatización (ver
+     * `ESTADO_REGISTRO_INDEX`).
+     */
+    estadoRegistro: 'color_mm5zkr61',
     /** "✋Enviar por:" (dropdown multi-valor): Email y/o WhatsApp. Ver `MEDIO_ENVIO_IDS`. */
     enviarPor: 'dropdown_mm5z5n2d',
+    /**
+     * "🤖Contactos" (board_relation → Contactos): A QUIÉNES se les manda el documento. Se escribe
+     * junto con el medio, antes de disparar el envío: la automatización del tablero lee el ítem
+     * para saber a dónde despachar, así que los destinatarios tienen que estar puestos antes.
+     */
+    contactos: 'board_relation_mm65gakb',
+    /**
+     * "🤖Saldo Cta Cte con Cobro Aplicado" (numbers): cómo queda la deuda de la cuenta DESPUÉS de
+     * este recibo — el saldo que tenía menos lo recibido—. Lo calcula la app al emitir y no se
+     * muestra en pantalla: es un dato del documento, no de la operación en curso.
+     */
+    saldoConCobro: 'numeric_mm6e1hz3',
     /** "🤖 Recibo PDF" (file): el documento a enviar. Vacío = todavía no se generó. */
     pdf: 'file_mkwbkp1d',
     /** "🤖Fecha de Envio al Cliente" (date): la completa el tablero al despachar. */
@@ -262,6 +294,12 @@ export const COL = {
      * facturas (18421035508 / 18422405731), así que un id de anticipo escrito ahí no linkea nada.
      */
     anticipoAplicado: 'board_relation_mm659pd1',
+    /**
+     * "🤖Persona Origen" (board_relation → Personas): de quién SALE el saldo en un pase. Es una
+     * columna aparte de la "🤖Persona" de la cabecera, que apunta a quién lo RECIBE: en un pase las
+     * dos personas son distintas, y esa diferencia ES la operación.
+     */
+    personaOrigen: 'board_relation_mm6b2p4y',
     /** "🤖Importe Cancelado $": cuánto se le imputa a esa factura. */
     importeCancelado: 'numeric_mm4e61yk',
     /** "🤖Importe Cobrado $": cuánto entregó el cliente con esa forma de pago. */
@@ -307,31 +345,15 @@ export const COL = {
     limite: 'lookup_mm585jgv',
     /** Relación al cliente (board de Personas). Es por donde se busca SU cuenta corriente. */
     cliente: 'board_relation_mm58dyn',
+    /**
+     * "Fact Vent pend de Aplciar" (numbers): VENTAS PENDS DE CANCELAR, el total que el cliente
+     * todavía debe. Es un total YA calculado por el tablero sobre el ítem de la cuenta: la app lo
+     * lee, no lo suma.
+     */
+    ventasPendCancelar: 'numeric_mm677127',
+    /** "Anticipo pend de Aplicar" (numbers): ANTICIPOS PENDS DE APLICAR, el saldo a favor sin usar. */
+    anticiposPendAplicar: 'numeric_mm67j0rv',
   },
-  /* SUBELEMENTOS de la cuenta corriente: un movimiento por fila. El tipo de movimiento decide qué
-     columna de importe hay que leer —cada clase de saldo tiene la suya—, así que las tres se
-     interpretan juntas. */
-  ctaCteSub: {
-    /** Tipo de movimiento (status): "Vta Pend de Cobro", "Anticipo"… Ver `CTA_CTE_MOV`. */
-    tipo: 'color_mm5z46ht',
-    /** Importe pendiente de cancelar. Sólo lo llevan los movimientos "Vta Pend de Cobro". */
-    pendiente: 'numeric_mm5gdhkt',
-    /** Importe del anticipo. Sólo lo llevan los movimientos "Anticipo". */
-    anticipo: 'numeric_mm5gtxav',
-  },
-} as const
-
-/**
- * Etiquetas de "tipo de movimiento" (color_mm5z46ht) que la ficha suma por separado.
- *
- * Se comparan por TEXTO y no por índice: son los rótulos que llegaron por especificación y no se
- * pudieron verificar contra el tablero, así que atarlos a un índice inventado sería peor —un índice
- * equivocado suma en silencio el movimiento que no es—. La comparación normaliza mayúsculas y
- * espacios, para que un rótulo con otra capitalización siga entrando.
- */
-export const CTA_CTE_MOV = {
-  pendienteDeCobro: 'Vta Pend de Cobro',
-  anticipo: 'Anticipo',
 } as const
 
 /* ===== Etiquetas del recibo =====
@@ -345,6 +367,13 @@ export const CTA_CTE_MOV = {
  * tablero tenga la etiqueta y se sepa su índice, la forma se mueve a `CAJA_INDEX` y sale de acá.
  */
 export type FormaPagoSinIndice = 'Retencion SUSS'
+
+/**
+ * Índice de "Anticipo" en "✋Caja" (columna `status` del subelemento). No entra en `CAJA_INDEX`
+ * porque NO es una forma de pago: es la línea que declara QUÉ se está cancelando —el anticipo
+ * entregado—, el lugar que en un cobro ocupan los subítems de factura.
+ */
+export const CAJA_ANTICIPO_INDEX = 11
 
 /**
  * Forma de pago de la app → ÍNDICE de "✋Caja" (columna `status`) del subelemento. Se escribe por
@@ -375,6 +404,10 @@ export const CAJA_INDEX: Record<Exclude<FormaPago, FormaPagoSinIndice>, number> 
   /* Contribuciones de Seguridad Social. Es la única caja que NO comparte el bloque 6-8: se sumó al
      tablero después, así que quedó al final de la lista de etiquetas. */
   'Retencion CCSS': 13,
+  /* El ANTICIPO no es una caja de dinero: es el sobrante del cobro que queda a favor del cliente.
+     Comparte la etiqueta con la línea del anticipo de los otros recorridos —en el tablero es lo
+     mismo: saldo a favor—, así que reusa su índice. */
+  Anticipo: CAJA_ANTICIPO_INDEX,
 }
 
 /**
@@ -431,14 +464,10 @@ export const TIPO_COBRO_INDEX = {
   simultaneo: 1,
   anticipo: 2,
   aplicacionCtaCte: 3,
+  /** PASE DE SALDO: el saldo a favor de un cliente se mueve a la cuenta de otro. */
+  paseDeSaldo: 4,
 } as const
 
-/**
- * Índice de "Anticipo" en "✋Caja" (columna `status` del subelemento). No entra en `CAJA_INDEX`
- * porque NO es una forma de pago: es la línea que declara QUÉ se está cancelando —el anticipo
- * entregado—, el lugar que en un cobro ocupan los subítems de factura.
- */
-export const CAJA_ANTICIPO_INDEX = 11
 
 /**
  * Índice de "Dif de Caja" en "✋Caja". Tampoco es una forma de pago: es la línea de AJUSTE con la
@@ -454,6 +483,31 @@ export const CAJA_DIF_INDEX = 9
  * por la misma columna en el tablero.
  */
 export const CAJA_FACT_CANCELADA_INDEX = 10
+
+/**
+ * Índices de "✋Caja" para las DOS patas de un PASE DE SALDO. Tampoco son formas de pago: son el
+ * movimiento contable del saldo, que sale de una cuenta y entra en otra. Van siempre de a par —un
+ * débito sin su crédito dejaría plata en el aire—, y en ese orden.
+ */
+export const CAJA_DEBITO_PASE_INDEX = 14
+export const CAJA_CREDITO_PASE_INDEX = 15
+
+/**
+ * Índices de "🤖Estado Registro de Cobro" (color_mm5zkr61). Leídos del tablero:
+ * {"0":"Registrando","1":"Registrado","2":"Error - Ver Update","3":"Reintentar","4":"Registrar"}.
+ *
+ * La app escribe UNO solo —"Registrar"—, que es lo que le pide al tablero que procese el ítem. El
+ * resto los mueve la automatización, así que acá sólo se declaran para que se lea de dónde sale el
+ * 4 y qué significan los otros.
+ */
+export const ESTADO_REGISTRO_INDEX = {
+  /** Lo ÚNICO que escribe la app: pide que el tablero registre el ítem. */
+  registrar: 4,
+  registrando: 0,
+  registrado: 1,
+  error: 2,
+  reintentar: 3,
+} as const
 
 export const ESTADO_EMISION_INDEX = {
   /** Lo ÚNICO que escribe la app: pide la emisión. */

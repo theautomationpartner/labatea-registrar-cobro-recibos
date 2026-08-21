@@ -67,7 +67,6 @@ function detalleDe(m: MovimientoPago): Dato[] {
   }
   if (esPagoConTarjeta(m.formaPago)) {
     const filas: Dato[] = [
-      { label: 'Banco emisor', valor: m.bancoTarjeta || '—' },
       { label: 'Tipo', valor: m.tipoTarjeta || '—' },
       { label: 'Fecha de Venc.', valor: m.vencimientoTarjeta || '—' },
     ]

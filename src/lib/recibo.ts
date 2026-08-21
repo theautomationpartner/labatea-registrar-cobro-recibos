@@ -10,7 +10,7 @@
  */
 import { desdeIso } from '@/lib/dates'
 import { round2 } from '@/lib/format'
-import { esPagoConTarjeta, esRetencion } from '@/lib/pagos'
+import { esAnticipoDeCobro, esPagoConTarjeta, esRetencion } from '@/lib/pagos'
 import type { Imputaciones } from '@/lib/cobros'
 import type { FacturaPendiente, MovimientoPago } from '@/types'
 
@@ -22,6 +22,12 @@ export const NRO_RECIBO = '0001-00001236'
 
 /** Marca de un dato que el tablero no tiene cargado. La misma en las dos tablas del documento. */
 export const SIN_DATO = '—'
+
+/**
+ * Cómo se nombra la fila del anticipo en la tabla de comprobantes. No es un número de comprobante
+ * —el saldo a favor no tiene uno— sino el concepto, que es lo que corresponde leer en esa columna.
+ */
+export const NOMBRE_ANTICIPO = 'Anticipo'
 
 /** Una factura cancelada por este recibo: una fila de la tabla "Comprobantes". */
 export interface ComprobanteCancelado {
@@ -35,6 +41,13 @@ export interface ComprobanteCancelado {
   vencimiento: string
   /** Importe que ESTE recibo le cancela: lo imputado en el paso 2. */
   cancelado: number
+  /**
+   * La fila es un ANTICIPO y no una factura: el sobrante que queda a favor del cliente. Se marca
+   * explícitamente —y no se deduce del nombre— porque lo que este recibo CANCELA y lo que después
+   * se linkea como factura en Monday no son lo mismo: quien emite tiene que poder separarlas sin
+   * mirar un texto.
+   */
+  esAnticipo?: boolean
 }
 
 /** Un pago recibido: una fila de la tabla "Forma de pago / caja". */
@@ -120,19 +133,38 @@ export function armarRecibo(
    */
   pagosAplicados?: readonly PagoRecibido[],
 ): Recibo {
-  const comprobantes: ComprobanteCancelado[] = facturas
-    .filter((f) => f.id in imputaciones)
-    .map((f) => ({
-      id: f.id,
-      nro: f.nro,
-      emision: desdeIso(f.emision),
-      vencimiento: desdeIso(f.vencimiento),
-      cancelado: round2(imputaciones[f.id]),
-    }))
+  /* Los ANTICIPOS cargados como medio de cobro son el sobrante que queda a favor del cliente: no
+     son plata que entró, sino algo MÁS que este recibo cancela. Por eso figuran entre los
+     comprobantes cancelados —a continuación de las facturas— y no entre las formas de pago: es lo
+     que hace que el total cancelado iguale a lo entregado en lugar de quedar corto. */
+  const anticipos = movimientos.filter((m) => esAnticipoDeCobro(m.formaPago))
+  const cobrados = movimientos.filter((m) => !esAnticipoDeCobro(m.formaPago))
+
+  const comprobantes: ComprobanteCancelado[] = [
+    ...facturas
+      .filter((f) => f.id in imputaciones)
+      .map((f) => ({
+        id: f.id,
+        nro: f.nro,
+        emision: desdeIso(f.emision),
+        vencimiento: desdeIso(f.vencimiento),
+        cancelado: round2(imputaciones[f.id]),
+      })),
+    /* El anticipo no tiene número de comprobante ni fechas: todavía no es un documento, es saldo a
+       favor. Las columnas quedan vacías y la tabla las muestra con su marca de "sin dato". */
+    ...anticipos.map((m) => ({
+      id: m.id,
+      nro: NOMBRE_ANTICIPO,
+      emision: '',
+      vencimiento: '',
+      cancelado: round2(m.importe),
+      esAnticipo: true,
+    })),
+  ]
 
   const pagos: PagoRecibido[] = pagosAplicados
     ? [...pagosAplicados]
-    : movimientos.map((m) => ({
+    : cobrados.map((m) => ({
         id: m.id,
         /* Sólo el NOMBRE de la forma de pago. El banco del cheque, la cuenta que recibió la
            transferencia o la marca de la tarjeta ya se cargaron en el paso 3 y viajan a sus

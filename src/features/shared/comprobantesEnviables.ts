@@ -12,7 +12,7 @@
  * se emitió y que ejecute el envío.
  */
 import {
-  asignarMedioEnvio,
+  asignarDestinoEnvio,
   dispararEnvioRecibo,
   reciboPdfGenerado,
   seguirEnvioRecibo,
@@ -84,10 +84,12 @@ const RECIBO: ComprobanteEnviable = {
   emitido: (s) => Boolean(s.reciboId),
   // El recibo es una salida del sistema: no sale nada de un cliente bloqueado o excedido.
   frenaPorCredito: true,
-  async enviar({ itemId, medio, onProgreso }) {
+  async enviar({ itemId, contactoIds, medio, onProgreso }) {
     // El PDF lo genera el tablero después de emitir: sin él no hay documento que despachar.
     if (!(await reciboPdfGenerado(itemId))) return { estado: 'sin-documento' }
-    await asignarMedioEnvio(itemId, medio)
+    /* Destinatarios y medio, antes del disparo: la automatización lee el ítem para saber a quién
+       mandarle el documento. */
+    await asignarDestinoEnvio(itemId, medio, contactoIds)
     await dispararEnvioRecibo(itemId)
     const final = await seguirEnvioRecibo(itemId, onProgreso)
     return final === ENVIO_RECIBO_INDEX.enviado ? { estado: 'ok' } : { estado: 'error-envio' }

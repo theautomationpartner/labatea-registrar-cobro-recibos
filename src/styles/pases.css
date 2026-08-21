@@ -1,0 +1,440 @@
+/**
+ * PASES DE SALDO · las tres etapas propias del recorrido.
+ *
+ * Va namespaceado bajo `.pases-v2`, que se monta JUNTO a `.cobro-v2`: las vistas reusan su panel,
+ * sus cards y sus tokens, y acá sólo viven las piezas que ese paso agrega —la lista excluyente, las
+ * tarjetas de saldo del destino y el panel comparativo del resultado—.
+ */
+
+/* Variables de la tabla de facturas, que es global pero las declara `.facturas-v2`: el paso 4 la
+   reusa para mostrar cómo queda cada venta, así que las necesita acá con los mismos valores. */
+.pases-v2 {
+  --c-text-muted: #64748b;
+  --sel-bg: var(--tint-input);
+  --sel-hover: #e2ecfc;
+}
+
+/* ===== Lista excluyente (anticipo de origen · acción del pase) =====
+   Es una lista de opciones y no una tabla: se elige UNA, así que la fila entera es el control. */
+.pases-v2 .pase-lista {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 0;
+}
+.pases-v2 .pase-opcion,
+.pases-v2 .pase-accion {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1.5px solid var(--c-border);
+  border-radius: var(--c-radius-md);
+  background: var(--c-bg-card);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.pases-v2 .pase-opcion:hover:not(:disabled),
+.pases-v2 .pase-accion:hover:not(:disabled) {
+  border-color: var(--c-primary);
+  background: #f7faff;
+}
+/* Elegida: el borde y el fondo la separan del resto sin necesidad de leer el radio. */
+.pases-v2 .pase-opcion.is-on,
+.pases-v2 .pase-accion.is-on {
+  border-color: var(--c-primary);
+  background: #eef5ff;
+}
+.pases-v2 .pase-accion:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+/* Radio dibujado: el control es el botón entero, así que el círculo sólo comunica el estado. */
+.pases-v2 .pase-opcion-radio,
+.pases-v2 .pase-accion-radio {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 2px solid var(--c-border);
+  border-radius: 50%;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.pases-v2 .pase-opcion.is-on .pase-opcion-radio,
+.pases-v2 .pase-accion.is-on .pase-accion-radio {
+  border-color: var(--c-primary);
+  /* El punto del centro se dibuja con la sombra: no hace falta un nodo más. */
+  box-shadow: inset 0 0 0 4px var(--c-primary);
+}
+.pases-v2 .pase-opcion-txt,
+.pases-v2 .pase-accion-txt {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.pases-v2 .pase-opcion-tit,
+.pases-v2 .pase-accion-tit {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--c-text-main);
+}
+.pases-v2 .pase-opcion-sub,
+.pases-v2 .pase-accion-sub {
+  font-size: 12.5px;
+  color: var(--c-text-secondary);
+}
+.pases-v2 .pase-opcion-imp {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--c-text-main);
+  white-space: nowrap;
+}
+.pases-v2 .pase-accion-ic {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #e8effc;
+  color: var(--c-primary);
+  font-size: 15px;
+}
+.pases-v2 .pase-acciones {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Lo que se va a mover, en una línea, debajo de la tabla del paso 2. */
+/* Resumen del pase, en el PIE de la card. Comparte renglón —y turno— con el aviso de bloqueo, que
+   es su opuesto exacto: o falta algo para armar el pase, o el pase está resuelto.
+
+   Por eso copia las medidas de `.cobro-bloqueo-inline` al pixel: mismo `line-height` y mismo alto de
+   caja. Alternar entre los dos no puede mover el renglón, y el renglón ya reserva su alto, así que
+   la card mide lo mismo con mensaje o sin él.
+
+   Sin `margin-top` a propósito: acá lo posiciona el pie, no un margen propio. El que tenía lo
+   separaba de la tabla cuando el resumen vivía suelto encima de este renglón. */
+.pases-v2 .pase-resumen-linea {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  line-height: 20px;
+  color: var(--c-text-main);
+}
+.pases-v2 .pase-resumen-linea i {
+  color: var(--c-primary);
+}
+
+/* ===== Detalle del anticipo elegido ===== */
+.pases-v2 .pase-detalle {
+  margin-top: 8px;
+}
+.pases-v2 .pase-datos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--c-radius-md);
+  background: var(--c-bg-panel);
+}
+.pases-v2 .pase-datos dt {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--c-text-secondary);
+  margin-bottom: 4px;
+}
+.pases-v2 .pase-datos dd {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--c-text-main);
+}
+.pases-v2 .pase-datos-fuerte {
+  color: var(--c-primary);
+  font-size: 18px !important;
+}
+
+
+/* ===== Panel comparativo del resultado =====
+   Los tres números en renglones separados: lo que había, lo que se pasa y cómo queda. El total se
+   despega con un filete arriba, que es lo que lo marca como el cierre de la cuenta. */
+.pases-v2 .pase-resumen {
+  margin-top: 16px;
+  margin-left: auto;
+  width: min(420px, 100%);
+  border: 1px solid var(--c-border);
+  border-radius: var(--c-radius-md);
+  background: var(--c-bg-panel);
+  padding: 8px 16px;
+}
+.pases-v2 .pase-resumen-fila {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+}
+.pases-v2 .pase-resumen-lbl {
+  font-size: 13px;
+  color: var(--c-text-secondary);
+}
+.pases-v2 .pase-resumen-val {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--c-text-main);
+  white-space: nowrap;
+}
+.pases-v2 .pase-resumen-fila--suma .pase-resumen-val {
+  color: var(--c-success);
+}
+.pases-v2 .pase-resumen-fila--total {
+  border-top: 1px solid var(--c-border);
+  margin-top: 4px;
+  padding-top: 12px;
+}
+.pases-v2 .pase-resumen-fila--total .pase-resumen-lbl {
+  font-weight: 700;
+  color: var(--c-text-main);
+}
+.pases-v2 .pase-resumen-fila--total .pase-resumen-val {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--c-primary);
+}
+
+/* Lo que cada factura absorbe del saldo: en verde, porque baja su deuda. */
+.pases-v2 .pase-aplica {
+  color: var(--c-success);
+  font-weight: 700;
+}
+
+/* El buscador de la cuenta destino reusa el del cliente, que vive namespaceado en `.cliente-v2`. */
+.pases-v2 .toolbar-wrapper {
+  margin-bottom: 16px;
+  max-width: 560px;
+}
+.pases-v2 .search-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  min-width: 0;
+}
+.pases-v2 .search-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 46px;
+  background: #fff;
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.pases-v2 .search-wrapper:focus-within {
+  border-color: var(--c-primary);
+}
+.pases-v2 .search-wrapper--abierto {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.pases-v2 .search-wrapper > svg {
+  position: absolute;
+  left: 12px;
+  color: var(--c-primary);
+}
+.pases-v2 .search-input {
+  width: 100%;
+  height: 100%;
+  padding: 0 16px 0 40px;
+  border: none;
+  background: transparent;
+  font-size: 15px;
+  outline: none;
+  color: var(--c-text-main);
+}
+/* Renglón reservado esté o no el mensaje: mostrarlo no mueve nada de lugar. */
+.pases-v2 .search-helper {
+  display: block;
+  min-height: 18px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--c-text-secondary);
+  padding-left: 4px;
+}
+.pases-v2 .search-helper--error {
+  color: var(--c-danger);
+  font-weight: 600;
+}
+.pases-v2 .results {
+  position: absolute;
+  top: 46px;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin: -1px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 260px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--c-border);
+  border-radius: 0 0 8px 8px;
+  box-shadow: var(--c-shadow-soft);
+}
+.pases-v2 .result-item {
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: 14px;
+  color: var(--c-text-main);
+  cursor: pointer;
+}
+.pases-v2 .result-item:hover {
+  background: #f2f7ff;
+}
+
+/* ===== Paso 3 - destino: buscador y ficha DENTRO de la misma card =====
+   Los dos son los mismos componentes del paso 1, donde cada uno vive en su propia caja. Acá
+   comparten la card del paso —es UNA decisión, no cuatro bloques—, así que se les saca el marco:
+   borde, sombra, fondo propio y el padding con el que se separaban del borde de su caja. Sin esto
+   se veían como dos recuadros anidados dentro de un tercero.
+
+   Las reglas encadenan dos clases del propio elemento para GANAR por especificidad y no por orden de
+   archivos: `.cliente-v2 .unified-toolbar` y `.card` pesan lo mismo o más que una clase suelta, y
+   depender de qué hoja se carga después es exactamente el tipo de arreglo que se rompe solo. */
+.pases-v2 .unified-toolbar.pase-buscador {
+  padding: 0;
+  margin-bottom: 16px;
+}
+.pases-v2 .cobro-card .card.cliente-ficha {
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  padding: 0;
+}
+
+/* ===== Proyeccion del saldo a favor del destino =====
+   Es la MISMA caja y las MISMAS metricas que "Impacto en cuenta corriente" de la app de operaciones
+   de venta, con sus mismas clases y sus mismos valores: las dos apps muestran el mismo tipo de
+   proyeccion —de cuanto parte, cuanto se mueve, en cuanto queda— y tienen que verse igual.
+
+   Los estilos se copian en vez de importarse porque los dos proyectos son independientes; lo que se
+   respeta al pixel es el resultado. */
+.pases-v2 .entrega-panel {
+  background: #fff;
+  border: 1px solid var(--c-border, #e4e7ee);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pases-v2 .entrega-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--c-border, #e4e7ee);
+  background: #fff;
+}
+.pases-v2 .entrega-panel-body {
+  padding: 20px;
+  background: #fff;
+}
+/* El titulo es un <h3> por semantica, pero se lee como el texto del contenedor: el h3 trae un
+   tamano propio del navegador y el peso lo pone `.font-b`. */
+.pases-v2 .cobro-imp-title {
+  font-size: inherit;
+  color: var(--c-text-main);
+  margin: 0;
+}
+.pases-v2 .cobro-imp-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+/* Cada metrica es icono + (rotulo sobre numero), CENTRADA dentro de su columna.
+   `flex: 1 1 0` es lo que vuelve el centrado comparable: reparte el ancho en tres partes IGUALES en
+   vez de darle a cada una lo que ocupa su contenido. Con el reparto por contenido, el rotulo mas
+   largo se quedaba con mas lugar y las tres quedaban centradas sobre ejes distintos. */
+.pases-v2 .cobro-imp-met {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex: 1 1 0;
+}
+.pases-v2 .cobro-imp-num {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--c-text-main);
+  white-space: nowrap;
+}
+.pases-v2 .cobro-imp-num--verde {
+  color: var(--c-success);
+}
+/* El saldo que queda es la conclusion del paso: pesa mas que el resto. */
+.pases-v2 .cobro-imp-num--total {
+  font-size: 22px;
+  font-weight: 800;
+}
+/* Lo que entra por el pase: rotulo en verde, a juego con su numero y su icono. */
+.pases-v2 .cobro-cab-lbl--verde {
+  color: var(--c-success);
+  font-weight: 700;
+}
+/* Pastilla neutra: el saldo del que se parte no es ni bueno ni malo, es el punto de partida. */
+.pases-v2 .cobro-cab-ic--gris {
+  background: #eef0f4;
+  color: var(--c-text-secondary);
+}
+/* El panel CIERRA la card como una BANDA: ocupa todo su ancho y termina en su borde inferior.
+   Para salirse del padding de la card se estira con un margen negativo de esa MISMA medida, tomada
+   de la variable que la card declara: con el numero repetido a mano, cambiar el padding dejaria la
+   banda descalzada de los bordes.
+
+   Pierde tres de sus cuatro bordes y el radio, que son de un panel suelto y no de una banda: los
+   costados y el pie ya los dibuja el borde de la card, y repetirlos ahi mismo daria una linea de
+   2px. Queda el de ARRIBA, que es lo unico que hace falta: el filete que la separa del contenido.
+
+   El aire de abajo es padding PROPIO. No es un margen: un margen debajo del ultimo hijo dejaria un
+   hueco fuera de la banda, y lo que se busca es que la banda misma respire. */
+.pases-v2 .cobro-imp-panel {
+  margin: 16px calc(var(--cobro-card-pad) * -1) 0;
+  padding-bottom: 16px;
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
+  border-radius: 0;
+}
+.pases-v2 .cobro-card--cierre {
+  padding-bottom: 0;
+}
+
+.pases-v2 .ant-aplicar-err {
+  /* Dos renglones: el mensaje es largo y en esta columna angosta entra en dos. Reservarlos evita
+     que la fila crezca justo cuando aparece. */
+  display: block;
+  min-height: 2.4em;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: left;
+  color: var(--c-danger);
+}

@@ -11,11 +11,18 @@ export const ETAPA = {
   ventas: 'Seleccionar Vtas Pend de Cobro',
   cobro: 'Registrar Cobro',
   recibo: 'Emitir y Enviar Recibo',
+  anticipoOrigen: 'Seleccionar Anticipo',
+  destino: 'Seleccionar Cuenta Destino',
 } as const
 
 /** Etiquetas que PISAN a las de `ETAPA` en el recorrido del anticipo. */
 const ETAPA_ANTICIPO: Partial<Record<Paso, string>> = {
   cobro: 'Registrar Anticipo',
+}
+
+/** Etiquetas que PISAN a las de `ETAPA` en un PASE DE SALDO. */
+const ETAPA_PASES: Partial<Record<Paso, string>> = {
+  cliente: 'Seleccionar Cliente Origen',
 }
 
 /** Etiquetas que PISAN a las de `ETAPA` al aplicar un anticipo contra facturas. */
@@ -35,6 +42,11 @@ const RECORRIDO: Record<TipoOperacion, readonly Paso[]> = {
   cobro: ['cliente', 'ventas', 'cobro', 'recibo'],
   anticipo: ['cliente', 'cobro', 'recibo'],
   aplicacion: ['cliente', 'ventas', 'cobro', 'recibo'],
+  /* PASES DE SALDO: el anticipo de un cliente se mueve a la cuenta de otro. TRES etapas: de dónde
+     sale (cliente origen), QUÉ saldo se mueve (su anticipo) y a dónde va (cuenta destino). La
+     última cierra la operación: el pase se registra ahí mismo, sin una pantalla de resultado que
+     sólo repetiría lo que ya está en pantalla. */
+  pases: ['cliente', 'anticipoOrigen', 'destino'],
 }
 
 /**
@@ -53,9 +65,27 @@ export const etiquetasDe = (tipo: TipoOperacion | null): string[] =>
  * lugar del recorrido, con otro nombre.
  */
 export const etiquetaDePaso = (paso: Paso, tipo: TipoOperacion | null): string => {
-  const propia = tipo === 'anticipo' ? ETAPA_ANTICIPO : tipo === 'aplicacion' ? ETAPA_APLICACION : undefined
+  const propia =
+    tipo === 'anticipo'
+      ? ETAPA_ANTICIPO
+      : tipo === 'aplicacion'
+        ? ETAPA_APLICACION
+        : tipo === 'pases'
+          ? ETAPA_PASES
+          : undefined
   return propia?.[paso] ?? ETAPA[paso]
 }
+
+/**
+ * Bajada del paso "destino". Es una PLANTILLA y no un texto fijo porque nombra el IMPORTE que se
+ * está moviendo, que sólo se conoce en tiempo de ejecución: la vista la llama con el número ya
+ * formateado.
+ *
+ * La frase está construida alrededor de ese importe ("los … seleccionados"), así que NO admite un
+ * sustantivo genérico en su lugar: el texto neutro de `DESCRIPCION` es otro, escrito aparte.
+ */
+export const descripcionDestino = (loQueRecibe: string): string =>
+  `Buscá la cuenta que va a recibir los ${loQueRecibe} pesos seleccionados en el paso anterior`
 
 /**
  * Bajada de cada etapa: la explicación que acompaña al título del paso. Vive junto a las etiquetas
@@ -66,6 +96,15 @@ export const DESCRIPCION: Record<Paso, string> = {
   ventas: 'Elegí las facturas pendientes del cliente e indicá cuánto se cancela de cada una.',
   cobro: 'Registrá el cobro: medio de pago, importe e imputación sobre las ventas seleccionadas.',
   recibo: 'Emití el recibo en Monday y enviáselo al cliente.',
+  anticipoOrigen: 'Elegí el anticipo del cliente cuyo saldo se va a pasar a otra cuenta.',
+  /* Sin importe a la vista —nadie llegó al paso todavía— se describe el paso, no la operación en
+     curso. La versión con el número la arma la vista con `descripcionDestino`. */
+  destino: 'Buscá la cuenta que va a recibir el saldo seleccionado en el paso anterior.',
+}
+
+/** Bajadas que PISAN a las de `DESCRIPCION` en un PASE DE SALDO. */
+const DESCRIPCION_PASES: Partial<Record<Paso, string>> = {
+  cliente: 'Busca el cliente al cual se le debita de la cuenta corriente este movimiento',
 }
 
 /** Bajadas que PISAN a las de `DESCRIPCION` al aplicar un anticipo contra facturas. */
@@ -87,7 +126,9 @@ export const descripcionDePaso = (paso: Paso, tipo: TipoOperacion | null): strin
       ? DESCRIPCION_ANTICIPO
       : tipo === 'aplicacion'
         ? DESCRIPCION_APLICACION
-        : undefined
+        : tipo === 'pases'
+          ? DESCRIPCION_PASES
+          : undefined
   return propia?.[paso] ?? DESCRIPCION[paso]
 }
 

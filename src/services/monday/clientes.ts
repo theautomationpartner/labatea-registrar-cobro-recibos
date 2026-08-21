@@ -6,6 +6,7 @@
  * cliente devuelve "no existe" para todo el que caiga fuera de la primera página.
  */
 import { CLIENTES } from '@/data/mock'
+import { formatearCuit } from '@/lib/pagos'
 import type {
   ActividadCliente,
   Cliente,
@@ -176,7 +177,10 @@ function mapCliente(item: MondayItem): Cliente {
     // El código del sistema es el que ve el usuario; el id del ítem queda para la API.
     codigo: c[COL.cliente.codigo]?.text?.trim() || item.id,
     name: item.name,
-    cuit: c[COL.cliente.cuit]?.text ?? '',
+    /* El board lo guarda como once dígitos corridos ("30709067881"). Se formatea ACÁ, en el borde
+       de entrada, para que el resto del circuito —la ficha, el buscador, la comparación contra el
+       emisor de un cheque o de una retención— trabaje siempre con el mismo formato. */
+    cuit: formatearCuit(c[COL.cliente.cuit]?.text),
     ptype: c[COL.cliente.tipoPersona]?.text ?? '',
     status: c[COL.cliente.condFiscal]?.text ?? '',
     list: (c[COL.cliente.listaPrecio]?.text as ListaPrecio) || null,

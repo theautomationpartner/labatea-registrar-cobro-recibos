@@ -32,17 +32,17 @@ export const clienteBloqueado = (c: Cliente | null | undefined): boolean =>
 export const aplicaCredito = (c: Cliente | null | undefined): boolean =>
   !!c && !clienteBloqueado(c) && esVentaACredito(c) && c.situation === 'Liberado con crédito'
 
-/** El cliente tiene valores de crédito cargados en el board y vale la pena mostrarlos. */
-export const tieneValoresCredito = (c: Cliente): boolean =>
-  c.limit > 0 || c.lineaUtilizada > 0 || c.remitosPendFacturar > 0 || c.saldoCtaCte > 0
-
 /**
- * Por qué el límite no se va a considerar, para avisarlo en la ficha. `null` cuando sí rige,
- * cuando el cliente está bloqueado (eso se avisa aparte, con más peso) o cuando no hay
- * ningún valor cargado que justifique la aclaración.
+ * Por qué el límite no se va a considerar, para avisarlo en la ficha. `null` cuando sí rige o
+ * cuando el cliente está bloqueado (eso se avisa aparte, con más peso).
+ *
+ * NO depende de que el cliente tenga valores cargados. Dependía cuando la ficha escondía el bloque
+ * financiero de los clientes en cero: sin bloque no había nada que aclarar. Ahora el bloque se
+ * muestra siempre, así que callar el motivo dejaría sus números en gris sin decir por qué —que es
+ * justo lo que la aclaración existe para evitar—.
  */
 export function motivoCreditoIgnorado(c: Cliente): string | null {
-  if (clienteBloqueado(c) || aplicaCredito(c) || !tieneValoresCredito(c)) return null
+  if (clienteBloqueado(c) || aplicaCredito(c)) return null
   // Sin condición de pago no hay forma de saber cómo se cobra: se avisa por su cuenta, no como CONTADO.
   if (!c.condicionPago) {
     return 'No se considerará el crédito porque el cliente no tiene asignado una condición de pago en el sistema.'

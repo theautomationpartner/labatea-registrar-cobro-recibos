@@ -49,6 +49,17 @@ export function hoy(): string {
 }
 
 /**
+ * El día SIGUIENTE al de la operación, en dd/MM/yyyy. Es el primer vencimiento que una tarjeta
+ * puede tener para seguir vigente (ver `vencimientoTarjetaInvalido`), y con él el calendario del
+ * campo deja de ofrecer fechas que la validación va a rechazar.
+ */
+export function manana(): string {
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`
+}
+
+/**
  * Días transcurridos desde el vencimiento hasta HOY. Si todavía no venció da 0 —no días
  * negativos: "faltan 5 días" no es mora—. Sin fecha de vencimiento devuelve `null`, que la UI
  * muestra como "—": no es lo mismo no deber días que no saber cuántos.

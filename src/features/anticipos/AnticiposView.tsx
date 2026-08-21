@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AvisoModal } from '@/components/ui/AvisoModal'
 import { CabeceraCobro } from '@/features/cobro/CabeceraCobro'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
 import { bloqueoAplicacion, totalACancelar, totalAplicado } from '@/lib/cobros'
@@ -31,6 +32,47 @@ export function AnticiposView() {
      datos puestos, sin el parpadeo del esqueleto de carga. */
   const enCache = !!cliente && anticiposClienteId === cliente.id
   const [cargando, setCargando] = useState(!enCache)
+  // Motivo por el que no se puede avanzar, mostrado al intentarlo.
+  const [aviso, setAviso] = useState<ReturnType<typeof bloqueoAplicacion>>(null)
+
+  /* El paso sigue montado. Lo miran las respuestas que llegan tarde: si el usuario ya se fue, no
+     tienen a quién escribirle. Es una ref y no la bandera local que había antes porque la consulta
+     ahora también se dispara desde el botón de reintentar, o sea fuera de todo efecto y sin
+     limpieza que la apague. */
+  const montado = useRef(true)
+  useEffect(() => {
+    montado.current = true
+    return () => {
+      montado.current = false
+    }
+  }, [])
+
+  /**
+   * Consulta los anticipos del cliente y los deja en el estado global. Es la ÚNICA lectura del
+   * paso: la usan igual la carga inicial y el reintento manual, así que las dos guardan el mismo
+   * resultado, cachean con la misma clave y tratan el error de la misma manera.
+   */
+  const consultar = useCallback(
+    (clienteId: string) => {
+      setCargando(true)
+      getAnticiposPendientes(clienteId)
+        .then((as) => {
+          if (!montado.current) return
+          // El id queda como clave de caché: a partir de acá el paso no vuelve a consultar solo.
+          dispatch({ type: 'setAnticipos', anticipos: as, clienteId })
+          setCargando(false)
+        })
+        .catch(() => {
+          if (!montado.current) return
+          /* Sin clave de caché (`null`): un error NO se cachea, así volver a entrar al paso
+             reintenta la lectura en vez de dejar al cliente sin anticipos para siempre. */
+          dispatch({ type: 'setAnticipos', anticipos: [], clienteId: null })
+          dispatch({ type: 'errorMonday', accion: 'obtener los anticipos del cliente' })
+          setCargando(false)
+        })
+    },
+    [dispatch],
+  )
 
   /* Los anticipos se leen UNA sola vez por cliente y quedan cacheados en el estado global
      (`anticiposClienteId`): volver al paso desde el stepper no vuelve a consultar a Monday. La
@@ -47,27 +89,8 @@ export function AnticiposView() {
       setCargando(false)
       return
     }
-    let vivo = true
-    setCargando(true)
-    getAnticiposPendientes(cliente.id)
-      .then((as) => {
-        if (!vivo) return
-        // El id queda como clave de caché: a partir de acá el paso no vuelve a consultar.
-        dispatch({ type: 'setAnticipos', anticipos: as, clienteId: cliente.id })
-        setCargando(false)
-      })
-      .catch(() => {
-        if (!vivo) return
-        /* Sin clave de caché (`null`): un error NO se cachea, así volver a entrar al paso
-           reintenta la lectura en vez de dejar al cliente sin anticipos para siempre. */
-        dispatch({ type: 'setAnticipos', anticipos: [], clienteId: null })
-        dispatch({ type: 'errorMonday', accion: 'obtener los anticipos del cliente' })
-        setCargando(false)
-      })
-    return () => {
-      vivo = false
-    }
-  }, [cliente, anticiposClienteId, dispatch])
+    consultar(cliente.id)
+  }, [cliente, anticiposClienteId, consultar])
 
   // TOTAL A CANCELAR: lo imputado a las facturas en el paso 2. Acá no se recalcula nada.
   const aCancelar = totalACancelar(imputaciones)
@@ -82,14 +105,32 @@ export function AnticiposView() {
     [aCancelar, aplicado, diferencia],
   )
 
+  /**
+   * Vuelve a preguntarle a Monday, salteando la caché del paso. Se llama a `consultar` directo y no
+   * se invalida `anticiposClienteId`: invalidar la clave dispararía el efecto, y el efecto y el
+   * click terminarían pidiendo lo mismo dos veces.
+   */
+  const reintentar = () => {
+    if (cargando || !cliente) return
+    consultar(cliente.id)
+  }
+
   const bloqueo = bloqueoAplicacion(anticipos, aplicaciones, aCancelar)
   const destino = siguientePaso('cobro', tipoOperacion)
   const anterior = pasoAnterior('cobro', tipoOperacion)
   const SIGUIENTE_PASO = destino ? etiquetaDePaso(destino, tipoOperacion) : ''
 
+  /**
+   * Avanza, o EXPLICA por qué no se puede. Mismo criterio que el paso de anticipos de un pase: el
+   * botón no se apaga, y al intentarlo se abre la ventana con lo que falta —y con QUÉ anticipo—.
+   * Un control muerto no dice nada; acá hay hasta cuatro motivos distintos por los que el paso no
+   * cierra, y el usuario tiene que saber cuál le tocó.
+   */
   const continuar = () => {
-    // Resguardo: con bloqueo el botón está deshabilitado, así que acá no se llega.
-    if (bloqueo) return
+    if (bloqueo) {
+      setAviso(bloqueo)
+      return
+    }
     dispatch({ type: 'confirmarCobro' })
     if (destino) dispatch({ type: 'goto', paso: destino })
   }
@@ -130,9 +171,20 @@ export function AnticiposView() {
                   <i className="fas fa-spinner fa-spin" /> Buscando los anticipos del cliente...
                 </p>
               ) : anticipos.length === 0 ? (
+                /* SIN resultados. El reintento vive acá y en ningún otro lado: con anticipos en
+                   pantalla no hay nada que volver a buscar, y ofrecerlo invitaría a descartar lo
+                   que el usuario ya viene cargando.
+
+                   Existe porque el anticipo puede tardar en aparecer: el ítem del tablero lo crea
+                   una automatización DESPUÉS de que se registra el cobro o el pase, así que una
+                   lista vacía no siempre significa "no tiene" —a veces significa "todavía no"—.
+                   Sin esto, el único camino era rehacer el paso para saltear la caché. */
                 <p className="cobro-vacio">
                   <i className="fas fa-circle-info" /> <strong>{cliente.name}</strong> no tiene
                   anticipos pendientes de aplicar.
+                  <button type="button" className="cobro-reintentar" onClick={reintentar}>
+                    Volver a intentar
+                  </button>
                 </p>
               ) : (
                 <TablaAnticipos
@@ -146,16 +198,15 @@ export function AnticiposView() {
 
               {/* Mismo renglón de avisos que el paso de cobro: reserva su lugar, aparezca o no. */}
               <div className="cobro-card-acts">
+                {/* Siempre en ROJO, falte o sobre: acá la diferencia distinta de cero no es "el
+                    próximo paso" como en un cobro, es lo único que impide emitir el recibo.
+
+                    Se muestra el MENSAJE, no el título, igual que en el paso de un pase: el título es
+                    el rótulo corto de la ventana y acá no alcanza —"El importe supera el saldo del
+                    anticipo" nombra el problema pero no contra qué límite se choca ni cuánto falta—. */}
                 {bloqueo && (
-                  <span
-                    className={`cobro-bloqueo-inline ${
-                      diferencia > 0 ? 'cobro-bloqueo-inline--info' : ''
-                    }`}
-                  >
-                    <i
-                      className={`fas ${diferencia > 0 ? 'fa-circle-info' : 'fa-circle-exclamation'}`}
-                    />{' '}
-                    {bloqueo.titulo}
+                  <span className="cobro-bloqueo-inline">
+                    <i className="fas fa-circle-exclamation" /> {bloqueo.mensaje}
                   </span>
                 )}
               </div>
@@ -174,25 +225,24 @@ export function AnticiposView() {
 
           <div className="actions-footer-fin">
             {/* Sin renglón de anticipo ni de motivo al lado del botón: el ÚNICO lugar donde el paso
-                da feedback es la franja que cierra la card, arriba. Repetirlo acá era decir dos
-                veces lo mismo, y en el pie quedaba lejos de lo que hay que corregir.
+                da feedback en línea es la franja que cierra la card, arriba.
 
-                El botón se deshabilita: el recibo de una aplicación no puede emitirse con la
-                diferencia distinta de cero, así que no se ofrece una acción que nunca va a
-                proceder. El motivo viaja en el `title`, para que el apagado no sea mudo. */}
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={!!bloqueo}
-              title={bloqueo?.mensaje}
-              onClick={continuar}
-            >
+                El botón NO se apaga: si algo falta, la ventana dice exactamente qué —y con cuál
+                anticipo—, en vez de dejar un control muerto que no explica nada. Es el mismo
+                comportamiento que el paso de anticipos de un pase. */}
+            <button type="button" className="btn btn-primary" onClick={continuar}>
               Continuar a {SIGUIENTE_PASO} <i className="fas fa-arrow-right" />
             </button>
           </div>
         </div>
       </div>
 
+      {/* Lo que falta para poder emitir, con los anticipos involucrados nombrados uno por uno. */}
+      {aviso && (
+        <AvisoModal titulo={aviso.titulo} faltantes={aviso.faltantes} onClose={() => setAviso(null)}>
+          {aviso.mensaje}
+        </AvisoModal>
+      )}
     </section>
   )
 }

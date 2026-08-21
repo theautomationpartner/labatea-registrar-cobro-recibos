@@ -24,8 +24,9 @@
  * calzar letra por letra con el modelo de la app. Un error se declara con `{ ok: false, error }`.
  */
 import { round2 } from '@/lib/format'
-import type { FormaPago, FormatoCheque } from '@/types'
+import type { FormatoCheque } from '@/types'
 import {
+  DocumentoRechazado,
   mensajeDelEscenario,
   MSG_ERROR_SERVIDOR,
   nuevoJobId,
@@ -80,10 +81,21 @@ export interface DatosComprobante {
   cuitEmisor?: string
   formatoCheque?: FormatoCheque
   // Retenciones
+  /**
+   * Impuesto que retiene el certificado ("IVA", "IIBB"…). Lo devuelve el escenario cuando lo
+   * reconoce en el documento, que puede no ser el que el usuario declaró en el formulario.
+   */
+  tipoRetencion?: string
   anioRetencion?: string
   nroComprobanteRetencion?: string
   /** Transferencia: número de la operación que figura en el comprobante bancario. */
   nroComprobanteTransferencia?: string
+  /**
+   * Transferencia: razón social del ORDENANTE, el titular de la cuenta de la que salió el dinero.
+   * No se carga en ningún campo —el formulario no la pide—: sirve para confirmar que la
+   * transferencia es del cliente de la operación cuando el comprobante no trae su CUIT.
+   */
+  razonSocialOrigen?: string
   // Tarjeta
   bancoTarjeta?: string
   tipoTarjeta?: string
@@ -95,6 +107,32 @@ export interface DatosComprobante {
    * resuelve contra el catálogo de cuentas ya cargado.
    */
   cuentaPropia?: string
+}
+
+/**
+ * Reparo que el escenario levanta sobre el documento que leyó. Vienen en `incidencias`, y la
+ * SEVERIDAD es lo que decide qué hacer con la lectura:
+ *
+ *   · BLOQUEANTE  · el dato que falta impide dar el comprobante por válido —no se pudo distinguir
+ *                   el CUIT del emisor, por ejemplo—. No se carga nada: se muestra como error del
+ *                   documento y hay que subir otro.
+ *   · ADVERTENCIA · la lectura sirve igual, pero con reparos: un campo que no estaba, un tipo de
+ *                   retención distinto del declarado, un documento recortado. Los datos se cargan
+ *                   y el aviso queda a la vista para revisarlos.
+ *
+ * El `mensaje` está redactado para el usuario; el `detalle` explica de dónde salió y queda para el
+ * historial del escenario.
+ */
+export interface IncidenciaComprobante {
+  severidad: 'BLOQUEANTE' | 'ADVERTENCIA'
+  /** Campo del documento sobre el que se levanta el reparo ("cuit_emisor", "importe_retencion"…). */
+  campo?: string
+  /** Código estable del reparo ("CUIT_ES_SUJETO_RETENIDO", "DATO_NO_ENCONTRADO"…). */
+  codigo?: string
+  /** Lo que se le muestra al usuario. */
+  mensaje: string
+  /** Por qué pasó, con el detalle del documento. No se muestra: es para diagnosticar. */
+  detalle?: string
 }
 
 /** Resultado de leer un comprobante. */
@@ -116,7 +154,34 @@ export interface LecturaComprobante {
    * respuesta; acá el módulo está y lo que falló fue la lectura del documento.
    */
   respondioJson: boolean
+  /**
+   * Aviso del escenario sobre una lectura que SÍ sirvió. No es un error —los datos vienen igual y se
+   * cargan—, pero algo no calza con lo que se le declaró y el usuario tiene que enterarse: hoy el
+   * caso es el certificado de un impuesto distinto del elegido (ver `COD_TIPO_NO_COINCIDE`).
+   *
+   * El texto lo escribe el escenario, que sabe qué leyó; la app no lo redacta ni lo reinterpreta.
+   */
+  advertencia?: string
+  /**
+   * Reparos NO bloqueantes del contrato nuevo (`RETENCION_V1`). Los bloqueantes no llegan hasta acá:
+   * cortan la lectura como error del documento (ver `ErrorFatalMake`), porque con ellos no hay datos
+   * que cargar.
+   *
+   * Convive con `advertencia`, que es el aviso suelto del contrato anterior: mientras los dos
+   * formatos estén en la calle, la pantalla muestra el que venga.
+   */
+  incidencias: IncidenciaComprobante[]
 }
+
+/**
+ * Código con el que el escenario avisa que el certificado era de OTRA retención: se eligió "IVA" y
+ * el documento resultó ser de IIBB, por ejemplo.
+ *
+ * Viene junto a `tipo_valido: false`, PERO no es un rechazo: el escenario igual leyó el comprobante
+ * —por el tipo que detectó— y devuelve todos los campos. Por eso este código es la excepción a la
+ * regla de más abajo, que descarta el documento cuando el veredicto es negativo.
+ */
+const COD_TIPO_NO_COINCIDE = 'TIPO_RETENCION_NO_COINCIDE'
 
 /**
  * Manda el comprobante al escenario y devuelve lo que pudo leer.
@@ -127,7 +192,9 @@ export interface LecturaComprobante {
  */
 export async function procesarComprobante(
   archivo: File,
-  formaPago: FormaPago,
+  /* Texto y no `FormaPago`: puede ser el medio genérico "Retencion", que la pantalla usa mientras
+     no se eligió el impuesto. Acá es contexto para la lectura, no un valor a registrar. */
+  formaPago: string,
   opciones: OpcionesWebhook = {},
 ): Promise<LecturaComprobante> {
   const jobId = nuevoJobId()
@@ -151,7 +218,7 @@ export async function procesarComprobante(
      un cuerpo que no es JSON no es un mensaje para el usuario, es diagnóstico de la plataforma. */
   if (json === null) {
     if (/error|failed/i.test(texto)) throw new Error(MSG_ERROR_SERVIDOR)
-    return { jobId, datos: {}, campos: 0, respondioJson: false }
+    return { jobId, datos: {}, campos: 0, respondioJson: false, incidencias: [] }
   }
 
   const raiz = objeto(json)
@@ -162,13 +229,41 @@ export async function procesarComprobante(
     throw new Error(mensajeDelEscenario(raiz) || 'No se pudo leer el documento.')
   }
 
+  const indice = indexar(raiz)
+
+  /* Reparos del escenario sobre el documento. Con uno BLOQUEANTE la lectura no sirve: se corta como
+     error del DOCUMENTO —no del servicio— para que la pantalla ofrezca cargar otro en vez de
+     reintentar con el mismo, que daría igual.
+
+     Se muestra el PRIMERO y nada más. Encadenar varios motivos en un solo texto no ayuda a decidir
+     —la acción es la misma, cargar otro comprobante— y convierte el aviso en un párrafo que nadie
+     lee entero. */
+  const incidencias = leerIncidencias(raiz)
+  const bloqueante = incidencias.find((i) => i.severidad === 'BLOQUEANTE')
+  if (bloqueante) throw new DocumentoRechazado(bloqueante.mensaje)
+
+  /* Aviso del escenario sobre una lectura que igual sirvió. Se lee ANTES del veredicto porque es lo
+     que decide si un `tipo_valido: false` es un rechazo o sólo una advertencia. */
+  const aviso = objeto(raiz.advertencia ?? raiz.warning)
+  const codigoAviso = crudo(aviso.codigo ?? aviso.code)
+    .trim()
+    .toUpperCase()
+  const mensajeAviso = aTexto(aviso.mensaje ?? aviso.message)
+
   /* La IA rechazó el documento: leyó bien, y lo que leyó no es el comprobante que se esperaba. Es
      un error del archivo subido —no de la lectura—, así que se dice como tal y con el tipo que sí
-     reconoció, que es lo único accionable: cambiar el archivo o cambiar el medio de cobro. */
-  const indice = indexar(raiz)
+     reconoció, que es lo único accionable: cambiar el archivo o cambiar el medio de cobro.
+
+     La retención de OTRO impuesto queda afuera de esta regla: ahí el veredicto también es negativo,
+     pero el escenario procesó el comprobante por el tipo que detectó y devolvió todos los campos.
+     Tirarlo sería descartar una lectura completa por un rótulo; se carga y se advierte. */
   const valido = buscar(indice, ALIAS_VALIDO)
   // El `false` puede venir como booleano o como texto, según cómo arme el JSON el módulo de IA.
-  if (valido === false || crudo(valido).toLowerCase() === 'false') {
+  const rechazado = valido === false || crudo(valido).toLowerCase() === 'false'
+  /* Con incidencias declaradas, ellas mandan: ya dijeron qué pasó y con qué gravedad, y llegar acá
+     significa que ninguna era bloqueante. Un `documento_valido: false` acompañado sólo de
+     advertencias describe un documento con reparos, no uno que haya que descartar. */
+  if (rechazado && incidencias.length === 0 && codigoAviso !== COD_TIPO_NO_COINCIDE) {
     const detectado = aTexto(buscar(indice, ALIAS_TIPO))
     throw new Error(
       `El documento no corresponde a ${formaPago}${detectado ? `: se reconoció "${detectado}"` : ''}.`,
@@ -181,6 +276,10 @@ export async function procesarComprobante(
     datos,
     campos: Object.keys(datos).length,
     respondioJson: true,
+    incidencias,
+    /* El mensaje viaja tal como lo escribió el escenario. Sólo se pasa cuando hay algo que decir:
+       una advertencia vacía haría que la pantalla anuncie un problema sin nombrarlo. */
+    advertencia: mensajeAviso,
   }
 }
 
@@ -207,8 +306,11 @@ const ALIAS: Record<keyof DatosComprobante, string[]> = {
     'dueDate',
   ],
   bancoEmisor: ['bancoEmisor', 'banco', 'bankName'],
-  cuitEmisor: ['cuitEmisor', 'cuit', 'cuitLibrador', 'taxId'],
+  cuitEmisor: ['cuitEmisor', 'cuitOrigen', 'cuit', 'cuitLibrador', 'taxId'],
   formatoCheque: ['formatoCheque', 'tipoCheque', 'formato'],
+  /* Sin un alias suelto "tipo": lo llevarían también `tipo_valido` y `tipo_detectado`, que son el
+     veredicto del documento y no el impuesto. */
+  tipoRetencion: ['tipoRetencion', 'tipoDeRetencion', 'impuesto'],
   anioRetencion: [
     'anioRetencion',
     'anoRetencion',
@@ -243,6 +345,13 @@ const ALIAS: Record<keyof DatosComprobante, string[]> = {
     'comprobante',
     'operacion',
   ],
+  razonSocialOrigen: [
+    'razonSocialOrigen',
+    'razonSocial',
+    'titularOrigen',
+    'nombreOrigen',
+    'ordenante',
+  ],
   bancoTarjeta: ['bancoTarjeta', 'bancoEmisorTarjeta', 'bancoDeLaTarjeta'],
   tipoTarjeta: ['tipoTarjeta', 'marcaTarjeta', 'tarjeta', 'cardBrand'],
   vencimientoTarjeta: [
@@ -262,8 +371,60 @@ const ALIAS: Record<keyof DatosComprobante, string[]> = {
  */
 const ALIAS_VALIDO = ['tipoValido', 'esValido', 'valido', 'valid']
 
+/**
+ * Claves que NUNCA pueden resolver un campo, aunque la coincidencia parcial las alcance.
+ *
+ * El caso es el certificado de retención: trae el CUIT del emisor Y el del sujeto retenido, y el
+ * alias "cuit" alcanza por parcial a los dos. Con el emisor en null —que es justo cuando la IA no
+ * lo pudo leer— el CUIT del retenido ocuparía su lugar, y la app compararía contra el cliente un
+ * número que es de La Batea: daría por bueno un comprobante ajeno o rechazaría uno propio.
+ */
+const ALIAS_PROHIBIDOS: Partial<Record<keyof DatosComprobante, string[]>> = {
+  /* El comprobante trae los DOS lados de la operación. El alias "cuit" alcanza por parcial a
+     cualquiera de ellos, y tomar el equivocado es exactamente el error que hay que evitar: el
+     retenido y el destinatario son La Batea, no el cliente que se está validando. */
+  cuitEmisor: ['cuitSujetoRetenido', 'sujetoRetenido', 'cuitRetenido', 'cuitDestino'],
+}
+
+/**
+ * Prefijos de claves que NUNCA son un valor: son el RÓTULO con el que el dato figura en el papel
+ * ("rotulo_emisor": "Titular:"). La IA los devuelve para poder auditar de dónde sacó cada campo, y
+ * sin esta guarda la coincidencia parcial podría cargar el rótulo en lugar del dato.
+ */
+const CLAVES_ROTULO = ['rotulo', 'label', 'etiqueta']
+
 /** Qué tipo de documento reconoció la IA. Sólo se usa para explicar un rechazo. */
 const ALIAS_TIPO = ['tipoDetectado', 'tipoDocumento', 'tipo']
+
+/**
+ * Los reparos que trae la respuesta, ya tipados. Se descartan los que no traen mensaje: sin texto
+ * para mostrar, una incidencia no es nada que el usuario pueda leer ni accionar.
+ *
+ * Cualquier severidad que no sea BLOQUEANTE se trata como advertencia: ante una etiqueta nueva o
+ * mal escrita, seguir adelante avisando es más seguro que frenar un cobro por un rótulo.
+ */
+function leerIncidencias(raiz: Record<string, unknown>): IncidenciaComprobante[] {
+  const lista = raiz.incidencias ?? raiz.incidences
+  if (!Array.isArray(lista)) return []
+
+  return lista.flatMap((cruda) => {
+    const i = objeto(cruda)
+    const mensaje = aTexto(i.mensaje ?? i.message)
+    if (!mensaje) return []
+    const severidad = crudo(i.severidad ?? i.severity)
+      .trim()
+      .toUpperCase()
+    return [
+      {
+        severidad: severidad === 'BLOQUEANTE' ? ('BLOQUEANTE' as const) : ('ADVERTENCIA' as const),
+        campo: aTexto(i.campo ?? i.field),
+        codigo: aTexto(i.codigo ?? i.code)?.toUpperCase(),
+        mensaje,
+        detalle: aTexto(i.detalle ?? i.detail),
+      },
+    ]
+  })
+}
 
 /**
  * Convierte la respuesta del escenario —ya aplanada por `indexar`— en datos del formulario. Sólo
@@ -271,7 +432,8 @@ const ALIAS_TIPO = ['tipoDetectado', 'tipoDocumento', 'tipo']
  * ausencia de uno, y volcarlo BORRARÍA lo que el usuario ya hubiera cargado a mano.
  */
 function normalizar(fuente: Record<string, unknown>): DatosComprobante {
-  const leer = (campo: keyof DatosComprobante): unknown => buscar(fuente, ALIAS[campo])
+  const leer = (campo: keyof DatosComprobante): unknown =>
+    buscar(fuente, ALIAS[campo], ALIAS_PROHIBIDOS[campo])
 
   const datos: DatosComprobante = {}
   const poner = <K extends keyof DatosComprobante>(campo: K, valor: DatosComprobante[K]) => {
@@ -285,11 +447,13 @@ function normalizar(fuente: Record<string, unknown>): DatosComprobante {
   poner('bancoEmisor', aTexto(leer('bancoEmisor')))
   poner('cuitEmisor', aCuit(leer('cuitEmisor')))
   poner('formatoCheque', aFormatoCheque(leer('formatoCheque')))
+  poner('tipoRetencion', aTexto(leer('tipoRetencion')))
   poner('anioRetencion', aAnio(leer('anioRetencion')))
   poner('nroComprobanteRetencion', aDigitos(leer('nroComprobanteRetencion')))
   /* El de la transferencia va TAL CUAL: su columna en el tablero es de texto, y el número de
      operación de un banco puede llevar letras o guiones que son parte del dato. */
   poner('nroComprobanteTransferencia', aTexto(leer('nroComprobanteTransferencia')))
+  poner('razonSocialOrigen', aTexto(leer('razonSocialOrigen')))
   poner('bancoTarjeta', aTexto(leer('bancoTarjeta')))
   poner('tipoTarjeta', aTexto(leer('tipoTarjeta')))
   poner('vencimientoTarjeta', aVencimientoTarjeta(leer('vencimientoTarjeta')))
@@ -314,9 +478,15 @@ function normalizar(fuente: Record<string, unknown>): DatosComprobante {
  * de dónde sacó cada dato— nunca es el valor de un campo, y dejarlo entrar cargaría un
  * "[object Object]" en el formulario.
  */
-function buscar(fuente: Record<string, unknown>, alias: string[]): unknown {
+function buscar(
+  fuente: Record<string, unknown>,
+  alias: string[],
+  prohibidos: string[] = [],
+): unknown {
   const sirve = (v: unknown) =>
     v !== undefined && v !== null && v !== '' && typeof v !== 'object' && typeof v !== 'function'
+  const vedada = (k: string) =>
+    CLAVES_ROTULO.some((r) => k.startsWith(r)) || prohibidos.some((p) => k.includes(clave(p)))
 
   for (const a of alias) {
     const v = fuente[clave(a)]
@@ -325,7 +495,7 @@ function buscar(fuente: Record<string, unknown>, alias: string[]): unknown {
   for (const a of alias) {
     const parcial = clave(a)
     for (const [k, v] of Object.entries(fuente)) {
-      if (k.includes(parcial) && sirve(v)) return v
+      if (k.includes(parcial) && !vedada(k) && sirve(v)) return v
     }
   }
   return undefined

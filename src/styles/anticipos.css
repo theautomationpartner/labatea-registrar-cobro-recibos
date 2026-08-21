@@ -12,6 +12,13 @@
   width: 100%;
   border-collapse: collapse;
   font-size: 13.5px;
+
+  /* Medidas de la caja de la columna de importe. Son VARIABLES porque las necesitan DOS elementos:
+     el input de la fila marcada y el hueco que lo reemplaza en las que no lo están. De ellas dependen
+     el alto de la fila y el ancho de la columna, así que con números sueltos en cada lugar las filas
+     se desparejaban —y las columnas se corrían— al tocar uno solo. */
+  --ant-alto-in: 36px;
+  --ant-ancho-in: 150px;
 }
 .anticipos-v2 .ant-tabla thead th {
   text-align: left;
@@ -94,7 +101,14 @@
   cursor: not-allowed;
 }
 
-/* ===== Importe a aplicar ===== */
+/* ===== Importe a aplicar =====
+   La celda ocupa SIEMPRE la misma caja, tenga el input o el guión. El ancho de una columna lo decide
+   su contenido, así que el input que aparecía al tildar la fila ensanchaba esta columna y corría a
+   todas las demás hacia la izquierda. Reservar la caja deja la tabla quieta. */
+.anticipos-v2 .ant-aplicar,
+.anticipos-v2 .ant-aplicar-hueco {
+  width: var(--ant-ancho-in);
+}
 .anticipos-v2 .ant-aplicar {
   display: inline-flex;
   align-items: center;
@@ -105,8 +119,11 @@
   color: var(--c-text-secondary);
 }
 .anticipos-v2 .ant-aplicar-in {
-  width: 130px;
-  height: 36px;
+  /* El ancho lo pone la caja compartida, no el input: así el campo y el hueco miden lo mismo y no
+     hay dos números que puedan desincronizarse. */
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--ant-alto-in);
   padding: 0 10px;
   border: 1.5px solid #000;
   border-radius: var(--c-radius-md);
@@ -120,10 +137,30 @@
 .anticipos-v2 .ant-aplicar-in:focus {
   border-color: var(--c-primary);
 }
-/* El estado topea el importe contra el saldo, así que este borde es el último resguardo visual. */
-.anticipos-v2 .ant-aplicar-in--error {
+/* Importe pasado del saldo del anticipo. El estado NO lo recorta —se le muestra el error en vez de
+   cambiarle el número—, así que este borde es lo que lo señala mientras se corrige.
+
+   La regla incluye `:focus` a propósito y va DESPUÉS de la del foco: sin eso, pararse en el campo a
+   arreglar el importe apagaba el rojo justo cuando el problema sigue estando, y el usuario perdía
+   de vista cuál de las filas era. */
+.anticipos-v2 .ant-aplicar-in--error,
+.anticipos-v2 .ant-aplicar-in--error:focus {
   border-color: var(--c-danger);
   background: #fff2f0;
+}
+
+/* Hueco de la columna "Importe a aplicar" en las filas SIN marcar. Ocupa exactamente la misma caja
+   que el input al que reemplaza —alto y ancho—, así la fila mide lo mismo esté elegida o no y la
+   columna no se mueve al tildarla.
+
+   Sin esto la fila marcada era ~16px mas alta que las demas: su celda contenia un input de 36px y
+   las otras un guion de una linea, y el `td` crece con lo que tiene adentro. Reservar el alto es lo
+   unico que mantiene parejo el renglon, y ademas evita el salto al tildar y destildar. */
+.anticipos-v2 .ant-aplicar-hueco {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--ant-alto-in);
 }
 
 /* Restante del anticipo una vez aplicada la carga. En cero se apaga: ese saldo quedó consumido. */

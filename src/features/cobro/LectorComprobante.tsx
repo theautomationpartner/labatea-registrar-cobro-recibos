@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import {
   ACEPTA_ARCHIVO,
   archivoNoSoportado,
+  DocumentoRechazado,
   ErrorFatalMake,
   procesarComprobante,
   type DatosComprobante,
 } from '@/services/make'
-import type { FormaPago } from '@/types'
 
 /**
  * En qué anda la lectura del documento. Es lo único que decide qué muestra el recuadro: la consigna
@@ -17,13 +17,40 @@ import type { FormaPago } from '@/types'
  * éxito —no hay nada cargado— ni una falla de la llamada, y se muestra distinto de los dos: en
  * verde diría que el trabajo está hecho cuando el formulario sigue vacío.
  */
-type Estado = 'vacio' | 'procesando' | 'listo' | 'sin-datos' | 'error'
+type Estado = 'vacio' | 'en-espera' | 'procesando' | 'listo' | 'con-aviso' | 'sin-datos' | 'error'
+
+/**
+ * Qué pasó al volcar los datos leídos sobre el formulario.
+ *
+ * El RECHAZO es la respuesta a una lectura que salió bien pero cuyo contenido no corresponde a esta
+ * operación —un certificado emitido por otro cliente, por ejemplo—. No es un fallo del documento ni
+ * de la lectura: es un dato que no se puede usar, y por eso no entra ningún campo y se advierte con
+ * el motivo, que sólo el formulario conoce.
+ */
+export interface VolcadoDatos {
+  /** Cuántos campos entraron. Cero cuando hubo rechazo. */
+  cargados: number
+  /** Por qué no se cargó nada, si es que el contenido no corresponde. */
+  rechazo?: string
+  /**
+   * El rechazo es BLOQUEANTE: el documento no es de esta operación y con él no se puede seguir.
+   *
+   * Se muestra como error del documento —en rojo y sin ofrecer reintentar—, no como advertencia:
+   * insistir con el mismo archivo daría igual, y lo único que resuelve es cargar el que corresponde.
+   */
+  bloqueante?: boolean
+}
 
 interface LectorComprobanteProps {
   /** id del `input[type=file]` oculto, para enganchar el `<label htmlFor>` del campo. */
   id: string
-  /** Medio que se está cargando. Viaja al escenario: es el contexto con el que lee el documento. */
-  formaPago: FormaPago
+  /**
+   * Medio que se está cargando. Viaja al escenario: es el contexto con el que lee el documento.
+   *
+   * Es TEXTO y no `FormaPago` porque puede ser el genérico "Retencion": mientras el usuario no
+   * eligió el impuesto, eso —y no una retención inventada— es lo que se sabe del cobro.
+   */
+  formaPago: string
   /** Documento cargado, que vive en el borrador del movimiento. `null` = todavía no hay nada. */
   archivo: File | null
   /**
@@ -37,7 +64,7 @@ interface LectorComprobanteProps {
    * corresponden depende del medio de cobro: un dato que este medio no muestra no se cargó en
    * ningún lado, y contarlo sería anunciar un campo completo que el usuario no va a encontrar.
    */
-  onDatos: (datos: DatosComprobante) => number
+  onDatos: (datos: DatosComprobante) => VolcadoDatos
   /**
    * Campos obligatorios del medio que la lectura NO pudo completar, por su nombre visible. Vacío
    * mientras no haya corrido una lectura, o cuando el documento los trajo a todos.
@@ -48,13 +75,23 @@ interface LectorComprobanteProps {
    */
   faltantes?: readonly string[]
   /**
-   * Reclamo del formulario cuando el comprobante es OBLIGATORIO y todavía no se cargó ninguno.
+   * Falta un dato del formulario SIN EL CUAL no tiene sentido leer el documento, y por eso la
+   * lectura queda retenida: el texto dice cuál. `undefined` = se puede procesar.
    *
-   * Se muestra adentro del recuadro y no debajo: el recuadro tiene alto fijo, así que el mensaje
-   * aparece y desaparece sin mover ni un pixel de lo que hay alrededor. Afuera, cada vez que se
-   * intentaba agregar el movimiento, el bloque entero cambiaba de alto.
+   * Hoy lo usa la retención: el impuesto es el contexto con el que el escenario lee el certificado,
+   * así que mandarlo antes de elegirlo gastaría la llamada para que vuelva contra el tipo
+   * equivocado. El documento se carga igual y la lectura arranca sola apenas el dato aparece.
    */
-  error?: string
+  esperandoPor?: string
+  /**
+   * Avisa que el documento cargado quedó RECHAZADO: se leyó bien y no corresponde a esta operación
+   * —el cheque está a nombre de otro, la transferencia salió de otra cuenta—.
+   *
+   * Lo escucha el formulario para frenar el alta mientras ese archivo siga adjunto: sin eso, los
+   * datos se podrían tipear a mano y el recibo terminaría llevando el comprobante de otra
+   * operación, que es justamente lo que el rechazo quiere evitar.
+   */
+  onRechazo?: (rechazado: boolean) => void
   /** El formulario está cerrado: no se carga ni se procesa nada. */
   deshabilitado?: boolean
 }
@@ -80,15 +117,20 @@ export function LectorComprobante({
   formaPago,
   archivo,
   faltantes = [],
-  error,
+  esperandoPor,
   onArchivo,
   onDatos,
+  onRechazo,
   deshabilitado = false,
 }: LectorComprobanteProps) {
   const [estado, setEstado] = useState<Estado>('vacio')
   /** Detalle del estado: el motivo del error, o cuántos campos se completaron. */
   const [detalle, setDetalle] = useState('')
   const [campos, setCampos] = useState(0)
+  /* Reparos de la lectura que NO la invalidan. Se guardan todos —el título los cuenta— pero se
+     muestra SÓLO EL PRIMERO: encadenar varios avisos en el recuadro convierte el resultado en un
+     párrafo que nadie lee, y lo que falte ya está marcado en rojo en su propio campo. */
+  const [avisos, setAvisos] = useState<string[]>([])
   /* El error es del ARCHIVO y no del momento: no se pudo convertir a PDF. Cambia lo que se ofrece
      —otro documento, no un reintento— y por eso se guarda aparte del texto del error. */
   const [fatal, setFatal] = useState(false)
@@ -118,6 +160,19 @@ export function LectorComprobante({
       setEstado('vacio')
       setDetalle('')
       setCampos(0)
+      setAvisos([])
+      setFatal(false)
+      return
+    }
+    /* Falta un dato previo: el documento se queda cargado y la lectura NO sale. El archivo no se
+       marca como procesado, así que apenas el dato aparece este mismo efecto lo manda a leer sin que
+       el usuario tenga que volver a subirlo. */
+    if (esperandoPor) {
+      enVuelo.current?.abort()
+      procesado.current = null
+      setEstado('en-espera')
+      setDetalle(esperandoPor)
+      setCampos(0)
       setFatal(false)
       return
     }
@@ -134,10 +189,10 @@ export function LectorComprobante({
       return
     }
     void leer(archivo)
-    /* Depende del ARCHIVO y de nada más: `leer` se recrea en cada render y meterlo acá volvería a
-       procesar el mismo documento con cada tecla que se toque en el formulario. */
+    /* Depende del ARCHIVO y de si ya se puede procesar, de nada más: `leer` se recrea en cada render
+       y meterlo acá volvería a procesar el mismo documento con cada tecla que se toque. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [archivo])
+  }, [archivo, esperandoPor])
 
   // Al desmontar (cambio de paso, cierre del formulario) no queda ninguna llamada colgada.
   useEffect(() => () => enVuelo.current?.abort(), [])
@@ -155,7 +210,10 @@ export function LectorComprobante({
     setEstado('procesando')
     setDetalle('')
     setCampos(0)
+    setAvisos([])
     setFatal(false)
+    // Documento nuevo: lo que se haya rechazado antes dejó de estar en juego.
+    onRechazo?.(false)
     try {
       /* Se espera al escenario ENTERO: la promesa recién se resuelve cuando Make devuelve lo que
          leyó la IA, no cuando acusa recibo del archivo. Si el escenario todavía no está en
@@ -174,8 +232,19 @@ export function LectorComprobante({
       if (ctrl.signal.aborted) return
 
       // Terminó la lectura: los datos se cargan en los campos del medio y se cuenta qué entró.
-      const cargados = onDatos(lectura.datos)
+      const { cargados, rechazo, bloqueante } = onDatos(lectura.datos)
       setCampos(cargados)
+
+      /* El contenido no corresponde a esta operación: la lectura anduvo, pero lo que trajo no se
+         puede usar. Se avisa con el motivo y NO se cargó ningún campo. En rojo cuando el rechazo es
+         bloqueante —el documento es de otro—, en ámbar cuando sólo faltó poder confirmarlo. */
+      if (rechazo) {
+        setEstado(bloqueante ? 'error' : 'sin-datos')
+        setFatal(Boolean(bloqueante))
+        if (bloqueante) onRechazo?.(true)
+        setDetalle(rechazo)
+        return
+      }
 
       /* Sin un solo campo cargado NO se canta victoria: se advierte, y se dice QUÉ mirar según
          dónde se cortó la cadena —el escenario que no responde, el que responde sin datos, o el
@@ -191,11 +260,29 @@ export function LectorComprobante({
         )
         return
       }
+      /* Lectura completa PERO con un reparo del escenario: el certificado resultó ser de otro
+         impuesto y se procesó por el que detectó. Los campos entraron —por eso se cuentan igual—,
+         así que no es un fallo; se muestra en ámbar con el texto del escenario, que es el único que
+         sabe qué leyó. */
+      /* Los reparos llegan por dos vías —la lista del contrato nuevo y el aviso suelto del
+         anterior— y se muestran igual: los datos ya entraron, esto es lo que hay que revisar. */
+      const reparos = [
+        ...lectura.incidencias.map((i) => i.mensaje),
+        ...(lectura.advertencia ? [lectura.advertencia] : []),
+      ]
+      if (reparos.length > 0) {
+        setAvisos(reparos)
+        setEstado('con-aviso')
+        return
+      }
       setEstado('listo')
     } catch (e) {
       if (ctrl.signal.aborted) return
       setEstado('error')
       setFatal(e instanceof ErrorFatalMake)
+      /* El documento es de otra operación: con él adjunto, el movimiento no se registra. Un fallo
+         al LEERLO no cuenta —ahí el comprobante puede ser el correcto—, y por eso se distingue. */
+      if (e instanceof DocumentoRechazado) onRechazo?.(true)
       setDetalle(e instanceof Error ? e.message : 'No se pudo procesar el documento.')
     } finally {
       if (enVuelo.current === ctrl) enVuelo.current = null
@@ -225,7 +312,7 @@ export function LectorComprobante({
   /* Lectura a medias: el documento se procesó —eso es un éxito y así se muestra—, pero quedaron
      campos obligatorios que no salieron de él y hay que cargar a mano. Se reclama al pie, sin
      tocar el resultado de la lectura. */
-  const incompleto = estado === 'listo' && faltantes.length > 0
+  const incompleto = (estado === 'listo' || estado === 'con-aviso') && faltantes.length > 0
 
   /**
    * El trabajo del recuadro está TERMINADO: el documento se procesó y de él salieron todos los
@@ -236,9 +323,8 @@ export function LectorComprobante({
    * Se reabre sola si alguno de esos campos queda vacío: ahí sí un comprobante nuevo tiene algo que
    * aportar.
    */
-  /* El comprobante obligatorio se reclama sólo con el recuadro VACÍO: si hubo un problema con el
-     archivo, el mensaje del error dice algo más útil que "cargá el comprobante". */
-  const reclamo = estado === 'vacio' ? error : undefined
+  /* La lectura CON AVISO no cierra el recuadro aunque haya completado todo: el reparo es justamente
+     que el documento no era el que se declaró, así que subir el correcto es la acción esperable. */
   const listoYCompleto = estado === 'listo' && faltantes.length === 0
   /**
    * El recuadro NO acepta nada. Son tres motivos distintos con el mismo efecto:
@@ -261,9 +347,7 @@ export function LectorComprobante({
     <div
       /* El realce del arrastre se apaga con la zona cerrada: si el último dato entra JUSTO mientras
          se arrastra un archivo encima, el `dragleave` ya no llega y el resalte quedaría prendido. */
-      className={`cobro-lector cobro-lector--${estado} ${dragOver && !cerrado ? 'is-over' : ''} ${
-        reclamo ? 'is-falta' : ''
-      }`}
+      className={`cobro-lector cobro-lector--${estado} ${dragOver && !cerrado ? 'is-over' : ''}`}
       onDragOver={(e) => {
         // Sin `preventDefault` el navegador no deja soltar acá: cerrado, se lo deja rechazar solo.
         if (cerrado) return
@@ -326,6 +410,17 @@ export function LectorComprobante({
           animación de la espera y su resultado no obligan a buscarlos en otra parte de la
           pantalla. `aria-live` hace que se lea solo al cambiar, sin mover el foco. */}
       <span className={`cobro-lector-cara cobro-lector-cara--${estado}`} aria-live="polite">
+        {/* El documento está cargado pero la lectura NO salió: falta un dato del formulario que es
+            el contexto con el que hay que leerlo. No es un error ni una espera del servidor, así
+            que no lleva spinner: no hay nada en curso, hay algo por completar. */}
+        {estado === 'en-espera' && (
+          <>
+            <i className="fas fa-circle-pause" aria-hidden="true" />
+            <span className="cobro-lector-titulo">Listo para procesar</span>
+            <span className="cobro-lector-consigna">{detalle}</span>
+          </>
+        )}
+
         {estado === 'procesando' && (
           <>
             <span className="cobro-lector-spin" aria-hidden="true" />
@@ -348,6 +443,25 @@ export function LectorComprobante({
               Se {campos === 1 ? 'completó' : 'completaron'} {campos}{' '}
               {campos === 1 ? 'campo' : 'campos'}: revisalos antes de agregar el movimiento
             </span>
+          </>
+        )}
+
+        {/* Los datos SÍ entraron, pero el escenario puso un reparo: el certificado era de otro
+            impuesto y lo procesó por el que detectó. Se cuenta lo que se completó —el trabajo está
+            hecho— y se reproduce el aviso tal como vino, sin reescribirlo. */}
+        {estado === 'con-aviso' && (
+          <>
+            <i className="fas fa-triangle-exclamation" aria-hidden="true" />
+            <span className="cobro-lector-titulo">
+              {avisos.length === 1
+                ? 'Procesado con una advertencia'
+                : `Procesado con ${avisos.length} advertencias`}{' '}
+              · {campos} {campos === 1 ? 'campo' : 'campos'}
+            </span>
+            {/* El PRIMER reparo, y nada más. El título dice cuántos hubo; sumar el resto acá sería
+                pedirle al usuario que lea un párrafo para enterarse de algo que, campo por campo,
+                ya está marcado en el formulario. */}
+            <span className="cobro-lector-consigna">{avisos[0]}</span>
           </>
         )}
 
@@ -387,13 +501,6 @@ export function LectorComprobante({
               automáticamente
             </span>
             <i className="fas fa-cloud-arrow-up" />
-            {/* La ranura del reclamo se monta SIEMPRE, con o sin mensaje: tiene su alto reservado,
-                así que aparecer o desaparecer no mueve ni el título ni el ícono de arriba. Montarla
-                sólo cuando hay algo que decir sumaba un cuarto hijo a una cara centrada, y todo lo
-                anterior se corría unos pixeles para arriba. */}
-            <span className="cobro-lector-reclamo" role="alert">
-              {reclamo}
-            </span>
           </>
         )}
       </span>

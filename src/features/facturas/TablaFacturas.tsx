@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Donut } from '@/components/ui/Donut'
 import { colorCancelacion, type Imputaciones } from '@/lib/cobros'
 import { desdeIso, diasDeMora } from '@/lib/dates'
@@ -72,7 +72,21 @@ export function TablaFacturas({ facturas, imputaciones }: TablaFacturasProps) {
      "no cambió nada", así que lo que ya venía elegido no se anima ni al abrir ni al cerrar. */
   const previas = useRef<Imputaciones>(imputaciones)
 
-  useEffect(() => {
+  /* ANTES de pintar, no despues. Es un `useLayoutEffect` a proposito y no un `useEffect`: la
+     contabilidad de la animacion tiene que quedar lista en el MISMO cuadro en que cambia la
+     imputacion.
+
+     Con `useEffect` el navegador alcanzaba a pintar un cuadro intermedio, y ese cuadro era el
+     parpadeo: al DESMARCAR, el render que quita la imputacion deja la fila sin `fact-grupo--on`
+     —se apagan de golpe su fondo, su barra azul y su borde inferior transparente— y desmonta el
+     panel entero; recien el efecto posterior la marcaba como "plegandose" y volvia a montarlo para
+     animar la salida. Todo eso se veia: apagon, reaparicion y recien ahi el cierre.
+     Al MARCAR pasaba lo simetrico: el panel se montaba abierto del todo por un cuadro y despues
+     saltaba a cero para desplegarse.
+
+     `useLayoutEffect` corre despues de tocar el DOM pero antes del pintado, asi que ese estado
+     intermedio nunca llega a la pantalla. */
+  useLayoutEffect(() => {
     const antes = previas.current
     previas.current = imputaciones
     const nuevas = Object.keys(imputaciones).filter((id) => !(id in antes))

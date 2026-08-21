@@ -6,6 +6,8 @@ import { CobroView } from '@/features/cobro/CobroView'
 import { AnticiposView } from '@/features/anticipos/AnticiposView'
 import { FacturasView } from '@/features/facturas/FacturasView'
 import { PagosView } from '@/features/pagos/PagosView'
+import { PaseAnticipoView } from '@/features/pases/PaseAnticipoView'
+import { PaseDestinoView } from '@/features/pases/PaseDestinoView'
 import { ReciboView } from '@/features/recibo/ReciboView'
 import { useApp, useDispatch } from '@/state/hooks'
 import type { Paso } from '@/types'
@@ -19,6 +21,10 @@ const VISTAS: Record<Paso, () => JSX.Element | null> = {
   ventas: FacturasView,
   cobro: CobroView,
   recibo: ReciboView,
+  /* Etapas propias del PASE DE SALDO. Sólo aparecen en ese recorrido, así que ningún otro las
+     alcanza: el stepper navega por `pasosDe(tipo)` y ahí no figuran. */
+  anticipoOrigen: PaseAnticipoView,
+  destino: PaseDestinoView,
 }
 
 export function App() {
@@ -36,7 +42,10 @@ export function App() {
   const Vista =
     operacionApp === 'PAGOS'
       ? PagosView
-      : paso === 'cobro' && tipoOperacion === 'aplicacion'
+      : /* El paso 3 tiene DOS vistas según el recorrido: con dinero (formas de pago) o aplicando el
+           saldo a favor del cliente. Es la única etapa que cambia de pantalla; el resto del
+           recorrido comparte las mismas. */
+        paso === 'cobro' && tipoOperacion === 'aplicacion'
         ? AnticiposView
         : VISTAS[paso]
 

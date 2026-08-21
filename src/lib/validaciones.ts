@@ -8,14 +8,18 @@ import type { Cliente, MedioEnvio } from '@/types'
 const vacio = (v: string | null | undefined) => !v || !v.trim()
 
 /**
- * Datos del cliente sin los que no se puede armar la operación: sin lista de precio no hay
- * precios que traer, sin condición fiscal no se sabe si el precio lleva IVA, y sin condición de
- * pago no se sabe cómo se cobra (contado / cuenta corriente), de lo que depende el resto del flujo.
+ * Datos del cliente sin los que no se puede armar la operación: sin lista de precio no hay precios
+ * que traer, y sin condición de pago no se sabe cómo se cobra (contado / cuenta corriente), de lo
+ * que depende el resto del flujo.
+ *
+ * La CONDICIÓN FISCAL no entra: en esta app no se emite una factura sino un RECIBO por dinero que
+ * ya se cobró, así que no hay que decidir si el precio lleva IVA —eso lo resolvió la venta que dejó
+ * la deuda—. Un cliente sin esa columna cargada opera igual, y frenarlo acá sería pedirle completar
+ * el board para un dato que este circuito nunca usa.
  */
 export function faltantesCliente(cliente: Cliente): string[] {
   const faltan: string[] = []
   if (vacio(cliente.list)) faltan.push('Lista de precio')
-  if (vacio(cliente.status)) faltan.push('Condición fiscal')
   if (vacio(cliente.condicionPago)) faltan.push('Condición de pago')
   return faltan
 }

@@ -8,6 +8,7 @@ import type {
   OperacionApp,
   CobroState,
   Contacto,
+  EmisionRecibo,
   FacturaPendiente,
   LogEntry,
   MedioEnvio,
@@ -73,6 +74,37 @@ export interface AppState {
   /** De QUÉ cliente son los anticipos de `anticipos`. Misma clave de caché que `facturasClienteId`. */
   anticiposClienteId: string | null
   /**
+   * Sólo PASES DE SALDO: `id de anticipo del ORIGEN → importe que se pasa de él`. Un pase puede
+   * juntar el saldo de VARIOS anticipos, y su suma es lo que se debita de la cuenta origen.
+   *
+   * Misma forma que `aplicaciones`: que la CLAVE exista es lo que marca el anticipo como elegido,
+   * así no hay dos fuentes de verdad —una lista de elegidos y un mapa de importes— que puedan
+   * quedar desincronizadas. Vacío = todavía no se eligió ninguno, y por eso no se sale del paso 2.
+   */
+  pasesDeAnticipo: Record<string, number>
+  /**
+   * Sólo PASES DE SALDO: cuánto de ese anticipo se mueve. Nace en su saldo COMPLETO —el caso
+   * habitual— y queda editable para pasar menos. Nunca supera el pendiente del anticipo: el tope lo
+   * impone el reducer, así que tipear de más devuelve el máximo en vez de aceptarlo.
+   */
+
+  /**
+   * Sólo PASES DE SALDO: el cliente que RECIBE el saldo. Es un `Cliente` del tablero de Personas y
+   * no una cuenta corriente, igual que el origen del paso 1: se busca con el mismo buscador y se
+   * muestra con la misma ficha, así que las dos puntas del pase se eligen de la misma manera.
+   *
+   * `null` = todavía no se buscó.
+   */
+  clienteDestino: Cliente | null
+  /**
+   * Saldos de cuenta corriente del cliente destino, leídos de su ítem de Cta Cte. Viven aparte del
+   * cliente porque salen de OTRO tablero y llegan después: la ficha se dibuja con el cliente y
+   * completa sus cajas cuando la consulta resuelve.
+   */
+  saldosDestino: SaldosCliente | null
+  /** De qué cliente son esos saldos. Es la clave de caché: sin ella se re-consultaría en cada render. */
+  saldosDestinoId: string | null
+  /**
    * Sólo APLICACIÓN: `id de anticipo → importe aplicado`. Misma forma que `imputaciones`: que la
    * CLAVE exista es lo que marca el anticipo como elegido, así no hay dos fuentes de verdad.
    */
@@ -87,6 +119,13 @@ export interface AppState {
   cobro: CobroState
   /** ID del recibo ya emitido en "➡️Recibos y Cobros". null = todavía no se emitió. */
   reciboId: string | null
+  /**
+   * En qué anda la emisión de ESE recibo. Es una bandera global —y no el estado local del hook que
+   * la conduce— por el mismo motivo que `documentoEnviado`: tiene que sobrevivir a la navegación.
+   * Al volver a la etapa el botón sigue en "Emitido correctamente" en vez de reofrecer una emisión
+   * que duplicaría el ítem del tablero.
+   */
+  emision: EmisionRecibo
   /** Canal por el que se envía el recibo al cliente. */
   medioEnvio: MedioEnvio
   /** Destinatarios elegidos. Vive en el estado global para sobrevivir a la navegación del stepper. */
@@ -113,6 +152,9 @@ export interface AppState {
   errorMonday: string | null
 }
 
+/** Emisión sin empezar: es el punto de partida y el estado al que vuelve cada reinicio. */
+const EMISION_INICIAL: EmisionRecibo = { fase: 'idle', estado: '', error: null }
+
 /** Cobro en blanco: sin movimientos y fechado en el día en que se opera. */
 const cobroVacio = (): CobroState => ({ fecha: hoy(), movimientos: [], confirmado: false })
 
@@ -134,9 +176,14 @@ export const initialState: AppState = {
   imputaciones: {},
   anticipos: [],
   anticiposClienteId: null,
+  pasesDeAnticipo: {},
+  clienteDestino: null,
+  saldosDestino: null,
+  saldosDestinoId: null,
   aplicaciones: {},
   cobro: cobroVacio(),
   reciboId: null,
+  emision: EMISION_INICIAL,
   medioEnvio: 'Email',
   contactos: [],
   documentoEnviado: false,
@@ -148,6 +195,21 @@ export const initialState: AppState = {
   usuarioActual: null,
   errorMonday: null,
 }
+
+/**
+ * ¿Hay una operación EN CURSO cuyo trabajo se perdería al cambiar de módulo?
+ *
+ * Se mira el CLIENTE y no los datos de cada circuito a propósito: es lo primero que se carga en
+ * todos los módulos —los de hoy y los que se sumen— y desde ahí en adelante todo lo cargado
+ * cuelga de él. Una regla escrita sobre él no se queda corta cuando aparezca un circuito nuevo con
+ * campos propios; enumerar los datos de cada módulo obligaría a acordarse de volver acá a sumarlos,
+ * y la vez que alguien se olvide el usuario pierde su carga sin aviso.
+ *
+ * Con la operación YA terminada no hay nada que proteger: lo que queda en pantalla es el comprobante
+ * de algo que ya se escribió en Monday, no trabajo a medio hacer.
+ */
+export const hayOperacionEnCurso = (state: AppState): boolean =>
+  state.cliente !== null && state.reciboId === null
 
 export type Action =
   | { type: 'setOperacionApp'; operacion: OperacionApp }
@@ -172,12 +234,23 @@ export type Action =
   /** `clienteId`: misma clave de caché que en `setFacturas`, con el mismo `null` ante un fallo. */
   | { type: 'setAnticipos'; anticipos: AnticipoPendiente[]; clienteId: string | null }
   | { type: 'toggleAnticipo'; anticipo: AnticipoPendiente }
+  /* PASES DE SALDO. Elegir el anticipo de origen, la cuenta destino y qué se hace con el saldo. */
+  | { type: 'toggleAnticipoPase'; anticipo: AnticipoPendiente }
+  | { type: 'setImportePase'; id: string; importe: number }
+  | { type: 'setClienteDestino'; cliente: Cliente | null }
+  | { type: 'setSaldosDestino'; saldos: SaldosCliente | null; clienteId: string | null }
   | { type: 'setImporteAnticipoAplicado'; id: string; importe: number }
   | { type: 'agregarMovimientoPago'; movimiento: Omit<MovimientoPago, 'id'> }
   | { type: 'removeMovimientoPago'; id: string }
   | { type: 'setMovimientoImporte'; id: string; importe: number }
   | { type: 'confirmarCobro' }
   | { type: 'setReciboId'; id: string }
+  /**
+   * Avance de la emisión. Llega como PARCHE porque cada transición mueve sólo lo que cambió —la
+   * fase, la etiqueta del tablero o el error—, y pisar el resto con `undefined` borraría lo que la
+   * pantalla todavía tiene que mostrar.
+   */
+  | { type: 'setEmision'; emision: Partial<EmisionRecibo> }
   | { type: 'setMedioEnvio'; value: MedioEnvio }
   | { type: 'setContactos'; contactos: Contacto[] }
   | { type: 'addContacto'; contacto: Contacto }
@@ -189,6 +262,21 @@ export type Action =
   | { type: 'errorMonday'; accion: string }
   | { type: 'limpiarErrorMonday' }
   | { type: 'reset' }
+
+/**
+ * Recorrido que le corresponde a un MÓDULO. Es la unica fuente de esa relacion, y por eso existe
+ * como funcion en vez de repetirse donde hace falta.
+ *
+ *   · PASES tiene un recorrido ÚNICO —no pregunta que se cobra—, asi que el modulo lo fija.
+ *   · COBROS lo deja SIN elegir: es lo que hace que el paso 1 lo reclame.
+ *
+ * Lo consultan los dos lugares que dejan la app a foja cero: cambiar de modulo y cerrar una
+ * operacion. Escrito dos veces, uno de los dos se olvidaba —y de hecho pasaba: al finalizar un pase
+ * el modulo seguia siendo PASES pero el recorrido volvia a `null`, asi que la app mostraba las
+ * etapas de Cobros dentro del modulo de Pases—.
+ */
+const recorridoDe = (operacion: OperacionApp): TipoOperacion | null =>
+  operacion === 'PASES' ? 'pases' : null
 
 /**
  * Responsable por defecto: el usuario de la lista que coincide con el logueado (mismo id de
@@ -245,8 +333,13 @@ export function reducer(state: AppState, action: Action): AppState {
         anticipos: [],
         anticiposClienteId: null,
         aplicaciones: {},
-        cobro: cobroVacio(),
+        pasesDeAnticipo: {},
+        clienteDestino: null,
+        saldosDestino: null,
+        saldosDestinoId: null,
+              cobro: cobroVacio(),
         reciboId: null,
+        emision: EMISION_INICIAL,
         contactos: [],
         documentoEnviado: false,
         log: [],
@@ -285,6 +378,7 @@ export function reducer(state: AppState, action: Action): AppState {
       return {
         ...initialState,
         operacionApp: action.operacion,
+        tipoOperacion: recorridoDe(action.operacion),
         /* Cobro nuevo, no el que quedó armado al cargar el módulo: si la pestaña quedó abierta de
            un día para el otro, la fecha del cobro tiene que ser la de HOY. */
         cobro: cobroVacio(),
@@ -317,12 +411,18 @@ export function reducer(state: AppState, action: Action): AppState {
         anticipos: [],
         anticiposClienteId: null,
         aplicaciones: {},
-        /* El cobro es de ESE cliente: sus cheques, sus retenciones y sus tarjetas no tienen
+        /* El pase es del anticipo de ESE cliente: cambiarlo deja sin sentido las tres decisiones. */
+        pasesDeAnticipo: {},
+        clienteDestino: null,
+        saldosDestino: null,
+        saldosDestinoId: null,
+              /* El cobro es de ESE cliente: sus cheques, sus retenciones y sus tarjetas no tienen
            sentido para otro, así que se descarta entero junto con la imputación. */
         cobro: cobroVacio(),
         /* El recibo y su envío también: el documento emitido era del cliente anterior, y sus
            destinatarios son los contactos de ESE cliente. */
         reciboId: null,
+        emision: EMISION_INICIAL,
         contactos: [],
         documentoEnviado: false,
         log: [],
@@ -417,19 +517,82 @@ export function reducer(state: AppState, action: Action): AppState {
       }
     }
 
-    /* Importe aplicado de un anticipo ya elegido. Se topea contra su saldo pendiente: aplicar más
-       de lo que el anticipo tiene a favor es imposible, así que el tope se impone acá —en el
-       controlador— además de en el input. */
+    /* Importe aplicado de un anticipo ya elegido. NO se topea contra su pendiente, igual que en un
+       pase (`setImportePase`): pasarse es un error que se le MUESTRA al usuario —borde rojo en el
+       campo y bloqueo al avanzar, con el máximo nombrado—, no algo que la app corrija por su cuenta
+       cambiándole el número que acaba de escribir.
+
+       Recortarlo en silencio tenía dos costos: el usuario veía otro importe del que tipeó sin
+       enterarse de por qué, y la validación "el importe supera el saldo del anticipo" quedaba muerta
+       —nunca podía dispararse—. Sólo se sigue descartando el negativo: no es un importe. */
     case 'setImporteAnticipoAplicado': {
       if (!(action.id in state.aplicaciones)) return state
-      const anticipo = state.anticipos.find((a) => a.id === action.id)
-      const tope = anticipo?.pendiente ?? action.importe
-      const importe = round2(Math.min(Math.max(action.importe, 0), tope))
+      const importe = round2(Math.max(action.importe, 0))
       return { ...state, aplicaciones: { ...state.aplicaciones, [action.id]: importe } }
     }
 
     /* Un pago cargado en el formulario del paso 3. Llega ya validado —el formulario no deja
        agregar un movimiento incompleto—, así que acá sólo se le pone el id y se reabre el cobro. */
+    /* Marcar/desmarcar un anticipo del ORIGEN. Un pase puede juntar el saldo de VARIOS: la clave
+       existe = el anticipo está elegido, y su valor es cuánto se pasa de él —misma forma que
+       `aplicaciones`, así que no hay dos fuentes de verdad—. Al marcarlo se propone mover su saldo
+       ENTERO, que es el caso habitual, y queda editable para pasar menos.
+
+       El DESTINO no se toca: es una decisión propia —a qué cuenta va el saldo—, y ajustar cuánto se
+       mueve no la invalida. Antes se borraba acá, así que volver un paso a corregir el importe
+       obligaba a buscar de nuevo la cuenta que ya se había elegido. Se retiene igual que el cliente
+       ORIGEN: lo único que lo descarta es elegir OTRA cuenta (`setClienteDestino`) o cambiar el
+       cliente de la operación.
+
+       Tampoco se baja `pasoMaxIdx`: era lo que impedía volver al destino con el stepper. Que la
+       selección quede vacía lo frena el propio paso 3, que revisa el origen antes de dejar cerrar. */
+    case 'toggleAnticipoPase': {
+      const { [action.anticipo.id]: actual, ...resto } = state.pasesDeAnticipo
+      const pasesDeAnticipo =
+        actual !== undefined
+          ? resto
+          : { ...state.pasesDeAnticipo, [action.anticipo.id]: action.anticipo.pendiente }
+      return { ...state, pasesDeAnticipo }
+    }
+
+    /* Cuánto se mueve de UN anticipo ya elegido. NO se topea contra su pendiente: pasarse es un
+       error que se le MUESTRA al usuario —borde rojo y mensaje bajo el campo, y bloqueo al
+       avanzar—, no algo que la app corrija por su cuenta cambiándole el número que acaba de
+       escribir. Es el mismo criterio que el importe a cancelar de una factura.
+
+       Lo único que sí se acota es el signo: un importe negativo no es un dato a validar, es un
+       valor que no puede existir en esta columna. */
+    case 'setImportePase': {
+      if (!(action.id in state.pasesDeAnticipo)) return state
+      return {
+        ...state,
+        pasesDeAnticipo: {
+          ...state.pasesDeAnticipo,
+          [action.id]: round2(Math.max(action.importe, 0)),
+        },
+      }
+    }
+
+    /* Cliente DESTINO. Cambiarlo descarta la acción, sus saldos y las facturas leídas: eran del
+       cliente anterior, y aplicar un saldo contra la deuda de otro sería lo peor que podría pasar
+       acá. Reelegir el mismo no toca nada. */
+    case 'setClienteDestino':
+      if (state.clienteDestino?.id === action.cliente?.id) return state
+      return {
+        ...state,
+        clienteDestino: action.cliente,
+        saldosDestino: null,
+        saldosDestinoId: null,
+              facturas: [],
+        facturasClienteId: null,
+        imputaciones: {},
+      }
+
+    /* Saldos de Cta Cte del destino. Llegan solos, después del cliente: sólo rellenan sus cajas. */
+    case 'setSaldosDestino':
+      return { ...state, saldosDestino: action.saldos, saldosDestinoId: action.clienteId }
+
+
     case 'agregarMovimientoPago':
       return {
         ...state,
@@ -476,6 +639,10 @@ export function reducer(state: AppState, action: Action): AppState {
     /* El recibo quedó escrito en el tablero: su id es de donde se despacha el envío. */
     case 'setReciboId':
       return { ...state, reciboId: action.id }
+
+    /* Avance de la emisión, tal como lo va reportando `useEmisionRecibo`. */
+    case 'setEmision':
+      return { ...state, emision: { ...state.emision, ...action.emision } }
 
     case 'setMedioEnvio':
       return { ...state, medioEnvio: action.value }
@@ -528,6 +695,11 @@ export function reducer(state: AppState, action: Action): AppState {
         /* El módulo es del ENCABEZADO, no de la operación: cerrar una cobranza no cambia en qué
            circuito está parado el usuario. */
         operacionApp: state.operacionApp,
+        /* Y con el módulo viaja SU recorrido. `initialState` trae el de Cobros, asi que sin esto
+           cerrar un pase dejaba el encabezado en "Pases de Saldo" y el cuerpo con las etapas de
+           Cobros: el stepper de cuatro pasos y el selector de "¿Qué vas a cobrar?" adentro de un
+           modulo que no pregunta eso. */
+        tipoOperacion: recorridoDe(state.operacionApp),
         /* Cobro nuevo, no el que quedó armado al cargar el módulo: si la pestaña quedó abierta de
            un día para el otro, la fecha del cobro tiene que ser la de HOY. */
         cobro: cobroVacio(),

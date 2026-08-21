@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { aplicaCredito, motivoCreditoIgnorado, tieneValoresCredito } from '@/lib/credito'
+import { aplicaCredito, motivoCreditoIgnorado } from '@/lib/credito'
 import { money } from '@/lib/format'
 import { creditoCliente } from '@/lib/selectors'
 import type { Cliente, SaldosCliente } from '@/types'
@@ -31,6 +31,13 @@ interface ClienteFichaProps {
    * el resto de la ficha ya se ve—. `null` = todavía no llegaron.
    */
   saldos?: SaldosCliente | null
+  /**
+   * Esconde la caja de "Anticipos Pends de Aplicar". La usa el destino de un PASE, donde ese saldo
+   * se muestra aparte y con su proyeccion —cuanto tiene, cuanto recibe, cuanto queda—: repetirlo
+   * suelto en la ficha dejaria dos numeros hablando de lo mismo y uno de los dos desactualizado
+   * respecto de la operacion en curso.
+   */
+  sinAnticipos?: boolean
   /** Contenido opcional debajo del separador. */
   children?: ReactNode
 }
@@ -49,12 +56,12 @@ export function ClienteFicha({
   cliente,
   cargando = false,
   saldos = null,
+  sinAnticipos = false,
   children,
 }: ClienteFichaProps) {
   const credito = cliente ? creditoCliente(cliente) : null
   const claseImporte = credito?.bloqueado ? 'v-gray' : ''
   const rigeCredito = cliente ? aplicaCredito(cliente) : false
-  const muestraValores = cliente ? rigeCredito || tieneValoresCredito(cliente) : true
   const motivoIgnorado = cliente ? motivoCreditoIgnorado(cliente) : null
   const tieneRetenciones = !!cliente?.ret && cliente.ret.trim() !== '' && cliente.ret !== 'Ninguna'
   const faltaLista = cliente ? !cliente.list : false
@@ -122,9 +129,10 @@ export function ClienteFicha({
               <div className="badges">
                 <span className="badge badge-gray">CUIT: {oSinEsp(cliente.cuit)}</span>
                 <span className="badge badge-gray">{oSinEsp(cliente.ptype)}</span>
-                <span className={`badge badge-green ${cliente.status ? '' : 'badge--falta'}`}>
-                  {oSinEsp(cliente.status)}
-                </span>
+                {/* La condición fiscal NO se marca en rojo cuando falta: en esta app no bloquea
+                    el avance (ver `faltantesCliente`), así que señalarla como faltante mandaría a
+                    completar el board por un dato que este circuito no usa. */}
+                <span className="badge badge-green">{oSinEsp(cliente.status)}</span>
                 <span className={`badge badge-blue ${faltaLista ? 'badge--falta' : ''}`}>
                   Lista: {cliente.list ?? 'Sin especificar'}
                 </span>
@@ -170,73 +178,79 @@ export function ClienteFicha({
 
       <hr className="divider" />
 
-      {/* Situación financiera: qué debe el cliente y cuánta línea tiene tomada. La estructura se
-          muestra siempre; el gris avisa que en esta operación el límite no va a usarse. */}
-      {muestraValores && (
-        <>
-        <section className={`credito-grupo ${!vacio && !rigeCredito ? 'credito-grupo--off' : ''}`}>
-          {/* FILA 1: la deuda de cuenta corriente al frente y, a su derecha, cómo se compone —qué
-              queda por cancelar y qué saldo a favor tiene el cliente—; después el contexto de
-              crédito. Los dos saldos salen de los subelementos de la cuenta corriente, no del
-              board de Personas. */}
-          <div className="kpi-grid kpi-grid--5">
+      {/* Situación financiera: qué debe el cliente y cuánta línea tiene tomada.
+
+          La estructura se monta SIEMPRE, tenga el cliente sus datos cargados o no. Un cliente sin
+          movimientos no es un cliente sin cuenta: sus saldos son CERO, y cero es un dato. Antes el
+          bloque entero desaparecia cuando no habia ningun valor, y la ficha cambiaba de forma segun
+          a quien se buscara —mas baja, sin metricas y sin barra—, obligando a preguntarse si al
+          cliente le faltan datos o si la app no los trajo. Con la estructura fija, la respuesta se
+          lee en los propios numeros.
+
+          Lo que sigue variando es el TONO: en gris cuando el limite no rige en esta operacion. */}
+      <section className={`credito-grupo ${!vacio && !rigeCredito ? 'credito-grupo--off' : ''}`}>
+        {/* FILA 1: la deuda de cuenta corriente al frente y, a su derecha, cómo se compone —qué
+            queda por cancelar y qué saldo a favor tiene el cliente—; después el contexto de
+            crédito. Los dos saldos salen de columnas del ítem de la cuenta corriente, no del
+            board de Personas. */}
+        <div className="kpi-grid kpi-grid--5">
+          <div className="kpi-card">
+            <span className="kpi-label">Saldo Cta Cte (deuda)</span>
+            {val(money(cliente?.saldoCtaCte ?? 0), claseImporte)}
+          </div>
+          <div className="kpi-card">
+            <span className="kpi-label">Ventas Pends de Cancelar</span>
+            {valSaldo(saldos?.pendienteDeCancelar)}
+          </div>
+          {!sinAnticipos && (
             <div className="kpi-card">
-              <span className="kpi-label">Saldo Cta Cte (deuda)</span>
-              {val(money(cliente?.saldoCtaCte ?? 0), claseImporte)}
-            </div>
-            <div className="kpi-card">
-              <span className="kpi-label">Saldo Pend de Cancelar</span>
-              {valSaldo(saldos?.pendienteDeCancelar)}
-            </div>
-            <div className="kpi-card">
-              <span className="kpi-label">Saldo por Anticipos</span>
+              <span className="kpi-label">Anticipos Pends de Aplicar</span>
               {valSaldo(saldos?.anticipos)}
             </div>
-            <div className="kpi-card">
-              <span className="kpi-label">Límite asignado</span>
-              {val(money(cliente?.limit ?? 0), claseImporte)}
-            </div>
-            <div className="kpi-card">
-              <span className="kpi-label">Remito Pends de Facturar</span>
-              {val(money(cliente?.remitosPendFacturar ?? 0), claseImporte)}
-            </div>
+          )}
+          <div className="kpi-card">
+            <span className="kpi-label">Límite asignado</span>
+            {val(money(cliente?.limit ?? 0), claseImporte)}
+          </div>
+          <div className="kpi-card">
+            <span className="kpi-label">Remito Pends de Facturar</span>
+            {val(money(cliente?.remitosPendFacturar ?? 0), claseImporte)}
+          </div>
+        </div>
+
+        {/* FILA 2: crédito disponible · línea utilizada · barra de uso. */}
+        <div className="credito-fila-inferior">
+          <div className="credito-metrica">
+            <span className="kpi-label">Crédito disponible</span>
+            {val(money(credito?.disponible ?? 0), claseImporte || 'v-green')}
+          </div>
+          <div className="credito-metrica">
+            <span className="kpi-label">Línea utilizada</span>
+            {val(money(cliente?.lineaUtilizada ?? 0), claseImporte || credito?.clase || '')}
           </div>
 
-          {/* FILA 2: crédito disponible · línea utilizada · barra de uso. */}
-          <div className="credito-fila-inferior">
-            <div className="credito-metrica">
-              <span className="kpi-label">Crédito disponible</span>
-              {val(money(credito?.disponible ?? 0), claseImporte || 'v-green')}
+          <div className="credito-uso">
+            <div className="progress-header">
+              <span>Uso de límite de crédito</span>
+              <strong>{vacio ? '—' : `${credito?.usadoPct ?? 0}% Utilizado`}</strong>
             </div>
-            <div className="credito-metrica">
-              <span className="kpi-label">Línea utilizada</span>
-              {val(money(cliente?.lineaUtilizada ?? 0), claseImporte || credito?.clase || '')}
-            </div>
-
-            <div className="credito-uso">
-              <div className="progress-header">
-                <span>Uso de límite de crédito</span>
-                <strong>{vacio ? '—' : `${credito?.usadoPct ?? 0}% Utilizado`}</strong>
-              </div>
-              <div className="progress-track">
-                {!vacio && (
-                  <div
-                    className="progress-fill"
-                    style={{
-                      width: `${Math.min(Math.max(credito?.usadoPct ?? 0, 0), 100)}%`,
-                      background: credito?.color,
-                    }}
-                  />
-                )}
-              </div>
+            <div className="progress-track">
+              {!vacio && (
+                <div
+                  className="progress-fill"
+                  style={{
+                    width: `${Math.min(Math.max(credito?.usadoPct ?? 0, 0), 100)}%`,
+                    background: credito?.color,
+                  }}
+                />
+              )}
             </div>
           </div>
-        </section>
+        </div>
+      </section>
 
-        {/* Por qué el límite no va a pesar en esta operación. */}
-        {motivoIgnorado && <p className="credito-nota-off">{motivoIgnorado}</p>}
-        </>
-      )}
+      {/* Por qué el límite no va a pesar en esta operación. */}
+      {motivoIgnorado && <p className="credito-nota-off">{motivoIgnorado}</p>}
 
       {/* Debajo del separador: contenido extra, si se pasa. */}
       {children && (

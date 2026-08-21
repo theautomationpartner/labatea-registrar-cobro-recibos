@@ -1,85 +1,53 @@
 /**
- * Saldos de la cuenta corriente del cliente: tablero de Cta Cte (18421858736).
+ * Saldos de la cuenta corriente del cliente: tablero "💵Cta Cte Cliente" (18421858736).
  *
- * La cuenta es UN ítem por cliente y, colgando de él, un SUBÍTEM por movimiento. De ahí salen los
- * dos totales que muestra la ficha:
+ * La cuenta es UN ítem por cliente, y los dos totales que muestra la ficha son columnas de ESE
+ * ítem —ya calculadas por el tablero—:
  *
- *   · SALDO PEND DE CANCELAR · lo que suman los movimientos "Vta Pend de Cobro".
- *   · SALDO POR ANTICIPOS    · lo que suman los movimientos "Anticipo".
+ *   · VENTAS PENDS DE CANCELAR · "Fact Vent pend de Aplciar", lo que el cliente todavía debe.
+ *   · ANTICIPOS PENDS DE APLICAR · "Anticipo pend de Aplicar", su saldo a favor sin usar.
  *
- * Es UNA sola consulta: el ítem del cliente y sus subelementos con sus columnas viajan anidados en
- * la misma query. Buscar primero la cuenta y después sus movimientos serían dos viajes para un dato
- * que la API sabe resolver de una, y duplicaría las chances de cortarse por red.
+ * La DEUDA de la cuenta ("🤖Saldo Cta Cte") NO se lee acá: ya viene con el cliente, calculada sobre
+ * las mismas mirrors de este ítem (ver `mapCliente`), y es la que muestra la ficha. Leerla otra vez
+ * dejaría el mismo número en dos lugares que pueden discrepar.
+ *
+ * La app los LEE, no los suma: antes se recorrían los subelementos de la cuenta clasificándolos por
+ * tipo de movimiento, lo que ataba la ficha a la lista completa de movimientos —y a un tope— para
+ * llegar a un número que el propio tablero ya publica. Leer la columna es una consulta más chica,
+ * sin subítems, y no se puede desincronizar del total que se ve en Monday.
  *
  * El filtro por cliente va como REGLA de la consulta —no sobre la respuesta—, igual que en el resto
- * de la capa: traer todas las cuentas para quedarse con una sería pedirle al tablero entero lo que
- * se sabe pedir puntual. OJO con el id en la regla de `board_relation`: va como NÚMERO (con el mismo
- * id entre comillas la consulta devuelve 0 ítems en vez de fallar, así que el error no se nota
- * hasta que la pantalla aparece vacía).
+ * de la capa. OJO con el id en la regla de `board_relation`: va como NÚMERO (con el mismo id entre
+ * comillas la consulta devuelve 0 ítems en vez de fallar, así que el error no se nota hasta que la
+ * pantalla aparece vacía).
  */
 import { SALDOS_CLIENTE } from '@/data/mock'
 import { round2 } from '@/lib/format'
 import type { SaldosCliente } from '@/types'
-import { BOARDS, COL, CTA_CTE_MOV } from './columns'
+import { BOARDS, COL } from './columns'
 import { byId, num, valor, type MondayItem } from './parse'
 import { mondayApi, mondayHabilitado } from './sdk'
 
-/**
- * Tope de movimientos que trae la consulta. Una cuenta con más que esto es un caso a mirar aparte:
- * los totales saldrían incompletos, así que el corte tiene que ser evidente y no silencioso.
- */
-const TOPE_MOVIMIENTOS = 500
-
-/** Saldos en cero: es lo que devuelve una cuenta sin movimientos, y NUNCA `null` ni `NaN`. */
+/** Saldos en cero: es lo que devuelve una cuenta que no existe, y NUNCA `null` ni `NaN`. */
 export const SALDOS_EN_CERO: SaldosCliente = { pendienteDeCancelar: 0, anticipos: 0 }
 
-/** Un subelemento de la cuenta corriente, tal como llega anidado en la respuesta. */
-interface MovimientoCtaCte {
-  id: string
-  column_values: { id: string; text: string | null; index?: number | null }[]
-}
-
 /**
- * Compara la etiqueta de un movimiento contra la que se busca, sin distinguir mayúsculas ni
- * espacios de más. Que el rótulo del tablero venga como "VTA PEND DE COBRO" no puede dejar el
- * saldo en cero.
+ * Importe de una columna de la cuenta. Monday devuelve los números como TEXTO, así que se parsea
+ * siempre; una columna vacía —o con algo que no es un número— vale 0 y no `NaN`: la ficha muestra
+ * un importe, y "no hay saldo" es un cero, no un hueco ni un `NaN` que se propague.
  */
-const esTipo = (etiqueta: string | null | undefined, buscada: string): boolean =>
-  (etiqueta ?? '').trim().toLowerCase() === buscada.toLowerCase()
-
-/**
- * Suma una columna numérica sobre los movimientos de un tipo. El valor se parsea SIEMPRE —Monday
- * devuelve los números como texto—, y lo que no es un número cuenta como 0: un movimiento con la
- * columna vacía no puede convertir el total en `NaN` y arrastrar toda la ficha.
- */
-function sumarPorTipo(
-  movimientos: readonly MovimientoCtaCte[],
-  tipo: string,
-  columnaImporte: string,
-): number {
-  const total = movimientos.reduce((acc, m) => {
-    const cols = byId(m)
-    if (!esTipo(cols[COL.ctaCteSub.tipo]?.text, tipo)) return acc
-    return acc + num(valor(cols[columnaImporte]))
-  }, 0)
-  return round2(total)
-}
+const importe = (cols: ReturnType<typeof byId>, columna: string): number =>
+  round2(num(valor(cols[columna])))
 
 /**
  * Los dos saldos del cliente. Sin cliente devuelve ceros: no hay cuenta que mirar. Sin token (modo
  * local) devuelve el mock.
- *
- * Una cuenta que no existe, sin movimientos, o cuyos movimientos no son de ninguno de los dos tipos
- * devuelve CERO en lo que corresponda —nunca `null`—: la ficha muestra un importe, y "no hay saldo"
- * es un cero, no un hueco.
  */
 export async function getSaldosCliente(clienteId: string): Promise<SaldosCliente> {
   if (!clienteId) return SALDOS_EN_CERO
   if (!mondayHabilitado()) return SALDOS_CLIENTE
 
-  const data = await mondayApi<{
-    boards: { items_page: { items: (MondayItem & { subitems?: MovimientoCtaCte[] })[] } }[]
-  }>(
+  const data = await mondayApi<{ boards: { items_page: { items: MondayItem[] } }[] }>(
     `query {
       boards(ids: [${BOARDS.ctaCte}]) {
         items_page(
@@ -90,12 +58,8 @@ export async function getSaldosCliente(clienteId: string): Promise<SaldosCliente
         ) {
           items {
             id
-            subitems {
-              id
-              column_values(ids: ["${COL.ctaCteSub.tipo}","${COL.ctaCteSub.pendiente}","${COL.ctaCteSub.anticipo}"]) {
-                id text
-                ... on StatusValue { index }
-              }
+            column_values(ids: ["${COL.ctaCte.ventasPendCancelar}","${COL.ctaCte.anticiposPendAplicar}"]) {
+              id text
             }
           }
         }
@@ -106,17 +70,11 @@ export async function getSaldosCliente(clienteId: string): Promise<SaldosCliente
   /* Sin cuenta para ese cliente no hay error que reportar: todavía no operó, así que sus saldos
      son cero. */
   const cuenta = data.boards?.[0]?.items_page.items?.[0]
-  const movimientos = (cuenta?.subitems ?? []).slice(0, TOPE_MOVIMIENTOS)
-  if (movimientos.length === 0) return SALDOS_EN_CERO
+  if (!cuenta) return SALDOS_EN_CERO
 
-  /* Los dos totales se calculan por separado sobre la MISMA lista: cada tipo de movimiento lleva su
-     importe en su propia columna, así que no se pueden derivar uno del otro. */
+  const cols = byId(cuenta)
   return {
-    pendienteDeCancelar: sumarPorTipo(
-      movimientos,
-      CTA_CTE_MOV.pendienteDeCobro,
-      COL.ctaCteSub.pendiente,
-    ),
-    anticipos: sumarPorTipo(movimientos, CTA_CTE_MOV.anticipo, COL.ctaCteSub.anticipo),
+    pendienteDeCancelar: importe(cols, COL.ctaCte.ventasPendCancelar),
+    anticipos: importe(cols, COL.ctaCte.anticiposPendAplicar),
   }
 }

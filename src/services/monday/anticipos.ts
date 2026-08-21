@@ -3,9 +3,13 @@
  *
  * Los dos filtros viajan como REGLAS de la consulta, no se aplican sobre la respuesta:
  *   · el cliente ("Cliente", `board_relation_mm64zh21`), y
- *   · el estado, limitado a "Pend de Aplicar" por ÍNDICE de etiqueta (17, ver
- *     `ANTICIPO_ESTADO_INDEX`). Los índices del tablero NO son correlativos, así que compararlos
- *     por texto sería atarse al rótulo.
+ *   · el estado, limitado a los anticipos con saldo DISPONIBLE —"Pend de Aplicar" y "Aplicado
+ *     Parcialmente"— por ÍNDICE de etiqueta (ver `ANTICIPO_ESTADOS_APLICABLES`). Los índices del
+ *     tablero NO son correlativos, así que compararlos por texto sería atarse al rótulo.
+ *
+ *     El parcialmente aplicado entra porque le QUEDA saldo: se usó una parte y el resto sigue a
+ *     favor del cliente. Cuánto queda lo dice su "Pend de Aplicar", que es el mismo tope que se
+ *     respeta para cualquier otro; dejarlo afuera escondía plata del cliente que estaba disponible.
  *
  * OJO con el id del cliente en la regla de `board_relation`: va como NÚMERO. Verificado contra el
  * tablero: con el mismo id entre comillas la consulta devuelve 0 ítems en vez de fallar, así que el
@@ -14,7 +18,7 @@
 import { ANTICIPOS_PENDIENTES } from '@/data/mock'
 import { parseIso } from '@/lib/dates'
 import type { AnticipoPendiente } from '@/types'
-import { ANTICIPO_ESTADO_INDEX, BOARDS, COL } from './columns'
+import { ANTICIPO_ESTADOS_APLICABLES, BOARDS, COL } from './columns'
 import { byId, num, valor, type MondayItem } from './parse'
 import { mondayApi, mondayHabilitado } from './sdk'
 
@@ -75,7 +79,7 @@ export async function getAnticiposPendientes(clienteId: string): Promise<Anticip
           limit: ${TOPE_ANTICIPOS},
           query_params: {rules: [
             {column_id: "${COL.anticipo.cliente}", compare_value: [${Number(clienteId)}], operator: any_of},
-            {column_id: "${COL.anticipo.estado}", compare_value: [${ANTICIPO_ESTADO_INDEX.pendienteDeAplicar}], operator: any_of}
+            {column_id: "${COL.anticipo.estado}", compare_value: [${ANTICIPO_ESTADOS_APLICABLES.join(', ')}], operator: any_of}
           ]}
         ) {
           items { ${CAMPOS_ANTICIPO} }

@@ -29,6 +29,7 @@ export const FORMAS_PAGO: readonly FormaPago[] = [
   'Retencion SUSS',
   'Tarjeta de débito',
   'Tarjeta de crédito',
+  'Anticipo',
 ]
 
 /**
@@ -40,10 +41,51 @@ export const FORMAS_PAGO: readonly FormaPago[] = [
 export const esRetencion = (forma: string | null | undefined): boolean =>
   /^retenci[oó]n\b/i.test((forma ?? '').trim())
 
-/** Una retención sólo se puede cargar con su comprobante adjunto. */
-export const retencionSinComprobante = (
-  m: Pick<MovimientoPago, 'formaPago' | 'comprobanteNombre'>,
-): boolean => esRetencion(m.formaPago) && !m.comprobanteNombre?.trim()
+/**
+ * El movimiento es un ANTICIPO: no es plata que entra sino el sobrante que queda a favor del
+ * cliente cuando lo recibido supera lo que se está cancelando —el caso típico es un cheque más
+ * grande que la deuda, que no se puede partir—.
+ *
+ * Se carga como un medio más del formulario, pero cuenta al revés que los otros: suma del lado de
+ * lo CANCELADO (ver `resumenCobro`), que es lo que lleva la diferencia a cero.
+ */
+export const esAnticipoDeCobro = (forma: FormaPago | string | null | undefined): boolean =>
+  forma === 'Anticipo'
+
+/** Cómo se llama el medio genérico en el selector, con todas las retenciones bajo una sola opción. */
+export const MEDIO_RETENCION = 'Retencion'
+
+/**
+ * Medios que ofrece el selector de "Medio de Cobro". Las retenciones NO se enumeran una por una:
+ * entran como una sola opción —"Retencion"— y el impuesto se elige en un segundo selector, al lado.
+ *
+ * Es la diferencia entre una lista de seis opciones y una de diez, casi todas iguales salvo la
+ * sigla: el usuario elige primero CÓMO le pagaron y recién después, si hace falta, el detalle.
+ */
+export const MEDIOS_COBRO: readonly string[] = [
+  ...FORMAS_PAGO.filter((f) => !esRetencion(f)).slice(0, 3),
+  MEDIO_RETENCION,
+  ...FORMAS_PAGO.filter((f) => !esRetencion(f)).slice(3),
+]
+
+/**
+ * Impuestos que se pueden retener, tal como los ofrece el segundo selector: es la sigla de cada
+ * forma de pago del catálogo, sin la palabra "Retencion" adelante.
+ *
+ * Sale de `FORMAS_PAGO` y no de una lista aparte: sumar "Retencion SUSS" al catálogo alcanza para
+ * que aparezca en el selector, sin tocar nada más.
+ */
+export const TIPOS_RETENCION: readonly string[] = FORMAS_PAGO.filter(esRetencion).map((f) =>
+  f.replace(/^retenci[oó]n\s*/i, ''),
+)
+
+/** La forma de pago que corresponde a un tipo de retención ("IVA" → "Retencion IVA"). */
+export const retencionDeTipo = (tipo: string): FormaPago =>
+  `${MEDIO_RETENCION} ${tipo}`.trim() as FormaPago
+
+/** El tipo de una retención ("Retencion IVA" → "IVA"), o '' si la forma no es una retención. */
+export const tipoDeRetencion = (forma: FormaPago | string | undefined): string =>
+  esRetencion(forma) ? (forma ?? '').replace(/^retenci[oó]n\s*/i, '') : ''
 
 /** Las dos tarjetas comparten el mismo ramal de carga (datos del plástico + acreditación). */
 export const esPagoConTarjeta = (forma: FormaPago | null | undefined): boolean =>
@@ -55,7 +97,99 @@ export const esPagoConTarjeta = (forma: FormaPago | null | undefined): boolean =
 export const MSG_CHEQUE_CLIENTE_NO = 'No se reciben cheques de este cliente: ingresá otro CUIT'
 
 /** Sólo los dígitos: el mismo CUIT con guiones o sin ellos es el mismo CUIT. */
-const digitosCuit = (cuit: string | undefined): string => (cuit ?? '').replace(/\D/g, '')
+const digitosCuit = (cuit: string | null | undefined): string => (cuit ?? '').replace(/\D/g, '')
+
+/**
+ * CUIT con el formato del país: XX-XXXXXXXX-X.
+ *
+ * El tablero lo guarda como once dígitos corridos, y así es ilegible: la app lo muestra y lo compara
+ * SIEMPRE con sus guiones, que es como está impreso en un cheque o en un certificado. Se formatea
+ * al leerlo del board, una sola vez, y de ahí en más viaja formateado por todo el circuito.
+ *
+ * Lo que no tenga once dígitos vuelve tal cual: un dato a medio cargar se muestra como está en vez
+ * de disfrazarse de CUIT.
+ */
+export function formatearCuit(cuit: string | null | undefined): string {
+  const d = digitosCuit(cuit)
+  if (d.length !== 11) return (cuit ?? '').trim()
+  return `${d.slice(0, 2)}-${d.slice(2, 10)}-${d.slice(10)}`
+}
+
+/**
+ * Dos CUIT son el MISMO, comparados por dígitos: da igual con qué formato se escriba cada uno
+ * ("30-71011711-6" y "30710117116"), porque el formato es de la pantalla y el número es del titular.
+ *
+ * Con alguno de los dos vacío devuelve `false`: sin número no hay identidad que comparar, y darlo
+ * por igual sería dejar pasar justamente lo que se quiere controlar.
+ */
+export function mismoCuit(uno: string | undefined, otro: string | undefined): boolean {
+  const a = digitosCuit(uno)
+  const b = digitosCuit(otro)
+  return a !== '' && a === b
+}
+
+/**
+ * Forma comparable de una razón social: sin tildes, sin mayúsculas, sin puntuación y sin la forma
+ * jurídica del final.
+ *
+ * Esa cola es la que más varía entre un papel y un tablero —"SAN LUCIANO SA", "San Luciano S.A.",
+ * "SAN LUCIANO S A"— y no distingue a una empresa de otra, así que compararla sólo produciría
+ * rechazos falsos.
+ */
+const FORMAS_JURIDICAS = ['sa', 'srl', 'sas', 'sca', 'scs', 'sh', 'saic', 'saci', 'sacif']
+
+const nombreComparable = (nombre: string | null | undefined): string => {
+  const limpio = (nombre ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+  while (limpio.length > 1 && FORMAS_JURIDICAS.includes(limpio[limpio.length - 1])) limpio.pop()
+  return limpio.join(' ')
+}
+
+/** Dos razones sociales nombran a la MISMA empresa. Vacías, no: no hay nada que comparar. */
+export function mismaRazonSocial(
+  una: string | null | undefined,
+  otra: string | null | undefined,
+): boolean {
+  const a = nombreComparable(una)
+  const b = nombreComparable(otra)
+  return a !== '' && b !== '' && (a === b || a.includes(b) || b.includes(a))
+}
+
+/** En qué termina la validación del emisor de un comprobante contra el cliente de la operación. */
+export type VeredictoEmisor =
+  /** El comprobante es del cliente: su CUIT coincide, o su razón social cuando no hay CUIT. */
+  | 'del-cliente'
+  /** Es de OTRO contribuyente: el dato que identifica al emisor no es el del cliente. */
+  | 'otro'
+  /** El documento no dijo quién lo emitió, así que no se puede determinar de quién es. */
+  | 'no-identificado'
+
+/**
+ * De quién es el comprobante que se acaba de leer.
+ *
+ * Manda el CUIT: es la identidad fiscal y no admite matices. La razón social sólo decide cuando el
+ * documento no trajo CUIT —una transferencia suele mostrar el titular de la cuenta y no su número—,
+ * y se compara con tolerancia porque un mismo nombre se escribe de varias formas.
+ *
+ * Sin CUIT del cliente cargado en el tablero, el CUIT del papel no se puede contrastar: ahí decide
+ * el nombre, y si tampoco alcanza, el veredicto es que no se pudo identificar.
+ */
+export function emisorDelCliente(
+  emisor: { cuit?: string; razonSocial?: string },
+  cliente: Pick<Cliente, 'cuit' | 'name'>,
+): VeredictoEmisor {
+  if (cuitCompleto(emisor.cuit) && digitosCuit(cliente.cuit) !== '') {
+    return mismoCuit(emisor.cuit, cliente.cuit) ? 'del-cliente' : 'otro'
+  }
+  const nombre = (emisor.razonSocial ?? '').trim()
+  if (nombre === '') return 'no-identificado'
+  return mismaRazonSocial(nombre, cliente.name) ? 'del-cliente' : 'otro'
+}
 
 /** En qué termina la validación del CUIT del emisor. */
 export type ResultadoCuitEmisor =
@@ -85,32 +219,36 @@ export function validarCuitEmisor(
 }
 
 /**
- * REGLA DEL CHEQUE: el VENCIMIENTO tiene que ser el día de hoy, que es la fecha con la que se emite
- * el recibo y se registra el cobro. Un cheque cuyo vencimiento no es hoy —diferido o ya vencido—
- * dejaría asentado un ingreso de dinero que no ocurrió en esta operación.
+ * REGLA DEL CHEQUE: el VENCIMIENTO no puede ser ANTERIOR al día en que se emite el recibo, que es
+ * hoy. Un cheque ya vencido no lo paga el banco, así que darlo por cobrado dejaría asentado un
+ * ingreso de dinero que no va a ocurrir.
+ *
+ * De hoy en adelante entra todo: un cheque al día vence hoy mismo y uno de pago diferido vence
+ * después, y los dos son cobrables.
  *
  * La fecha de EMISIÓN del cheque no entra en la regla: es un dato del documento —cuándo lo libró su
  * emisor— y puede ser de cualquier día anterior. Se pide cargada, nada más.
  *
- * Se compara por DÍA —hoy a la medianoche—, nunca por hora.
+ * Se compara por DÍA —hoy a la medianoche—, nunca por hora, para que un cheque que vence hoy sea
+ * válido a cualquier hora de la jornada.
  */
 export const MSG_CHEQUE_VENCIMIENTO =
-  'El cheque tiene que vencer HOY, en la fecha del recibo: no se reciben diferidos ni vencidos'
+  'El cheque no puede vencer antes de la fecha del recibo: un cheque ya vencido no se cobra'
 
 /**
  * La misma regla, dicha en el ancho de un campo. Debajo de un input hay lugar para un renglón, no
  * para la explicación entera: ahí se dice QUÉ tiene que pasar, y el porqué queda para el aviso del
  * pie del paso, que sí tiene el ancho de la pantalla.
  */
-export const MSG_CHEQUE_VENC_CORTO = 'El vencimiento tiene que ser hoy'
+export const MSG_CHEQUE_VENC_CORTO = 'No puede vencer antes de hoy'
 
-/** El vencimiento del cheque no es hoy (o no está cargado). */
+/** El vencimiento del cheque quedó antes de hoy (o no está cargado). */
 export function vencimientoChequeInvalido(vencimiento: string | undefined): boolean {
   const venc = parseDate(vencimiento ?? '')
   if (!venc) return true
   const hoy = new Date()
   hoy.setHours(0, 0, 0, 0)
-  return venc.getTime() !== hoy.getTime()
+  return venc.getTime() < hoy.getTime()
 }
 
 /** El cheque tiene un vencimiento que incumple la regla (o no lo tiene cargado). */
@@ -119,6 +257,43 @@ export function chequeInvalido(
 ): boolean {
   if (m.formaPago !== 'Cheque') return false
   return vencimientoChequeInvalido(m.chequeVencimiento)
+}
+
+/**
+ * REGLA DE LA TARJETA: el plástico tiene que seguir VIGENTE el día en que se emite el recibo, o sea
+ * vencer DESPUÉS de hoy. Una tarjeta que vence hoy mismo ya no da garantía de acreditación, así que
+ * se exige que quede al menos un día por delante.
+ *
+ * Es más estricta que la del cheque, y por un motivo distinto: el cheque se cobra POR su
+ * vencimiento —vencer hoy es exactamente estar al día—, mientras que la tarjeta sirve MIENTRAS no
+ * vence. Por eso la fecha de hoy es válida para uno e inválida para la otra.
+ *
+ * Se compara por DÍA —hoy a la medianoche—, nunca por hora.
+ */
+export const MSG_TARJETA_VENCIMIENTO =
+  'La tarjeta tiene que estar vigente: su vencimiento debe ser posterior a la fecha del recibo'
+
+/**
+ * La misma regla, dicha en el ancho de un campo. Debajo de un input hay lugar para un renglón, no
+ * para la explicación entera (mismo criterio que `MSG_CHEQUE_VENC_CORTO`).
+ */
+export const MSG_TARJETA_VENC_CORTO = 'Tiene que vencer después de hoy'
+
+/** El vencimiento de la tarjeta es hoy o anterior (o no está cargado). */
+export function vencimientoTarjetaInvalido(vencimiento: string | undefined): boolean {
+  const venc = parseDate(vencimiento ?? '')
+  if (!venc) return true
+  const hoy = new Date()
+  hoy.setHours(0, 0, 0, 0)
+  return venc.getTime() <= hoy.getTime()
+}
+
+/** La tarjeta tiene un vencimiento que incumple la regla (o no lo tiene cargado). */
+export function tarjetaInvalida(
+  m: Pick<MovimientoPago, 'formaPago' | 'vencimientoTarjeta'>,
+): boolean {
+  if (!esPagoConTarjeta(m.formaPago)) return false
+  return vencimientoTarjetaInvalido(m.vencimientoTarjeta)
 }
 
 /**
@@ -169,39 +344,9 @@ export const cuitCompleto = (cuit: string | undefined): boolean => tramoCuitInco
 
 /* ===== Tarjeta ===== */
 
-/**
- * Un cobro con tarjeta —débito o crédito— se puede partir en UNA o DOS tarjetas. Es el mismo
- * catálogo que usa la app de operaciones de venta, de donde viene esta lógica.
- *
- * No es un plan de cuotas: son cuántos PLÁSTICOS cubren el importe. Con "2", el primero lo escribe
- * el usuario y el segundo se precarga con lo que quede pendiente (ver `importeSugeridoTarjeta`),
- * que es lo que evita tener que restar a mano para que la diferencia cierre en cero.
- *
- * Dos es el tope: partir un cobro en más plásticos no es un caso del circuito, y cada tarjeta suma
- * un movimiento propio al recibo.
- */
-export const PAGOS_TARJETA = ['1', '2'] as const
-
-export type CantPagosTarjeta = (typeof PAGOS_TARJETA)[number]
-
-/**
- * Qué importe se le propone a la tarjeta que se está cargando.
- *
- * Con UN pago, la tarjeta tiene que cancelar todo lo que falta: se sugiere la diferencia entera.
- * Con DOS, la PRIMERA la escribe el usuario —es él quien decide cómo repartir— y por eso arranca
- * en cero; la segunda vuelve a sugerir la diferencia, que a esa altura es exactamente el resto.
- *
- * `cargadas` es cuántas tarjetas ya entraron al cobro: es lo que distingue la primera de la
- * segunda sin necesidad de llevar un contador aparte.
- */
-export function importeSugeridoTarjeta(
-  cantPagos: string,
-  cargadas: number,
-  diferencia: number,
-): number {
-  if (cantPagos === '2' && cargadas === 0) return 0
-  return Math.max(diferencia, 0)
-}
+/* El cobro con tarjeta se puede partir en varios plásticos, y eso NO se declara en ninguna parte:
+   se carga un movimiento por cada uno. El formulario propone en cada uno lo que falta para cerrar
+   el cobro, así que el segundo viene con el resto ya calculado. */
 
 /* ===== Resumen del cobro ===== */
 
@@ -222,11 +367,25 @@ export function resumenCobro(
   movimientos: readonly MovimientoPago[],
   totalACancelar: number,
 ): ResumenCobro {
-  const totalRecibido = round2(movimientos.reduce((acc, m) => acc + m.importe, 0))
+  /* Los ANTICIPOS no son plata que entró: son el sobrante que queda a favor del cliente. Por eso
+     suman a lo CANCELADO y no a lo recibido —el dinero ya está contado en el cheque que lo produjo,
+     y contarlo dos veces duplicaría el cobro—. Cargar uno por la diferencia es, exactamente, lo que
+     la lleva a cero. */
+  const anticipos = round2(
+    movimientos
+      .filter((m) => esAnticipoDeCobro(m.formaPago))
+      .reduce((acc, m) => acc + m.importe, 0),
+  )
+  const totalRecibido = round2(
+    movimientos
+      .filter((m) => !esAnticipoDeCobro(m.formaPago))
+      .reduce((acc, m) => acc + m.importe, 0),
+  )
+  const cancelado = round2(totalACancelar + anticipos)
   return {
-    totalACancelar: round2(totalACancelar),
+    totalACancelar: cancelado,
     totalRecibido,
-    diferencia: round2(totalACancelar - totalRecibido),
+    diferencia: round2(cancelado - totalRecibido),
   }
 }
 
@@ -249,6 +408,46 @@ export const diferenciaSaldada = (resumen: ResumenCobro): boolean =>
   Math.abs(resumen.diferencia) < TOLERANCIA_DIFERENCIA
 
 /**
+ * El cobro ya está CUBIERTO: entró dinero y lo recibido iguala lo que hay que cancelar.
+ *
+ * A partir de acá no hay lugar para otro movimiento: cualquiera que se agregue —aunque sea un peso—
+ * deja el total recibido por encima del que hay que cancelar, que es exactamente lo que impide
+ * emitir el recibo. Se frena ANTES de cargarlo, en vez de dejar cargarlo y después reclamar el
+ * exceso: pedir que se deshaga algo que la app dejó hacer es peor que no dejarlo hacer.
+ *
+ * Se exige que haya entrado ALGO (`totalRecibido > 0`) y no sólo que la diferencia dé cero: con el
+ * paso recién abierto los dos totales pueden valer cero, y ahí no hay nada cubierto —hay un cobro
+ * sin empezar—.
+ *
+ * Para cargar otro movimiento hay que quitar o ajustar alguno de los registrados, que siguen
+ * editables en la tabla.
+ */
+export const cobroCubierto = (resumen: ResumenCobro): boolean =>
+  resumen.totalRecibido > 0 && diferenciaSaldada(resumen)
+
+/** Lo que se dice cuando el formulario se cierra por eso. Nombra la salida, no sólo el bloqueo. */
+export const MSG_COBRO_CUBIERTO =
+  'El total recibido ya cubre el total a cancelar: para cargar otro movimiento, quitá o ajustá alguno de los registrados.'
+
+/**
+ * Lo que se dice cuando lo recibido SE PASA del total a cancelar. Es UN solo texto para los dos
+ * lugares donde aparece —el renglón de avisos del paso y la ventana que se abre al intentar
+ * avanzar—: son el mismo problema, así que decirlo distinto en cada uno haría dudar de si son dos.
+ *
+ * Nombra las salidas que EXISTEN en cada recorrido. Cancelando ventas pendientes son dos —corregir
+ * los importes, o registrar un ANTICIPO por la diferencia, que es un medio más del formulario—; al
+ * registrar un anticipo queda sólo la primera, porque ahí el catálogo no ofrece ese medio: todo el
+ * recorrido YA es un anticipo. Ofrecer una salida que la pantalla no tiene manda a buscar un
+ * control que no existe.
+ */
+export const MSG_EXCESO = (exceso: number, ofreceAnticipo = true): string =>
+  `El total recibido supera el total a cancelar en ${money(exceso)}: ${
+    ofreceAnticipo
+      ? 'ajustá los importes o registra un anticipo por esa diferencia'
+      : 'ajustá los importes para que la diferencia sea 0'
+  }`
+
+/**
  * Motivo por el que el cobro todavía no cierra, o `null` cuando está listo. Misma forma que el
  * bloqueo del paso 2 (`BloqueoImputacion`), para que las dos etapas avisen igual: la ventana de
  * aviso y el pie del paso lo consumen sin adaptaciones.
@@ -264,14 +463,23 @@ export interface BloqueoCobro {
  * Qué impide registrar el cobro y avanzar. Las reglas se evalúan en orden de gravedad: primero que
  * haya algo cargado, después que cada movimiento sea válido y por último que los números cierren.
  *
- * Las dos reglas del medio —cheque vencido y retención sin comprobante— ya las impone el
- * formulario al agregar, pero se vuelven a mirar acá: el importe de un movimiento se puede editar
- * en la tabla, y esta función es la que decide el avance. Que la regla viva en un solo lugar es lo
- * que evita que las dos validaciones se separen.
+ * La regla del cheque —su vencimiento— ya la impone el formulario al agregar, pero se vuelve a
+ * mirar acá: el importe de un movimiento se puede editar en la tabla, y esta función es la que
+ * decide el avance. Que la regla viva en un solo lugar es lo que evita que las dos validaciones se
+ * separen.
+ *
+ * El COMPROBANTE no entra: adjuntarlo es opcional. Los datos del movimiento se pueden cargar a mano
+ * —el documento sólo ahorra tipearlos—, así que exigir el archivo frenaría un cobro que está
+ * completo.
  */
 export function bloqueoCobro(
   movimientos: readonly MovimientoPago[],
   resumen: ResumenCobro,
+  /**
+   * El recorrido ofrece el medio "Anticipo" para absorber lo que se recibió de más. Sólo lo tiene
+   * la cancelación de ventas pendientes; al registrar un anticipo, no (ver `MSG_EXCESO`).
+   */
+  ofreceAnticipo = true,
 ): BloqueoCobro | null {
   if (movimientos.length === 0) {
     return {
@@ -285,24 +493,30 @@ export function bloqueoCobro(
   const fueraDeFecha = movimientos.filter(chequeInvalido)
   if (fueraDeFecha.length > 0) {
     return {
-      titulo: 'Hay un cheque que no vence hoy',
+      titulo: 'Hay un cheque vencido',
       mensaje: `${MSG_CHEQUE_VENCIMIENTO}.`,
       faltantes: fueraDeFecha.map((m) => `Cheque ${m.numeroCheque?.trim() || 's/nro'}`),
     }
   }
 
-  const sinComprobante = movimientos.filter(retencionSinComprobante)
-  if (sinComprobante.length > 0) {
+  /* La tarjeta se mira aparte del cheque: su regla es otra —tiene que seguir vigente— y el mensaje
+     nombra otro documento. Juntarlas en un solo aviso obligaría a un texto genérico que no diría
+     cuál de los dos hay que corregir. */
+  const vencidas = movimientos.filter(tarjetaInvalida)
+  if (vencidas.length > 0) {
     return {
-      titulo: 'Falta el comprobante de una retención',
-      mensaje: 'Las retenciones necesitan el comprobante adjunto para poder registrarse.',
-      faltantes: sinComprobante.map((m) => `${m.formaPago} · ${money(m.importe)}`),
+      titulo: 'Hay una tarjeta vencida',
+      mensaje: `${MSG_TARJETA_VENCIMIENTO}.`,
+      faltantes: vencidas.map((m) => `${m.formaPago} ${m.tipoTarjeta?.trim() || 's/tipo'}`),
     }
   }
 
   /* Recibir de menos deja facturas sin cancelar y recibir de más no corresponde a este cobro: en
      los dos casos se frena el avance. Lo que se mira son PESOS —los centavos ya los absorbe
-     `diferenciaSaldada`—, así que llegar acá significa que hay al menos un peso descolocado. */
+     `diferenciaSaldada`—, así que llegar acá significa que hay al menos un peso descolocado.
+
+     Pasarse tiene DOS salidas, y el mensaje las ofrece las dos: bajar los importes, o registrar un
+     ANTICIPO por la diferencia —el sobrante queda a favor del cliente y el cobro cierra igual—. */
   if (!diferenciaSaldada(resumen)) {
     const falta = resumen.diferencia
     return falta > 0
@@ -313,7 +527,7 @@ export function bloqueoCobro(
         }
       : {
           titulo: 'El total recibido supera el total a cancelar',
-          mensaje: `Lo recibido se pasa en ${money(-falta)}: ajustá los importes de los movimientos o volvé al paso anterior para imputar más facturas.`,
+          mensaje: MSG_EXCESO(-falta, ofreceAnticipo),
           faltantes: [],
         }
   }
@@ -359,7 +573,7 @@ export function bloqueoAnticipo(
       faltantes,
     }
   }
-  return bloqueoCobro(movimientos, resumen)
+  return bloqueoCobro(movimientos, resumen, false)
 }
 
 /** Los tres datos que declaran un anticipo. Sin ellos el recorrido no avanza. */

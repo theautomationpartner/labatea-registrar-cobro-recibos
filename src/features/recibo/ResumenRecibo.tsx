@@ -2,8 +2,7 @@ import type { ReactNode } from 'react'
 import { Avatar } from '@/components/ui/Avatar'
 import { money } from '@/lib/format'
 import { useApp } from '@/state/hooks'
-import type { Cliente } from '@/types'
-import type { ErrorEmision, FaseEmision } from './useEmisionRecibo'
+import type { Cliente, ErrorEmision, FaseEmision } from '@/types'
 
 interface ResumenReciboProps {
   cliente: Cliente

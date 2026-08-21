@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { AvisoModal } from '@/components/ui/AvisoModal'
 import { EnviarDocumento } from '@/features/shared/EnviarDocumento'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
@@ -34,16 +34,11 @@ export function ReciboView() {
   // Aviso al intentar cerrar la operación sin haber emitido el recibo.
   const [aviso, setAviso] = useState(false)
   /* Todo el ciclo de la emisión —escritura, pedido al tablero y seguimiento del estado— vive en el
-     hook. Acá sólo se lo dispara y se reparte su estado entre las dos cards. */
-  const { fase, estado, error, incompleto, puedeReintentar, emitir, limpiarIncompleto, reciboId } =
+     hook. Acá sólo se lo dispara y se reparte su estado entre las dos cards. Ese estado lo guarda el
+     hook en el estado GLOBAL, así que volver un paso y regresar reencuentra el recibo emitido en vez
+     de reofrecer la emisión. */
+  const { fase, estado, error, incompleto, puedeReintentar, emitir, limpiarIncompleto } =
     useEmisionRecibo()
-
-  /* El id del recibo emitido va al estado GLOBAL: es de ahí de donde el envío saca el ítem a
-     despachar, y tiene que sobrevivir a la navegación con el stepper —el hook lo pierde al
-     desmontarse la vista—. */
-  useEffect(() => {
-    if (reciboId) dispatch({ type: 'setReciboId', id: reciboId })
-  }, [reciboId, dispatch])
 
   const esAnticipo = tipoOperacion === 'anticipo'
   const esAplicacion = tipoOperacion === 'aplicacion'
@@ -88,7 +83,12 @@ export function ReciboView() {
       nombreCliente: cliente.name,
       vendedorId: usuario?.id ?? null,
       tipo: esAnticipo ? 'anticipo' : esAplicacion ? 'aplicacion' : 'cobro',
-      facturas: recibo.comprobantes.map((c) => ({ id: c.id, nro: c.nro, importe: c.cancelado })),
+      /* SÓLO las facturas: los anticipos también figuran entre los comprobantes cancelados del
+         documento, pero no son ítems del tablero de facturas y el servicio los arma por su cuenta
+         a partir de los movimientos. Mandarlos acá los escribiría dos veces. */
+      facturas: recibo.comprobantes
+        .filter((c) => !c.esAnticipo)
+        .map((c) => ({ id: c.id, nro: c.nro, importe: c.cancelado })),
       /* En una aplicación no hay formas de pago: lo que cubre las facturas son los anticipos. */
       movimientos: esAplicacion ? [] : cobro.movimientos,
       /* Los tres datos del anticipo viajan juntos: describen la misma línea del recibo. */
@@ -96,6 +96,11 @@ export function ReciboView() {
       detalleAnticipo: esAnticipo ? detalleAnticipo : undefined,
       vencimientoAnticipo: esAnticipo ? vencimientoAnticipo : undefined,
       anticiposAplicados: esAplicacion ? anticiposAplicados : undefined,
+      /* La DEUDA de la cuenta ANTES de este recibo: es el mismo "Saldo Cta Cte (deuda)" que la
+         ficha del cliente muestra en el paso 1, no un número nuevo. Viaja para que el servicio
+         pueda declarar en el tablero cómo queda la cuenta con el cobro ya aplicado; en la app no
+         se muestra en ninguna parte. */
+      saldoCtaCte: cliente.saldoCtaCte,
     })
   }
 
@@ -158,7 +163,8 @@ export function ReciboView() {
         )}
 
         <div className="actions-footer">
-          {/* Volver no descarta nada: el cobro y su imputación viven en el estado. */}
+          {/* Volver no descarta nada: el cobro, su imputación y la emisión ya hecha viven en el
+              estado global, así que al regresar la etapa se reencuentra tal como quedó. */}
           <button
             type="button"
             className="btn btn-out"

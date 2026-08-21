@@ -4,23 +4,33 @@
  * Módulo de la app, elegido en el ENCABEZADO. Son dos operaciones INDEPENDIENTES entre sí: no
  * comparten etapas, ni pantallas, ni estado de trabajo.
  *
- *   · COBROS · lo que la app implementa hoy: se le cobra a un cliente y se le emite el recibo.
- *              Es el módulo por defecto.
+ *   · COBROS · se le cobra a un cliente y se le emite el recibo. Es el módulo por defecto, y el
+ *              único que además pregunta QUÉ se cobra (ver `TipoOperacion`).
+ *   · PASES  · el saldo a favor de un cliente se mueve a la cuenta de otro. Circuito propio de
+ *              tres etapas: no emite recibo ni pregunta qué se cobra.
  *   · PAGOS  · circuito propio, TODAVÍA SIN DEFINIR: sus etapas y sus pantallas no son las de
  *              cobros y se especificarán aparte. Sólo lo puede elegir un administrador (ver
  *              `lib/permisos`).
  *
- * Elegir uno u otro cambia la app entera, no una parte: por eso el ruteo de más alto nivel mira
- * ESTE valor antes que el paso (ver `App`), y cambiarlo descarta lo que se venía cargando en el
- * módulo anterior.
+ * Elegir uno cambia la app entera, no una parte: por eso el ruteo de más alto nivel mira ESTE valor
+ * antes que el paso (ver `App`), y cambiarlo descarta lo que se venía cargando en el anterior.
  */
-export type OperacionApp = 'COBROS' | 'PAGOS'
+export type OperacionApp = 'COBROS' | 'PASES' | 'PAGOS'
 
 /**
  * Etapas del módulo de COBROS. Son suyas y de nadie más: PAGOS es una operación independiente y
  * definirá su propio recorrido cuando se especifique, sin reusar estas claves.
  */
-export type Paso = 'cliente' | 'ventas' | 'cobro' | 'recibo'
+export type Paso =
+  | 'cliente'
+  | 'ventas'
+  | 'cobro'
+  | 'recibo'
+  /* Sólo PASES DE SALDO: elegir el anticipo del cliente ORIGEN y después la cuenta DESTINO, que es
+     donde además se cierra la operación. Son etapas propias de ese recorrido —no las comparte
+     ningún otro—, y por eso tienen su clave en vez de reusar la de otro paso con otro significado. */
+  | 'anticipoOrigen'
+  | 'destino'
 
 /**
  * Qué se está registrando DENTRO del módulo de COBROS. Es lo primero que se elige —antes incluso
@@ -34,7 +44,15 @@ export type Paso = 'cliente' | 'ventas' | 'cobro' | 'recibo'
  *                  pendientes. Recorre las mismas cuatro etapas que el cobro; lo que cambia es el
  *                  paso 3, donde el dinero sale de los anticipos y no de una forma de pago.
  */
-export type TipoOperacion = 'cobro' | 'anticipo' | 'aplicacion'
+export type TipoOperacion = 'cobro' | 'anticipo' | 'aplicacion' | 'pases'
+
+/*
+ * `pases` NO se elige en ese selector: es el recorrido del MÓDULO "Pases de Saldo", y lo pone el
+ * propio cambio de módulo (ver `setOperacionApp`). Vive en esta unión porque el recorrido, las
+ * etiquetas y el stepper se resuelven todos por `TipoOperacion`: darle una vía aparte habría
+ * significado dos formas distintas de contestar "¿en qué etapa estoy?".
+ */
+
 
 /**
  * Usuario que puede quedar como responsable de la operación: sale de los equipos "Vendedores" y
@@ -108,9 +126,9 @@ export interface FacturaPendiente {
  * en los dos, que es un dato y no un faltante.
  */
 export interface SaldosCliente {
-  /** Suma de los movimientos "Vta Pend de Cobro": lo que queda por cancelar. */
+  /** VENTAS PENDS DE CANCELAR: lo que el cliente todavía debe, según su cuenta corriente. */
   pendienteDeCancelar: number
-  /** Suma de los movimientos "Anticipo": el saldo a favor del cliente. */
+  /** ANTICIPOS PENDS DE APLICAR: el saldo a favor del cliente que todavía no se imputó. */
   anticipos: number
 }
 
@@ -196,6 +214,12 @@ export type FormaPago =
   | 'Retencion SUSS'
   | 'Tarjeta de débito'
   | 'Tarjeta de crédito'
+  /**
+   * ANTICIPO. Es el único medio que NO es dinero que entra: absorbe lo que se recibió de más
+   * —típicamente un cheque más grande que la deuda— y lo deja como saldo a favor del cliente. Por
+   * eso suma del lado de lo CANCELADO y no de lo recibido (ver `resumenCobro`).
+   */
+  | 'Anticipo'
 
 /** Formato del cheque: papel o electrónico (eCheq). */
 export type FormatoCheque = 'FISICO' | 'eCheq'
@@ -287,6 +311,44 @@ export interface CobroState {
   movimientos: MovimientoPago[]
   /** Se confirma al avanzar de etapa; cualquier cambio en los movimientos lo vuelve a abrir. */
   confirmado: boolean
+}
+
+/* ===== Emisión del recibo ===== */
+
+/**
+ * En qué anda la emisión, desde el punto de vista de la PANTALLA:
+ *
+ *   idle      · todavía no se pidió nada.
+ *   creando   · se está escribiendo el recibo y sus subelementos en Monday.
+ *   emitiendo · el recibo ya está escrito y se le pidió la emisión al tablero; se espera su PDF.
+ *   emitido   · el tablero cerró la emisión con éxito.
+ *   error     · falló algo (la escritura, la lectura del estado, o el propio tablero).
+ *
+ * `creando` y `emitiendo` se ven casi igual en pantalla, pero NO son lo mismo: en la primera la
+ * app está escribiendo y en la segunda está esperando a Monday. Separarlas es lo que permite decir
+ * con precisión qué pasó cuando algo falla.
+ */
+export type FaseEmision = 'idle' | 'creando' | 'emitiendo' | 'emitido' | 'error'
+
+/** Qué falló en la emisión, cuando falló. */
+export interface ErrorEmision {
+  /** Estado que se muestra al lado del mensaje: la etiqueta del tablero o el origen del fallo. */
+  estado: string
+  /** El detalle. Cuando el fallo es una excepción, es el mensaje capturado en el `catch`. */
+  mensaje: string
+}
+
+/**
+ * Estado de la emisión del recibo. Vive en el estado GLOBAL —y no en el hook que la conduce— por la
+ * misma razón que `documentoEnviado`: el recibo se emite UNA vez, y esa marca tiene que sobrevivir
+ * a la navegación del stepper. Con la fase adentro del componente, volver un paso y regresar la
+ * devolvía a `idle` y la pantalla volvía a ofrecer emitir un recibo que ya estaba en Monday.
+ */
+export interface EmisionRecibo {
+  fase: FaseEmision
+  /** Etiqueta del estado de emisión que publica el tablero, tal cual: la pantalla no inventa estados. */
+  estado: string
+  error: ErrorEmision | null
 }
 
 /* ===== Envío del recibo ===== */

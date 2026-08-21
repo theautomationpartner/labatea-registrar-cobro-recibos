@@ -3,11 +3,11 @@
  * tablero y una automatización de Monday lo despacha. El circuito son cuatro pasos:
  *
  *   1. verificar que el PDF ya exista en su columna file (sin documento no hay nada que enviar);
- *   2. escribir el medio elegido en "✋Enviar por:";
+ *   2. escribir el medio elegido en "✋Enviar por:" y los contactos en "🤖Contactos";
  *   3. poner "🤖Estado de Emision" en "Enviar", que es lo que dispara la automatización;
  *   4. seguir esa misma columna hasta que el tablero la cierre en "Enviado" o "Error - Enviar".
  *
- * Es el mismo esquema que usa la emisión (`marcarAEmitir` + `getEstadoEmision`): la app escribe
+ * Es el mismo esquema que usa la emisión (`pedirEmision` + `getEstadoEmision`): la app escribe
  * una sola vez y después sólo mira.
  */
 import { CONTACTOS_INICIALES } from '@/data/mock'
@@ -128,20 +128,36 @@ export async function reciboPdfGenerado(itemId: string): Promise<boolean> {
 }
 
 /**
- * Paso 2: deja escrito por dónde se envía. Se manda por ID de etiqueta (ver `MEDIO_ENVIO_IDS`);
- * "Ambos" son las dos, porque la columna del tablero es multi-valor.
+ * Paso 2: deja escrito A QUIÉNES y POR DÓNDE se envía.
+ *
+ * Las dos cosas viajan en UNA sola mutación porque son el mismo dato para la automatización: el
+ * destino del documento. Escribirlas por separado abría un estado intermedio —el medio puesto y los
+ * destinatarios no— en el que un envío disparado justo ahí saldría sin saber a quién.
+ *
+ * El medio se manda por ID de etiqueta (ver `MEDIO_ENVIO_IDS`); "Ambos" son las dos, porque la
+ * columna del tablero es multi-valor. Los contactos van como relación al board de Contactos.
  */
-export async function asignarMedioEnvio(itemId: string, medio: MedioEnvio): Promise<void> {
+export async function asignarDestinoEnvio(
+  itemId: string,
+  medio: MedioEnvio,
+  contactoIds: readonly string[] = [],
+): Promise<void> {
   if (!mondayHabilitado()) return
+
+  const cv: Record<string, unknown> = { [COL.cobro.enviarPor]: { ids: MEDIO_ENVIO_IDS[medio] } }
+  /* Sólo ids numéricos válidos: la relación los pide como números, y uno que no lo sea haría
+     rebotar la mutación entera —con ella, el envío—. */
+  const ids = contactoIds
+    .map((id) => Number(id))
+    .filter((n) => Number.isFinite(n) && n > 0)
+  // Sin destinatarios se OMITE la columna, igual que el resto de la capa: no se manda vacía.
+  if (ids.length > 0) cv[COL.cobro.contactos] = { item_ids: ids }
+
   await mondayApi(
     `mutation ($id: ID!, $board: ID!, $cv: JSON!) {
       change_multiple_column_values(item_id: $id, board_id: $board, column_values: $cv) { id }
     }`,
-    {
-      id: itemId,
-      board: BOARDS.cobros,
-      cv: JSON.stringify({ [COL.cobro.enviarPor]: { ids: MEDIO_ENVIO_IDS[medio] } }),
-    },
+    { id: itemId, board: BOARDS.cobros, cv: JSON.stringify(cv) },
   )
 }
 

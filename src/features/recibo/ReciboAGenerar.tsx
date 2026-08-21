@@ -1,7 +1,7 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { money } from '@/lib/format'
 import { SIN_DATO, type Recibo } from '@/lib/recibo'
-import type { FaseEmision } from './useEmisionRecibo'
+import type { FaseEmision } from '@/types'
 
 interface ReciboAGenerarProps {
   /** Las dos tablas del documento y sus totales, ya armadas por `lib/recibo`. */
@@ -16,6 +16,19 @@ interface ReciboAGenerarProps {
    */
   anticipo?: number | null
 }
+
+/**
+ * Cuánto dura el PLEGADO, en ms. Tiene que coincidir con la animación `rec-plegar` de `recibo.css`:
+ * es el tiempo que el cuerpo sigue montado después de cerrarse, para que la salida se vea en vez de
+ * desaparecer de un corte.
+ *
+ * Son los MISMOS tiempos que el despliegue de las facturas pendientes (ver `TablaFacturas`): abrir y
+ * cerrar algo tiene que sentirse igual en toda la app.
+ */
+const MS_PLEGADO = 200
+
+/** Cuánto dura el DESPLIEGUE. Coincide con `rec-desplegar`. */
+const MS_DESPLIEGUE = 240
 
 /** Métrica de la cabecera: rótulo chico arriba y el dato debajo. */
 function Dato({ rotulo, children, fuerte }: { rotulo: string; children: ReactNode; fuerte?: boolean }) {
@@ -47,6 +60,40 @@ const oDato = (valor: string) => valor || <span className="rec-sd">{SIN_DATO}</s
  */
 export function ReciboAGenerar({ recibo, fase, estado, anticipo = null }: ReciboAGenerarProps) {
   const [abierta, setAbierta] = useState(true)
+  /* Cuerpo que se está PLEGANDO: ya está cerrado, pero sigue montado hasta que termina la animación
+     de salida. Sin esto, cerrar lo desmonta en el acto y desaparece de un corte. */
+  const [cerrando, setCerrando] = useState(false)
+  /* Cuerpo recién abierto: es el único que se anima. La marca dura lo que dura la animación y se
+     borra sola, así la card no se despliega de nuevo en la cara del usuario cuando el componente se
+     re-renderiza por otro motivo —el estado de la emisión cambia varias veces—.
+
+     Arranca APAGADA aunque la card nazca abierta: al montarse no hay nada que animar. */
+  const [abriendo, setAbriendo] = useState(false)
+  const reloj = useRef<ReturnType<typeof setTimeout>>()
+
+  // Al desmontar (cambio de paso, fin de la operación) no puede quedar un temporizador buscándolo.
+  useEffect(() => () => clearTimeout(reloj.current), [])
+
+  /** Abre o cierra el cuerpo, dejándolo montado el tiempo que dura la animación de salida. */
+  const alternar = () => {
+    // Abrir y cerrar rápido no puede dejar dos animaciones peleándose por el mismo cuerpo.
+    clearTimeout(reloj.current)
+    if (abierta) {
+      setAbierta(false)
+      setAbriendo(false)
+      setCerrando(true)
+      reloj.current = setTimeout(() => setCerrando(false), MS_PLEGADO)
+      return
+    }
+    setCerrando(false)
+    setAbierta(true)
+    setAbriendo(true)
+    reloj.current = setTimeout(() => setAbriendo(false), MS_DESPLIEGUE)
+  }
+
+  /* El cuerpo está en pantalla mientras se lo lee Y mientras se pliega: hasta que la salida termina,
+     la card sigue siendo una card abierta. */
+  const visible = abierta || cerrando
   const { comprobantes, pagos, totalEntregado } = recibo
   const enCurso = fase === 'creando' || fase === 'emitiendo'
   const emitido = fase === 'emitido'
@@ -67,7 +114,7 @@ export function ReciboAGenerar({ recibo, fase, estado, anticipo = null }: Recibo
             type="button"
             className="comp-toggle"
             aria-expanded={abierta}
-            onClick={() => setAbierta((v) => !v)}
+            onClick={alternar}
           >
             <i className={`fas fa-chevron-down comp-chev ${abierta ? 'open' : ''}`} />
             <span className="comp-tit">
@@ -86,28 +133,54 @@ export function ReciboAGenerar({ recibo, fase, estado, anticipo = null }: Recibo
             </Dato>
           </div>
 
-          {/* El mismo semáforo que el botón, sobre la card: girando mientras se emite, tildado en
-              verde al cerrar bien y en rojo si el tablero devolvió un error. */}
+          {/* Semáforo de la emisión, SÓLO ícono: gira mientras se emite, queda tildado en verde al
+              cerrar bien y en rojo si el tablero devolvió un error.
+
+              El texto que lo acompañaba se fue: decía lo mismo que el color y cambiaba de ancho en
+              cada fase, corriendo las tres métricas de al lado cada vez que el estado avanzaba. Lo
+              que el ícono no puede decir viaja en su `title`, que ahora cubre las CUATRO fases y no
+              sólo dos. */}
           <span className="comp-estado">
-            {enCurso && (
-              <span className="comp-estado-txt">
-                <i className="fas fa-circle-notch fa-spin" /> Emitiendo…
-              </span>
-            )}
-            {fase === 'error' && (
-              <span className="comp-estado-txt comp-estado-txt--err">{estado || 'Error'}</span>
-            )}
             <span
               className={`comp-ok ${emitido ? 'on' : ''} ${fase === 'error' ? 'comp-ok--err' : ''}`}
-              title={emitido ? `Recibo emitido${estado ? ` · ${estado}` : ''}` : 'Pendiente de emisión'}
+              title={
+                fase === 'error'
+                  ? `Error al emitir el recibo${estado ? ` · ${estado}` : ''}`
+                  : enCurso
+                    ? `Emitiendo el recibo${estado ? ` · ${estado}` : ''}`
+                    : emitido
+                      ? `Recibo emitido${estado ? ` · ${estado}` : ''}`
+                      : 'Pendiente de emisión'
+              }
             >
-              <i className={`fas ${fase === 'error' ? 'fa-triangle-exclamation' : 'fa-check'}`} />
+              <i
+                className={`fas ${
+                  fase === 'error'
+                    ? 'fa-triangle-exclamation'
+                    : enCurso
+                      ? 'fa-circle-notch fa-spin'
+                      : 'fa-check'
+                }`}
+              />
             </span>
           </span>
         </div>
 
-        {abierta && (
-          <div className="comp-body">
+        {visible && (
+          /* Dos envoltorios para poder animar el DESPLIEGUE: el de afuera anima su alto (de 0fr a
+             1fr) y el de adentro recorta lo que todavía no entra. Es el MISMO mecanismo del panel de
+             las facturas pendientes.
+
+             El relleno se queda en `comp-body`, o sea DENTRO del área recortada: el padding no se
+             encoge con la grilla —a 0fr el contenido mide 0 pero el relleno sigue ocupando su
+             lugar—, así que afuera dejaría un salto de 18px al empezar y al terminar. */
+          <div
+            className={`rec-exp-wrap ${
+              cerrando ? 'rec-exp-wrap--cerrando' : abriendo ? 'rec-exp-wrap--abriendo' : ''
+            }`}
+          >
+            <div className="rec-exp-in">
+              <div className="comp-body">
             <p className="rec-leyenda">RECIBIMOS CONFORME EL IMPORTE DETALLADO.</p>
 
             {/* --- Tabla 1 · las formas de pago con las que el cliente entregó el dinero --- */}
@@ -182,7 +255,11 @@ export function ReciboAGenerar({ recibo, fase, estado, anticipo = null }: Recibo
                   comprobantes.map((c) => (
                     <tr key={c.id}>
                       <td>
-                        <span className="rec-comp">Factura {c.nro}</span>
+                        {/* El anticipo no es una factura: se nombra por su concepto, sin el
+                            prefijo que llevan los comprobantes del tablero. */}
+                        <span className="rec-comp">
+                          {c.esAnticipo ? c.nro : `Factura ${c.nro}`}
+                        </span>
                       </td>
                       <td className="rec-fecha">{oDato(c.emision)}</td>
                       <td className="rec-fecha">{oDato(c.vencimiento)}</td>
@@ -194,9 +271,11 @@ export function ReciboAGenerar({ recibo, fase, estado, anticipo = null }: Recibo
             </table>
             )}
 
-            <div className="rec-total">
-              <span className="rec-total-lbl">TOTAL CANCELADO:</span>
-              <span className="rec-total-val">{money(totalCancelado)}</span>
+                <div className="rec-total">
+                  <span className="rec-total-lbl">TOTAL CANCELADO:</span>
+                  <span className="rec-total-val">{money(totalCancelado)}</span>
+                </div>
+              </div>
             </div>
           </div>
         )}

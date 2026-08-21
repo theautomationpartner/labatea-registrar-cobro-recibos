@@ -173,12 +173,18 @@
 /* ===== Sub-card 2 · "Registrar cobro": formulario + tabla ===== */
 /* Sin borde ni radio propios: el panel global ya los aporta. */
 .cobro-v2 .cobro-card {
+  /* El padding va en una VARIABLE porque hay contenido que necesita salirse de el: una banda que
+     ocupa todo el ancho de la card se estira con un margen negativo de esta misma medida (ver el
+     panel de cierre en `pases.css`). Con el numero repetido, cambiar el padding dejaria la banda
+     descalzada de los bordes. */
+  --cobro-card-pad: 24px;
+
   width: 100%;
   background: var(--c-bg-card);
   border: none;
   border-radius: 0;
   box-shadow: none;
-  padding: 24px;
+  padding: var(--cobro-card-pad);
 }
 /* ===== Datos del anticipo =====
    Banda propia DENTRO del panel y encima de "Registrar anticipo": es su premisa, no una parte más
@@ -311,6 +317,29 @@
   color: var(--c-text-secondary);
 }
 
+/* Reintento de la consulta dentro del aviso de "no tiene anticipos". Es un <button> porque
+   ejecuta una acción, no navega, pero se ve como un enlace: al lado de una frase, un botón con
+   caja propia pesaría más que el aviso que lo contiene. */
+.cobro-v2 .cobro-reintentar {
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: inherit;
+  font-weight: 600;
+  color: var(--c-primary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.cobro-v2 .cobro-reintentar:hover {
+  color: var(--c-primary-hover);
+}
+/* El foco se marca separado del texto: subrayado y contorno pegados se leen como una sola mancha. */
+.cobro-v2 .cobro-reintentar:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
 /* --- Formulario de carga --- */
 /* Es un <fieldset> para poder apagarlo entero con `disabled` una vez registrado el cobro. */
 .cobro-v2 .cobro-form {
@@ -349,6 +378,11 @@
 }
 .cobro-v2 .cobro-form-campo--importe {
   flex: 0 0 186px;
+}
+/* Tipo de retención, pegado al medio de cobro. Son siglas cortas: le alcanza con el ancho de su
+   rótulo, y así no empuja al importe cuando aparece. */
+.cobro-v2 .cobro-form-campo.cobro-campo--tiporet {
+  flex: 0 0 170px;
 }
 .cobro-v2 .cobro-form-campo--accion {
   flex: 0 0 auto;
@@ -464,9 +498,45 @@
     transform: translateY(0);
   }
 }
+/* SALIDA del ramal: el bloque del medio anterior se retira plegándose en lugar de desaparecer de
+   un corte. Es lo que evita que la card pegue un salto al cambiar de medio, que se nota sobre todo
+   viniendo del cheque —el bloque más alto de todos, con su lector y sus seis campos—.
+
+   El alto se anima con la grilla (`1fr` -> `0fr`), el mismo mecanismo que el resto de los plegados
+   de la app. Para eso el bloque deja de ser flex y pasa a ser grid mientras se va: su contenido
+   queda en una sola celda que se encoge, y `overflow: hidden` lo recorta.
+
+   El relleno y el filete se apagan JUNTO con el alto: el padding no se encoge con la grilla, así
+   que sin esto quedarían 14px y una línea punteada colgando hasta el final de la animación. */
+.cobro-v2 .cobro-cond--saliendo {
+  display: grid;
+  grid-template-rows: 0fr;
+  overflow: hidden;
+  animation: cobro-cond-out 0.2s ease-in forwards;
+  /* Ya no se opera sobre algo que se está yendo: sus campos y su "+ Agregar" dejan de responder. */
+  pointer-events: none;
+}
+@keyframes cobro-cond-out {
+  from {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    padding-top: 14px;
+    border-top-color: var(--c-border);
+  }
+  to {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    padding-top: 0;
+    border-top-color: transparent;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .cobro-v2 .cobro-cond {
     animation: none;
+  }
+  /* Sin movimiento el bloque no se pliega: se va, que es la misma información sin el recorrido. */
+  .cobro-v2 .cobro-cond--saliendo {
+    display: none;
   }
 }
 .cobro-v2 .cobro-cond .cobro-form-campo {
@@ -589,11 +659,6 @@
 /* Cada campo pide su propio ancho; el orden de la maqueta es el del circuito de carga. */
 .cobro-v2 .cobro-cond--tarjeta .cobro-form-campo {
   flex: 1 1 190px;
-}
-/* Cant. Pagos: son dos opciones de un dígito, así que no necesita más que el ancho de su rótulo.
-   Fijo y angosto para que no le robe espacio a los campos que sí lo piden. */
-.cobro-v2 .cobro-cond--tarjeta .cobro-campo--pagos {
-  flex: 0 0 120px;
 }
 /* Ayuda del importe sugerido: ocupa su propio renglón, debajo de los campos que explica. */
 .cobro-v2 .cobro-form-hint {
@@ -737,10 +802,6 @@
 .cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-campo--nrotransf {
   flex: 1 1 200px;
 }
-/* Tarjeta: dos opciones de un dígito, así que le alcanza con el ancho de su rótulo. */
-.cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-campo--pagos {
-  flex: 0 0 110px;
-}
 .cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-campo--nrocupon {
   flex: 1 1 160px;
 }
@@ -795,8 +856,11 @@
   background: #f2f7ff;
   color: var(--c-primary);
   font-size: 46px;
-  /* SIN `overflow: hidden`: recortaría el anillo de foco del botón que cubre el recuadro, que se
-     dibuja por fuera del borde. Adentro ya no hay nada que se desborde. */
+  /* Nada se sale del recuadro, pase lo que pase: sus medidas son fijas —el bloque entero se
+     acomodó alrededor de ellas— y un mensaje largo que se derramara por fuera del borde se leería
+     encima de los campos de al lado. El anillo de foco se dibuja HACIA ADENTRO por esto mismo (ver
+     `.cobro-lector-hit:focus-visible`). */
+  overflow: hidden;
   transition:
     border-color 0.2s,
     background 0.2s,
@@ -827,30 +891,14 @@
    con `:focus-within`—: ese par mostraba el anillo TAMBIÉN al clickear, y como el foco se queda en
    el botón después de elegir el archivo, el azul convivía con el borde verde del resultado como si
    fueran dos bordes del mismo recuadro. Con `:focus-visible` sólo aparece navegando con teclado,
-   que es para quien existe. El botón cubre el recuadro entero, así que su anillo lo rodea. */
+   que es para quien existe. El botón cubre el recuadro entero, así que su anillo lo rodea.
+
+   El desplazamiento es NEGATIVO: el recuadro recorta lo que se salga, así que un anillo dibujado
+   hacia afuera no se vería. Hacia adentro queda pegado al borde y se ve entero. */
 .cobro-v2 .cobro-lector-hit:focus-visible {
   outline: 2px solid var(--c-primary);
-  outline-offset: 2px;
+  outline-offset: -4px;
   border-radius: var(--c-radius-lg);
-}
-/* Falta el comprobante obligatorio: se marca el recuadro entero, que es donde se carga. El reclamo
-   va ADENTRO (ver `.cobro-lector-reclamo`), así aparecer o desaparecer no le cambia el alto al
-   bloque —afuera, cada intento de agregar movía todo lo que estaba abajo—. */
-.cobro-v2 .cobro-lector.is-falta {
-  border-color: var(--c-danger);
-}
-/* La ranura está SIEMPRE en la cara, con o sin mensaje: su alto —una línea— queda reservado, así
-   que el reclamo aparece y desaparece sin correr el título ni el ícono que tiene arriba. Es el
-   mismo criterio del renglón de ayuda del buscador de clientes (`.search-helper`). */
-.cobro-v2 .cobro-lector-reclamo {
-  display: block;
-  max-width: 340px;
-  min-height: 1.35em;
-  font-size: 12.5px;
-  font-weight: 600;
-  line-height: 1.35;
-  text-align: center;
-  color: #c0273c;
 }
 /* Soltando encima: el recuadro se agranda apenas y pasa a línea llena, para que se vea que soltar
    ahí es la acción y no un adorno. */
@@ -861,8 +909,10 @@
 }
 /* Con un documento adentro el punteado ya no invita a nada: el borde se cierra y toma el color del
    estado. El recuadro entero es el que informa —el color se ve antes que el texto—. */
+.cobro-v2 .cobro-lector--en-espera,
 .cobro-v2 .cobro-lector--procesando,
 .cobro-v2 .cobro-lector--listo,
+.cobro-v2 .cobro-lector--con-aviso,
 .cobro-v2 .cobro-lector--sin-datos,
 .cobro-v2 .cobro-lector--error {
   border-style: solid;
@@ -870,10 +920,20 @@
 .cobro-v2 .cobro-lector--procesando {
   background: var(--c-bg-input);
 }
+/* En espera: el documento está y la lectura no salió porque falta un dato del formulario. Va en
+   NEUTRO —ni verde ni ámbar—: no pasó nada bueno ni malo todavía, sólo hay algo por completar, y el
+   reclamo de verdad está en rojo sobre el campo que falta. */
+.cobro-v2 .cobro-lector--en-espera {
+  border-color: var(--c-border);
+  background: var(--c-bg-panel);
+}
 .cobro-v2 .cobro-lector--listo {
   border-color: var(--c-success);
   background: #f2fbf7;
 }
+/* Procesado con reparo: mismo ámbar que la advertencia sin datos. Es el mismo registro —"mirá
+   esto"— y no habría nada que ganar inventándole un tercer color. */
+.cobro-v2 .cobro-lector--con-aviso,
 .cobro-v2 .cobro-lector--sin-datos {
   border-color: var(--c-warning);
   background: #fffaf0;
@@ -902,11 +962,21 @@
 .cobro-v2 .cobro-lector-cara--listo .cobro-lector-titulo {
   color: #0b7a4b;
 }
+.cobro-v2 .cobro-lector-cara--con-aviso,
 .cobro-v2 .cobro-lector-cara--sin-datos {
   color: var(--c-warning);
 }
+.cobro-v2 .cobro-lector-cara--con-aviso .cobro-lector-titulo,
 .cobro-v2 .cobro-lector-cara--sin-datos .cobro-lector-titulo {
   color: #b26a00;
+}
+/* En espera: el gris del texto secundario. La zona no está reclamando nada —eso lo hace el campo
+   que falta—, sólo cuenta en qué punto está el documento. */
+.cobro-v2 .cobro-lector-cara--en-espera {
+  color: var(--c-text-secondary);
+}
+.cobro-v2 .cobro-lector-cara--en-espera .cobro-lector-titulo {
+  color: var(--c-text-main);
 }
 .cobro-v2 .cobro-lector-cara--error {
   color: var(--c-danger);
@@ -922,6 +992,9 @@
   color: var(--c-text-main);
 }
 .cobro-v2 .cobro-lector-consigna {
+  /* Los mensajes largos —el del comprobante de otro cliente, el del CUIT que no se pudo leer—
+     envuelven acá adentro. El ancho acotado los parte en renglones cortos, que se leen mejor que
+     una línea de borde a borde, y el recuadro los contiene sin cambiar de medidas. */
   max-width: 340px;
   font-size: 13.5px;
   font-weight: 400;
@@ -1272,6 +1345,14 @@
   line-height: 20px;
 }
 /* Todavía falta cargar: no es un error, es el próximo paso. */
+/* Cobro CUBIERTO: el formulario se cierra porque el trabajo termino, no porque algo este mal. En
+   verde y con tilde, para que el gris del formulario no se lea como una falla. */
+.cobro-v2 .cobro-bloqueo-inline--ok {
+  color: var(--c-success);
+}
+.cobro-v2 .cobro-bloqueo-inline--ok i {
+  color: var(--c-success);
+}
 .cobro-v2 .cobro-bloqueo-inline--info {
   color: var(--c-text-secondary);
 }

@@ -10,6 +10,18 @@ export type BusquedaEstado = 'idle' | 'buscando' | 'no-encontrado' | 'error'
 interface BuscarClienteProps {
   estado: BusquedaEstado
   onEstado: (estado: BusquedaEstado) => void
+  /**
+   * Qué hacer con el cliente elegido. Por defecto pasa a ser el cliente de la OPERACIÓN, que es el
+   * caso del paso 1.
+   *
+   * Existe porque el buscador se usa en dos lugares con el mismo comportamiento y distinto
+   * destinatario: el paso 1 elige a quién se le cobra, y el destino de un pase elige quién RECIBE
+   * el saldo. Todo lo demás —cómo se busca, qué se muestra, cómo se resuelven varias coincidencias—
+   * es idéntico, así que se parametriza el efecto y no se duplica el componente.
+   */
+  onElegir?: (cliente: Cliente) => void
+  /** Texto del campo vacío. Por defecto, el del paso 1. */
+  placeholder?: string
 }
 
 /**
@@ -18,7 +30,12 @@ interface BuscarClienteProps {
  * carga directo; si hay varias —dos clientes con el mismo nombre— se abren como desplegable para
  * elegir cuál. El loading y el «no encontrado» los muestra la vista, no acá.
  */
-export function BuscarCliente({ estado, onEstado }: BuscarClienteProps) {
+export function BuscarCliente({
+  estado,
+  onEstado,
+  onElegir,
+  placeholder = 'Buscar cliente por código, nombre o CUIT...',
+}: BuscarClienteProps) {
   const dispatch = useDispatch()
   // El campo arranca (y queda) vacío: no muestra el cliente elegido, para encadenar búsquedas.
   const [termino, setTermino] = useState('')
@@ -34,7 +51,8 @@ export function BuscarCliente({ estado, onEstado }: BuscarClienteProps) {
     setTermino('')
     setResultados([])
     setAbierto(false)
-    dispatch({ type: 'setCliente', cliente: c })
+    if (onElegir) onElegir(c)
+    else dispatch({ type: 'setCliente', cliente: c })
     onEstado('idle')
   }
 
@@ -92,7 +110,7 @@ export function BuscarCliente({ estado, onEstado }: BuscarClienteProps) {
           <input
             type="text"
             className="search-input"
-            placeholder="Buscar cliente por código, nombre o CUIT..."
+            placeholder={placeholder}
             autoComplete="off"
             value={termino}
             disabled={buscando}

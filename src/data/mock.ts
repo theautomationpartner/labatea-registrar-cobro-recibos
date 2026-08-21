@@ -304,3 +304,4 @@ export const SALDOS_CLIENTE: SaldosCliente = {
   pendienteDeCancelar: 272513.05,
   anticipos: 8000,
 }
+

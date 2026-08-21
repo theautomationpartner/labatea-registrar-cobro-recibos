@@ -9,6 +9,7 @@ import {
   siguientePaso,
 } from '@/lib/pasos'
 import { getSaldosCliente } from '@/services/monday'
+import { esContado, MSG_CONTADO_ORIGEN } from '@/lib/pases'
 import { faltantesCliente } from '@/lib/validaciones'
 import { useApp, useDispatch } from '@/state/hooks'
 import { BuscarCliente, type BusquedaEstado } from './BuscarCliente'
@@ -18,12 +19,15 @@ import { OperacionConfig } from './OperacionConfig'
 /**
  * Paso 1: qué se va a cobrar y a quién.
  *
- * Son las DOS decisiones que gobiernan todo lo que sigue: el tipo de operación define el recorrido
- * (un cobro contra facturas pasa por las ventas pendientes; un anticipo no) y el cliente define
- * sobre quién se opera. Ninguna de las dos viene preseleccionada, y sin las dos no se avanza.
+ * En COBROS son DOS decisiones: el tipo de operación define el recorrido (un cobro contra facturas
+ * pasa por las ventas pendientes; un anticipo no) y el cliente define sobre quién se opera. Ninguna
+ * viene preseleccionada, y sin las dos no se avanza.
+ *
+ * En PASES DE SALDO el recorrido ya lo fijó el módulo, así que la única decisión es el cliente
+ * ORIGEN: de su anticipo sale el saldo que se va a mover.
  */
 export function ClienteView() {
-  const { cliente, tipoOperacion, saldos, saldosClienteId } = useApp()
+  const { cliente, operacionApp, tipoOperacion, saldos, saldosClienteId } = useApp()
   const dispatch = useDispatch()
   // Estado de la búsqueda: gobierna qué se muestra en el lugar de la ficha del cliente.
   const [estadoBusqueda, setEstadoBusqueda] = useState<BusquedaEstado>('idle')
@@ -35,6 +39,8 @@ export function ClienteView() {
   const [avisoSinCliente, setAvisoSinCliente] = useState(false)
   // Aviso emergente al intentar avanzar sin haber elegido qué se registra.
   const [avisoSinOperacion, setAvisoSinOperacion] = useState(false)
+  // Aviso emergente al intentar pasar el saldo de un cliente que opera al contado.
+  const [avisoContado, setAvisoContado] = useState(false)
   // Ventana emergente cuando la búsqueda no encuentra al cliente: es el ÚNICO aviso de ese caso.
   const [avisoNoEncontrado, setAvisoNoEncontrado] = useState(false)
 
@@ -76,6 +82,10 @@ export function ClienteView() {
   /* La etapa que sigue en el recorrido ELEGIDO: en un cobro son las ventas pendientes y en un
      anticipo el registro del anticipo. Mientras no se eligió qué registrar se anticipa la del
      cobro, que es el recorrido completo. */
+  /* Un cliente de CONTADO no tiene cuenta corriente de la que debitar: el pase se frena acá, antes
+     de hacerle elegir un anticipo que no va a poder mover. */
+  const origenContado = operacionApp === 'PASES' && clienteListo && esContado(cliente?.condicionPago)
+
   const destino = siguientePaso('cliente', tipoOperacion)
   const SIGUIENTE_PASO = destino ? etiquetaDePaso(destino, tipoOperacion) : ''
 
@@ -100,6 +110,11 @@ export function ClienteView() {
       setAvisoDatos(true)
       return
     }
+    /* Un cliente de contado no puede ser el origen de un pase. */
+    if (origenContado) {
+      setAvisoContado(true)
+      return
+    }
     /* Los tres recorridos tienen etapa siguiente desde acá, así que `destino` nunca es null a esta
        altura; el guard existe para que el tipo lo refleje sin recurrir a un `!`. */
     if (destino) dispatch({ type: 'goto', paso: destino })
@@ -108,13 +123,15 @@ export function ClienteView() {
   /* Por qué todavía no se puede avanzar. Se muestra en el footer, al lado del botón. */
   const motivoBloqueo = !tipoOperacion
     ? 'Indicá qué vas a cobrar para continuar'
-    : !clienteListo
-        ? 'Buscá y confirmá un cliente para continuar'
-        : bloqueado
-          ? 'Cliente bloqueado: no se puede operar'
-          : faltantes.length > 0
-            ? 'Al cliente le faltan datos en el sistema'
-            : undefined
+    : origenContado
+      ? 'El cliente opera al contado: no se le puede pasar saldo'
+        : !clienteListo
+          ? 'Buscá y confirmá un cliente para continuar'
+          : bloqueado
+            ? 'Cliente bloqueado: no se puede operar'
+            : faltantes.length > 0
+              ? 'Al cliente le faltan datos en el sistema'
+              : undefined
 
   return (
     <section className="view cliente-v2 paso-layout">
@@ -129,8 +146,10 @@ export function ClienteView() {
           descripcion={descripcionDePaso('cliente', tipoOperacion)}
         />
 
-        {/* Qué se va a cobrar: define el recorrido, así que va ANTES del buscador. */}
-        <OperacionConfig />
+        {/* Qué se va a cobrar. Define el recorrido, así que va ANTES del buscador. SÓLO en Cobros: "Pases de Saldo" tiene un recorrido
+            único —lo fija el propio módulo—, así que ahí no hay nada que preguntar y el selector
+            sería una caja con una sola respuesta posible. */}
+        {operacionApp === 'COBROS' && <OperacionConfig />}
 
         {/* Buscador del cliente. El vendedor de la operación ya se ve —y se cambia— en el selector
             del encabezado, así que no se repite acá. */}
@@ -181,6 +200,13 @@ export function ClienteView() {
           Para continuar tenés que seleccionar en <strong>¿Qué vas a cobrar?</strong> qué cobro vas
           a realizar en el sistema: la cancelación de ventas pendientes de cobro, un anticipo o la
           aplicación de un anticipo contra facturas.
+        </AvisoModal>
+      )}
+
+      {/* Un cliente de contado no tiene cuenta corriente de la que debitar el saldo. */}
+      {avisoContado && (
+        <AvisoModal titulo="El cliente opera al contado" onClose={() => setAvisoContado(false)}>
+          {MSG_CONTADO_ORIGEN}.
         </AvisoModal>
       )}
 

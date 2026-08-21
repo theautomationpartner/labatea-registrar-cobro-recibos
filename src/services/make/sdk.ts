@@ -57,6 +57,22 @@ export class ErrorFatalMake extends Error {
 }
 
 /**
+ * El documento se leyó bien y NO corresponde a esta operación: el cheque está a nombre de otro
+ * beneficiario, la transferencia salió de la cuenta de otro. Es un caso de `ErrorFatalMake` —se
+ * muestra igual, en rojo y sin ofrecer reintentar— con una diferencia que importa: acá el
+ * comprobante adjunto tampoco sirve, así que mientras siga cargado el movimiento no se registra.
+ *
+ * Un fallo de CONVERSIÓN no entra por acá: ahí el documento puede ser el correcto y sólo falló la
+ * lectura, y bloquear la carga manual castigaría al usuario por un problema de la herramienta.
+ */
+export class DocumentoRechazado extends ErrorFatalMake {
+  constructor(mensaje: string) {
+    super(mensaje)
+    this.name = 'DocumentoRechazado'
+  }
+}
+
+/**
  * Códigos con los que el escenario declara ese fallo de conversión: la herramienta de PDF falló, o
  * ni siquiera pudo descargar el archivo que se le mandó. Viajan en la clave del error (ver
  * `CLAVES_CODIGO`) junto al 400.

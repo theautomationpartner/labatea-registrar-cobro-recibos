@@ -671,3 +671,40 @@
 .dditem--vedada:hover {
   background: transparent;
 }
+
+/* ===== Overlay de espera =====
+   Tapa la pantalla mientras se escribe en Monday, en cualquier paso. SIN namespace a propósito: un
+   overlay que sólo funciona dentro de una vista no sirve para lo que existe. */
+.modal-cargando {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.45);
+}
+.modal-cargando-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 380px;
+  padding: 28px 32px;
+  text-align: center;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+.modal-cargando-box i {
+  font-size: 26px;
+  color: var(--primary-blue);
+}
+.modal-cargando-box strong {
+  font-size: 15px;
+  color: #1f2937;
+}
+.modal-cargando-box span {
+  font-size: 13px;
+  color: #667085;
+}
