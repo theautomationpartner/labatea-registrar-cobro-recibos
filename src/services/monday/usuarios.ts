@@ -14,7 +14,7 @@
 import { USUARIOS } from '@/data/mock'
 import { EQUIPOS_OPERADORES } from '@/lib/permisos'
 import type { Usuario, UsuarioActual } from '@/types'
-import { mondayApi, mondayHabilitado } from './sdk'
+import { cabecerasPropias, mondayApi, mondayHabilitado, verificarRespuesta } from './sdk'
 
 /** Tope de usuarios que trae la consulta. La cuenta es chica; alcanza y evita paginar. */
 const LIMITE_USUARIOS = 500
@@ -50,11 +50,35 @@ const enAlgunEquipo = (u: MondayUser, equipos: readonly string[]): boolean => {
 }
 
 /**
- * Usuario logueado en Monday (query `me`), CON sus equipos: son los que definen el rol y, con él,
- * qué puede editar en la app. Sin token (modo local) devuelve null: no hay sesión.
+ * Usuario logueado, CON sus equipos: son los que definen el rol y, con él, qué puede editar en la
+ * app. Sin token (modo local) devuelve null: no hay sesión.
+ *
+ * ── Por qué en producción NO se usa `me` ──
+ * `me` viaja por el proxy, y el proxy inyecta el token del SERVIDOR: contesta quién es el dueño de
+ * ese token, no quién abrió la app. Con una sola cuenta de servicio para todos, la app creía que
+ * todos eran esa persona —y les daba su rol—. En producción la identidad sale de `/api/usuario`,
+ * que la lee del session token ya verificado (ver `api/usuario.ts`).
+ *
+ * Ese mismo pedido es el PASO 1 de la secuencia de arranque: si contesta, el usuario pasó la firma
+ * y la lista blanca. Un rechazo suyo se propaga como `AccesoDenegado` y `App.tsx` lo trata como lo
+ * que es —la puerta cerrada— en vez de como una sesión que no se pudo leer.
+ *
+ * En desarrollo no hay funciones serverless ni iframe, así que ahí se sigue usando `me` contra el
+ * proxy de Vite con el token personal: es la única identidad disponible en localhost.
  */
 export async function getUsuarioActual(): Promise<UsuarioActual | null> {
   if (!mondayHabilitado()) return null
+
+  if (!import.meta.env.DEV) {
+    const res = await fetch('/api/usuario', {
+      method: 'POST',
+      headers: await cabecerasPropias({ 'Content-Type': 'application/json' }),
+      body: '{}',
+    })
+    await verificarRespuesta(res, 'Sesión')
+    return (await res.json()) as UsuarioActual
+  }
+
   const data = await mondayApi<{ me: MondayMe | null }>(
     `query {
       me {

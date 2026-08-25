@@ -1,0 +1,227 @@
+/* ═══ Pantallas de autenticación ═══════════════════════════════════════════════════════════════
+   Los estilos del muro del segundo factor (Capa 3) y del aviso de rechazo del borde. Viven en su
+   propio archivo porque no pertenecen a ninguna etapa de la operación: se dibujan ANTES que la app,
+   y varias veces en lugar de ella.
+
+   Son los mismos que usa la app de operaciones de venta: las dos comparten el muro, así que un
+   usuario que se enroló allá reconoce la pantalla acá. */
+
+/* ── Complementos del modal, que esta app todavía no tenía ─────────────────────────────────────── */
+/* Botón de acción secundaria: el "Entendido" cuando además hay un "Recargar" que es el principal. */
+.btn-secundario {
+  background: #fff;
+  border: 1px solid var(--border);
+  color: var(--text-dark);
+  padding: 10px 20px;
+}
+.btn-secundario:hover {
+  background: #f5f6f8;
+}
+/* Código técnico del rechazo, al pie del mensaje: sirve para reportarlo, no para leerlo. */
+.modal-detalle {
+  margin-top: 14px;
+  font-size: 12px;
+  color: #676879;
+}
+
+/* ── Capa 3 · el muro del segundo factor ──────────────────────────────────────────────────────── */
+/* Ocupa la pantalla entera a propósito: mientras está, de la operación no se ve nada. */
+.mfa-muro {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #f6f7fb;
+  overflow-y: auto;
+}
+.mfa-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  max-width: 420px;
+  padding: 32px;
+  text-align: center;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+}
+.mfa-icono {
+  font-size: 34px;
+  color: var(--yellow);
+}
+.mfa-titulo {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text-dark);
+}
+.mfa-texto {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #676879;
+}
+/* El QR con fondo blanco y borde: sobre un panel claro, sin borde se pierde. */
+.mfa-qr {
+  width: 190px;
+  height: 190px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.mfa-secreto {
+  margin: 0;
+  font-size: 12px;
+  color: #676879;
+}
+.mfa-secreto code {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--text-dark);
+}
+.mfa-form {
+  transition: opacity 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+}
+/* Ancho y espaciado: son seis dígitos que se copian mirando el teléfono. */
+.mfa-input {
+  width: 100%;
+  padding: 12px;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 6px;
+  text-align: center;
+  color: var(--text-dark);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.mfa-input:focus {
+  outline: none;
+  border-color: var(--primary-blue);
+}
+.mfa-confiar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dark);
+  cursor: pointer;
+}
+.mfa-boton {
+  width: 100%;
+  padding: 12px;
+}
+.mfa-boton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* Los códigos de rescate se copian a mano: monoespaciado y bien separados. */
+.mfa-rescate {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 16px;
+  list-style: none;
+  background: #f6f7fb;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--text-dark);
+}
+/* La altura está RESERVADA desde el arranque: el mensaje más largo ocupa dos líneas a este ancho,
+   así que el hueco mide dos líneas aunque esté vacío. Si el espacio apareciera recién con el error,
+   el panel crecería de golpe y todo lo de arriba saltaría justo cuando se está mirando el campo. */
+.mfa-error {
+  min-height: 2.8em;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #b42318;
+}
+/* `visibility` y NO `display: none`: la diferencia es justamente que esto sigue ocupando su lugar. */
+.mfa-error--vacio {
+  visibility: hidden;
+}
+/* Validando: el formulario se ATENÚA y se bloquea, no se reemplaza. Cambiarlo por una animación
+   borraría de la vista lo que la persona acaba de escribir; atenuarlo dice "sigue acá, esperá". */
+.mfa-form--enviando {
+  opacity: 0.55;
+  pointer-events: none;
+}
+/* Rechazo: el campo se marca y se sacude. El movimiento se entiende antes de leer el mensaje. */
+.mfa-input--error {
+  border-color: #b42318;
+  background: #fff7f8;
+}
+.mfa-input--sacudir {
+  animation: mfa-sacudir 0.32s ease;
+}
+@keyframes mfa-sacudir {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-7px);
+  }
+  40% {
+    transform: translateX(6px);
+  }
+  60% {
+    transform: translateX(-4px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+
+/* ── Carga de las pantallas de autenticación ──────────────────────────────────────────────────── */
+/* Sin caja y sin fondo: la animación va SOBRE la app, no adentro de una ventana. Ver `Cargando`. */
+.cargando-pantalla {
+  position: fixed;
+  inset: 0;
+  z-index: 65;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  pointer-events: none;
+}
+.cargando-pantalla i {
+  font-size: 30px;
+  color: var(--primary-blue);
+}
+.cargando-pantalla span {
+  font-size: 14px;
+  font-weight: 600;
+  color: #676879;
+}
+
+/* Quien pidió menos movimiento igual tiene el borde rojo y el mensaje: la información no depende
+   de la animación. */
+@media (prefers-reduced-motion: reduce) {
+  .mfa-input--sacudir {
+    animation: none;
+  }
+  .cargando-pantalla i {
+    animation-duration: 2s;
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "allowImportingTsExtensions": false,
+    "noEmit": false,
+    "outDir": "node_modules/.cache/api-build",
+    "sourceMap": false
+  },
+  "include": ["api"]
+}

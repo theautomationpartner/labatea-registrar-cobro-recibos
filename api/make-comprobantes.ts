@@ -18,11 +18,20 @@
  * web—. Escrita con la firma web, la primera línea que tocaba `req.headers.get(...)` reventaba con
  * un TypeError y Vercel devolvía `FUNCTION_INVOCATION_FAILED` antes de llegar a Make.
  *
- * Los proxies de Monday sí usan la firma web porque declaran `runtime: 'edge'`, donde ESA es la
- * correcta. Acá el edge no sirve: corta la respuesta mucho antes de lo que tarda el módulo de IA en
- * leer un documento, y por eso esta función se quedó en Node con su `maxDuration`.
+ * Los proxies de Monday corren en Node por la misma razón que ésta —`jsonwebtoken` necesita
+ * `crypto` y `Buffer`—, así que hoy las tres funciones comparten la firma `(req, res)`. Acá el edge
+ * además nunca sirvió: corta la respuesta mucho antes de lo que tarda el módulo de IA en leer un
+ * documento, y por eso esta función tiene su `maxDuration`.
+ *
+ * ── El portero de esta puerta (Capas 2 y 3) ──
+ * Antes de reenviar nada se verifica la firma del session token del usuario, su alta en la lista
+ * blanca y su segundo factor (`_guard.ts`). Acá no hay un token de Monday que proteger, pero sí una
+ * llave igual de cara: cada disparo del escenario consume operaciones de la cuenta de Make, y una
+ * ruta abierta es una factura ajena esperando que alguien la encuentre.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { autorizarPedido, respuestaDeError } from './_guard.js'
+import { deviceTokenDe } from './_http.js'
 
 /*
  * 60 s es el techo del plan Hobby. En Pro se puede subir hasta 300 s, más cerca del tope que espera
@@ -36,6 +45,16 @@ type Pedido = IncomingMessage & { body?: unknown }
 export default async function handler(req: Pedido, res: ServerResponse): Promise<void> {
   if (req.method !== 'POST') {
     return responder(res, 405, { error: 'Method Not Allowed' })
+  }
+
+  try {
+    await autorizarPedido(req.headers.authorization, deviceTokenDe(req))
+  } catch (e) {
+    /* Un rechazo del guardián se responde igual que en los otros endpoints: status genérico y el
+       `codigo` como única pista, que es lo que le permite a la pantalla distinguir "no estás
+       habilitado" de "tu sesión no vale" de "falta el segundo factor". */
+    const { status, cuerpo } = respuestaDeError(e)
+    return responder(res, status, cuerpo)
   }
 
   const webhook = process.env.MAKE_WEBHOOK_COMPROBANTES?.trim()
@@ -80,16 +99,21 @@ export default async function handler(req: Pedido, res: ServerResponse): Promise
  * consumir un stream vacío devolvería un cuerpo de cero bytes y Make recibiría un multipart sin
  * partes, que es más difícil de diagnosticar que un error.
  *
- * Devuelve un `Uint8Array` —del que `Buffer` es una especialización— porque es lo que acepta el
- * `body` de `fetch` sin pedirle al tipado que confíe en nadie.
+ * Devuelve un `ArrayBuffer` porque es lo único que `fetch` declara como cuerpo binario: un
+ * `Buffer` de Node no entra en ese tipo aunque en tiempo de ejecución funcione igual.
  */
-async function leerCuerpo(req: Pedido): Promise<Uint8Array> {
-  if (Buffer.isBuffer(req.body)) return req.body
-  if (typeof req.body === 'string') return Buffer.from(req.body)
+async function leerCuerpo(req: Pedido): Promise<ArrayBuffer> {
+  if (Buffer.isBuffer(req.body)) return bytes(req.body)
+  if (typeof req.body === 'string') return bytes(Buffer.from(req.body))
 
   const partes: Buffer[] = []
   for await (const trozo of req) partes.push(Buffer.from(trozo))
-  return Buffer.concat(partes)
+  return bytes(Buffer.concat(partes))
+}
+
+/** La ventana exacta del Buffer: un Buffer puede ser una vista parcial de un ArrayBuffer mayor. */
+function bytes(b: Buffer): ArrayBuffer {
+  return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer
 }
 
 function responder(res: ServerResponse, status: number, data: unknown): void {

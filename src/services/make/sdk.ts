@@ -12,6 +12,8 @@
  * meterlos en un JSON obligaría a pasarlos por base64, que los infla un tercio y obliga a Make a
  * reconstruirlos antes de leerlos.
  */
+import { cabecerasPropias, verificarRespuesta } from '@/services/monday/sdk'
+
 const ENDPOINT = import.meta.env.DEV ? '/make-comprobantes' : '/api/make-comprobantes'
 
 /**
@@ -179,7 +181,25 @@ async function unIntento(form: FormData, signal?: AbortSignal): Promise<Respuest
   signal?.addEventListener('abort', cancelar)
 
   try {
-    const res = await fetch(ENDPOINT, { method: 'POST', body: form, signal: ctrl.signal })
+    const res = await fetch(ENDPOINT, {
+      method: 'POST',
+      /* El `Content-Type` sigue armándolo el navegador; esto agrega la credencial del usuario y su
+         dispositivo confiable, que es lo que el guardián de `/api/make-comprobantes` verifica.
+         Sólo en producción: en desarrollo el destino es el proxy de Vite, que reenvía las cabeceras
+         al webhook, y mandarle el token personal de Monday a Make sería regalarlo por nada. */
+      headers: import.meta.env.DEV ? undefined : await cabecerasPropias(),
+      body: form,
+      signal: ctrl.signal,
+    })
+
+    /* Un rechazo de las capas de seguridad se traduce ANTES de leer el cuerpo: `verificarRespuesta`
+       lo consume, publica el aviso que tapa la app y lanza. Va primero porque no es un fallo del
+       escenario —reintentar no lo arregla— y la rama de abajo lo trataría como un 4xx cualquiera,
+       con un mensaje que manda a la persona a insistir contra una puerta cerrada. */
+    if (res.status === 401 || res.status === 403) {
+      await verificarRespuesta(res, 'Lectura de comprobantes')
+    }
+
     const texto = await res.text()
     if (!res.ok) {
       /* 410 es el caso típico y merece su propio mensaje: el escenario existe pero no está

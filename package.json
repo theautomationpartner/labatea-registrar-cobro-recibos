@@ -8,19 +8,34 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "typecheck:api": "tsc -p tsconfig.api.json --noEmit",
+    "test:portero": "esbuild tests/portero-referer.test.ts --bundle --platform=node --format=esm --packages=external --tsconfig=tsconfig.json --outfile=node_modules/.cache/portero.test.mjs && node node_modules/.cache/portero.test.mjs",
+    "test:guard": "esbuild tests/guard-sesion.test.ts --bundle --platform=node --format=esm --packages=external --tsconfig=tsconfig.json --outfile=node_modules/.cache/guard.test.mjs && node node_modules/.cache/guard.test.mjs",
+    "test:whitelist": "esbuild tests/lista-blanca.test.ts --bundle --platform=node --format=esm --packages=external --tsconfig=tsconfig.json --outfile=node_modules/.cache/whitelist.test.mjs && node node_modules/.cache/whitelist.test.mjs",
+    "test:mfa": "esbuild tests/mfa.test.ts --bundle --platform=node --format=esm --packages=external --tsconfig=tsconfig.json --outfile=node_modules/.cache/mfa.test.mjs && node node_modules/.cache/mfa.test.mjs",
+    "test:seguridad": "npm run test:portero && npm run test:guard && npm run test:whitelist && npm run test:mfa"
   },
   "dependencies": {
+    "jsonwebtoken": "^9.0.3",
+    "monday-sdk-js": "^1.0.0-beta",
+    "otplib": "^13.5.0",
+    "pg": "^8.23.0",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.14.0",
+    "@types/pg": "^8.23.1",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "esbuild": "^0.21.5"
   },
   "allowScripts": {
     "esbuild@0.21.5": true

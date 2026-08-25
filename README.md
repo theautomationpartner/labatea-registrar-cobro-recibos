@@ -42,12 +42,33 @@ Sólo un administrador puede registrar el cobro **a nombre de otro usuario**; pa
 selector queda bloqueado en su propio usuario. Las reglas están en
 [src/lib/permisos.ts](src/lib/permisos.ts), puras y sin React.
 
+En producción, quién es el usuario NO sale de `me` sino de `/api/usuario`, que lo lee del session
+token ya verificado: `me` viaja por el proxy y ése inyecta el token del servidor, así que contestaba
+quién es el dueño de ese token y no quién abrió la app.
+
+## Seguridad
+
+Tres capas, documentadas en **[SEGURIDAD.md](SEGURIDAD.md)** (incluye la lista completa de variables
+de entorno y los pasos manuales en Vercel y en Monday):
+
+1. **El portero** — CSP `frame-ancestors` y validación del `Referer` en el borde: la app sólo
+   funciona embebida en monday.com.
+2. **Firma + lista blanca** — el session token de Monday verificado con `jwt.verify`, más el alta
+   explícita en un tablero privado.
+3. **Segundo factor (TOTP)** — Google Authenticator, con la base Neon compartida con
+   `../operaciones-de-venta`: quien ya se enroló allá no vuelve a enrolarse acá.
+
+Ninguna de las tres existe en `npm run dev`: en localhost no hay funciones serverless ni iframe.
+Por eso los tests de seguridad no son opcionales.
+
 ## Desarrollo
 
 ```bash
 npm install
 cp .env.local.example .env.local   # opcional: pegar un token de Monday
 npm run dev                        # http://localhost:5181
-npm run typecheck
+npm run typecheck                  # frontend + middleware.ts
+npm run typecheck:api              # funciones serverless de /api
+npm run test:seguridad             # las tres capas
 npm run build
 ```

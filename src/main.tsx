@@ -13,6 +13,7 @@ import '@/styles/anticipos.css'
 import '@/styles/pases.css'
 import '@/styles/recibo.css'
 import '@/styles/envio.css'
+import '@/styles/seguridad.css'
 
 const container = document.getElementById('root')
 if (!container) throw new Error('No se encontró el nodo #root')
