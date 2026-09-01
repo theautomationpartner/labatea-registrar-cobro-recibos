@@ -1,6 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Donut } from '@/components/ui/Donut'
-import { colorCancelacion, type Imputaciones } from '@/lib/cobros'
+import {
+  colorCancelacion,
+  ROTULOS_COBRO,
+  type Imputaciones,
+  type RotulosImputacion,
+} from '@/lib/cobros'
 import { desdeIso, diasDeMora } from '@/lib/dates'
 import { money } from '@/lib/format'
 import { useDispatch } from '@/state/hooks'
@@ -10,6 +15,27 @@ import { PanelImputacion } from './PanelImputacion'
 interface TablaFacturasProps {
   facturas: readonly FacturaPendiente[]
   imputaciones: Imputaciones
+  /**
+   * Cómo se nombra la operación. Por defecto la COBRANZA; el módulo de PAGOS pasa los suyos. Sólo
+   * cambian TEXTOS: el DOM, las animaciones y su contabilidad son exactamente los mismos.
+   */
+  rotulos?: RotulosImputacion
+  /**
+   * Qué hacer al marcar/desmarcar una fila y al editar su importe. Por defecto, las acciones del
+   * COBRO. El módulo de PAGOS pasa las suyas, que operan sobre su propio estado: los dos circuitos
+   * no comparten una sola clave, así que tampoco pueden compartir el dispatch.
+   */
+  onToggle?: (factura: FacturaPendiente) => void
+  onImporte?: (id: string, importe: number) => void
+  /**
+   * Por qué esta fila NO se puede elegir, o `null` si se puede. Sin la prop, todas se pueden: es el
+   * caso de COBROS, donde la consulta ya garantiza que todo lo que llega es imputable.
+   *
+   * Existe para lo que un filtro escondía: un comprobante al que el tablero no le cargó su importe
+   * llega con saldo cero y no se le puede imputar nada, pero SÍ tiene que verse —si no, la pantalla
+   * afirma que no existe—. El texto que devuelve se muestra en la fila y explica qué le falta.
+   */
+  bloqueada?: (factura: FacturaPendiente) => string | null
 }
 
 /**
@@ -57,8 +83,21 @@ function Mora({ vencimiento }: { vencimiento: string }) {
  * Las filas llegan ordenadas por vencimiento, de la más vieja a la más nueva (ver el servicio de
  * facturas): la tabla las dibuja en el orden en que las recibe.
  */
-export function TablaFacturas({ facturas, imputaciones }: TablaFacturasProps) {
+export function TablaFacturas({
+  facturas,
+  imputaciones,
+  rotulos = ROTULOS_COBRO,
+  onToggle,
+  onImporte,
+  bloqueada,
+}: TablaFacturasProps) {
   const dispatch = useDispatch()
+  /* Las acciones del COBRO son el caso por defecto: es el circuito para el que se escribió la
+     tabla, y dejarlas acá evita que sus tres usos tengan que pasarlas una por una. */
+  const alternar = onToggle ?? ((f: FacturaPendiente) => dispatch({ type: 'toggleFactura', factura: f }))
+  const cambiarImporte =
+    onImporte ??
+    ((id: string, importe: number) => dispatch({ type: 'setImporteFactura', id, importe }))
   /* Facturas que se están PLEGANDO: ya no están imputadas, pero su panel sigue montado —con el
      último importe que tuvieron— hasta que termina la animación de salida. Sin esto, desmarcar
      desmonta la fila en el acto y el panel desaparece de un corte. */
@@ -131,8 +170,11 @@ export function TablaFacturas({ facturas, imputaciones }: TablaFacturasProps) {
 
     return () => timers.forEach(clearTimeout)
   }, [imputaciones])
-  const elegidas = facturas.filter((f) => f.id in imputaciones).length
-  const todas = facturas.length > 0 && elegidas === facturas.length
+  /* Las bloqueadas no cuentan para "todas seleccionadas": no se pueden elegir, así que exigirlas
+     dejaría la casilla del encabezado apagada para siempre. */
+  const seleccionables = bloqueada ? facturas.filter((f) => !bloqueada(f)) : facturas
+  const elegidas = seleccionables.filter((f) => f.id in imputaciones).length
+  const todas = seleccionables.length > 0 && elegidas === seleccionables.length
   const algunas = elegidas > 0 && !todas
   const refTodas = useRef<HTMLInputElement>(null)
 
@@ -144,9 +186,9 @@ export function TablaFacturas({ facturas, imputaciones }: TablaFacturasProps) {
 
   /** Marca o desmarca TODAS: si ya estaban todas, la casilla del encabezado las libera. */
   const alternarTodas = () => {
-    for (const f of facturas) {
+    for (const f of seleccionables) {
       const elegida = f.id in imputaciones
-      if (todas === elegida) dispatch({ type: 'toggleFactura', factura: f })
+      if (todas === elegida) alternar(f)
     }
   }
 
@@ -163,21 +205,25 @@ export function TablaFacturas({ facturas, imputaciones }: TablaFacturasProps) {
                 type="checkbox"
                 className="fact-check"
                 checked={todas}
+                disabled={seleccionables.length === 0}
                 onChange={alternarTodas}
-                aria-label="Seleccionar todas las facturas"
+                aria-label={rotulos.ariaTodas}
               />
             </th>
-            <th>N° Factura</th>
+            <th>{rotulos.colNro}</th>
             <th className="fact-col-cen">Vencimiento</th>
             <th className="fact-col-cen">Días de Mora</th>
-            <th className="fact-col-cen">Importe Original</th>
-            <th className="fact-col-cen">Saldo Pendiente</th>
-            <th className="fact-col-cen">Pagado %</th>
+            <th className="fact-col-cen">{rotulos.colTotal}</th>
+            <th className="fact-col-cen">{rotulos.colPendiente}</th>
+            <th className="fact-col-cen">{rotulos.colPagado}</th>
             <th>Estado</th>
           </tr>
         </thead>
 
         {facturas.map((f) => {
+          /* Por qué esta fila no se puede tocar. Se resuelve una vez y lo miran los tres lugares
+             que dependen de ella: la casilla, el renglón de aviso y el panel desplegable. */
+          const motivoBloqueo = bloqueada?.(f) ?? null
           const elegida = f.id in imputaciones
           /* Mientras se pliega, el panel sigue mostrando el último importe: animar un campo que se
              vacía justo al cerrarse se vería como un parpadeo. */
@@ -199,16 +245,30 @@ export function TablaFacturas({ facturas, imputaciones }: TablaFacturasProps) {
                     type="checkbox"
                     className="fact-check"
                     checked={elegida}
-                    onChange={() => dispatch({ type: 'toggleFactura', factura: f })}
-                    aria-label={`Incluir la factura ${f.nro} en este cobro`}
+                    disabled={!!motivoBloqueo}
+                    title={motivoBloqueo ?? undefined}
+                    onChange={() => alternar(f)}
+                    aria-label={rotulos.ariaIncluir(f.nro)}
                   />
                 </td>
                 <td>
                   <span className="fact-nro">{f.nro}</span>
-                  {/* Nombre del ítem: el ID de la venta que dejó esta deuda. */}
-                  <span className="fact-venta">
-                    {f.idVenta || <span className="fact-mora-sd">Sin venta vinculada</span>}
-                  </span>
+                  {/* Nombre del ítem: el ID de la venta que dejó esta deuda. En PAGOS no hay
+                      tal cosa —la fila se identifica con un solo dato—, así que el renglón no se
+                      monta en vez de mostrarse vacío. */}
+                  {rotulos.mostrarVinculo && (
+                    <span className="fact-venta">
+                      {f.idVenta || <span className="fact-mora-sd">Sin venta vinculada</span>}
+                    </span>
+                  )}
+                  {/* Qué le falta a la fila para poder usarse. Va en el renglón de abajo del
+                      comprobante —no en un tooltip— porque es el motivo por el que su casilla está
+                      apagada, y un motivo que hay que descubrir pasando el mouse no es un motivo. */}
+                  {motivoBloqueo && (
+                    <span className="fact-venta fact-fila-aviso">
+                      <i className="fas fa-triangle-exclamation" /> {motivoBloqueo}
+                    </span>
+                  )}
                 </td>
                 <td className={`fact-col-cen ${vencida ? 'fact-mora' : ''}`}>
                   {vence || <span className="fact-mora-sd">—</span>}
@@ -254,9 +314,8 @@ export function TablaFacturas({ facturas, imputaciones }: TablaFacturasProps) {
                         <PanelImputacion
                           factura={f}
                           importe={importe}
-                          onImporte={(valor) =>
-                            dispatch({ type: 'setImporteFactura', id: f.id, importe: valor })
-                          }
+                          rotulos={rotulos}
+                          onImporte={(valor) => cambiarImporte(f.id, valor)}
                         />
                       </div>
                     </div>

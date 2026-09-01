@@ -20,9 +20,17 @@ const ETAPA_ANTICIPO: Partial<Record<Paso, string>> = {
   cobro: 'Registrar Anticipo',
 }
 
-/** Etiquetas que PISAN a las de `ETAPA` en un PASE DE SALDO. */
+/**
+ * Etiquetas que PISAN a las de `ETAPA` en un PASE DE SALDO.
+ *
+ * El pase nombra CUENTAS y no personas, y por eso sus tres etapas son las MISMAS se haga entre
+ * cuentas de clientes o entre cuentas de proveedores: lo que se elige en cada una —la cuenta de la
+ * que sale el saldo, el anticipo que lo tiene y la cuenta que lo recibe— es exactamente lo mismo de
+ * los dos lados del mostrador. Con "Cliente Origen" había que decidir el texto según el lado, y eso
+ * era ramificar un rótulo que no dice nada distinto.
+ */
 const ETAPA_PASES: Partial<Record<Paso, string>> = {
-  cliente: 'Seleccionar Cliente Origen',
+  cliente: 'Seleccionar Cuenta Origen',
 }
 
 /** Etiquetas que PISAN a las de `ETAPA` al aplicar un anticipo contra facturas. */
@@ -96,15 +104,16 @@ export const DESCRIPCION: Record<Paso, string> = {
   ventas: 'Elegí las facturas pendientes del cliente e indicá cuánto se cancela de cada una.',
   cobro: 'Registrá el cobro: medio de pago, importe e imputación sobre las ventas seleccionadas.',
   recibo: 'Emití el recibo en Monday y enviáselo al cliente.',
-  anticipoOrigen: 'Elegí el anticipo del cliente cuyo saldo se va a pasar a otra cuenta.',
+  anticipoOrigen: 'Elegí el anticipo de la cuenta origen cuyo saldo se va a pasar a otra cuenta.',
   /* Sin importe a la vista —nadie llegó al paso todavía— se describe el paso, no la operación en
      curso. La versión con el número la arma la vista con `descripcionDestino`. */
   destino: 'Buscá la cuenta que va a recibir el saldo seleccionado en el paso anterior.',
 }
 
-/** Bajadas que PISAN a las de `DESCRIPCION` en un PASE DE SALDO. */
+/** Bajadas que PISAN a las de `DESCRIPCION` en un PASE DE SALDO. Neutras como sus etiquetas: el
+    paso habla de la CUENTA a la que se le debita, sea de un cliente o de un proveedor. */
 const DESCRIPCION_PASES: Partial<Record<Paso, string>> = {
-  cliente: 'Busca el cliente al cual se le debita de la cuenta corriente este movimiento',
+  cliente: 'Busca la cuenta a la cual se le debita de la cuenta corriente este movimiento',
 }
 
 /** Bajadas que PISAN a las de `DESCRIPCION` al aplicar un anticipo contra facturas. */

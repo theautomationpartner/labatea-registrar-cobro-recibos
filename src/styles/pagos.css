@@ -1,0 +1,232 @@
+/*
+ * Estilos PROPIOS del módulo de Pagos. Es un archivo corto a propósito: casi toda la pantalla se
+ * dibuja con las clases de Cobros (`cliente.css`, `facturas.css`, `cobro.css`), porque son los
+ * mismos componentes con otros rótulos. Acá sólo vive lo único que Cobros no tiene: la lista de
+ * cheques en cartera de la que se elige con cuál se paga.
+ */
+
+/* Encabezado de un bloque condicional del formulario (hoy, el de la cartera de cheques). */
+.pago-cond-titulo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--c-text-muted, #6b7280);
+}
+
+/* Estado vacío / de carga / de error de la cartera. Mismo tratamiento que `.fact-vacio`. */
+.pago-cartera-vacio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 14px 16px;
+  border: 1px dashed var(--c-border, #e5e7eb);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--c-text-muted, #6b7280);
+}
+
+/*
+ * La cartera. Es una grilla que se acomoda sola al ancho disponible: con pocos cheques ocupan el
+ * renglón entero y con muchos se reparten en columnas, sin un número de columnas fijo que se rompa
+ * en pantallas chicas.
+ *
+ * Scrollea en su propia caja a partir de cierto alto: la lista puede ser larga, y sin el tope el
+ * importe y el "+ Agregar" quedarían fuera de pantalla justo cuando hacen falta.
+ */
+.pago-cartera {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-bottom: 14px;
+  padding: 2px;
+  border-radius: 10px;
+}
+
+/* Al intentar agregar sin haber elegido ninguno, la lista entera se marca: el error es de la
+   decisión, no de un campo. */
+.pago-cartera--error {
+  outline: 1px solid var(--red, #dc2626);
+  outline-offset: 2px;
+}
+
+/* Cada cheque es una OPCIÓN, no un formulario: se elige entero de un click. */
+.pago-cheque {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--c-border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--c-surface, #fff);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background 0.15s ease;
+}
+
+.pago-cheque:hover {
+  border-color: var(--primary-blue, #2563eb);
+}
+
+/* El elegido: mismo lenguaje visual que una fila de factura seleccionada. */
+.pago-cheque--on {
+  border-color: var(--primary-blue, #2563eb);
+  background: var(--c-primary-soft, #eff6ff);
+  box-shadow: inset 3px 0 0 var(--primary-blue, #2563eb);
+}
+
+.pago-cheque-cab {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pago-cheque-cod {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pago-cheque-imp {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--green, #16a34a);
+}
+
+/* Los datos que identifican al documento, en un renglón por dato. */
+.pago-cheque-det {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--c-text-muted, #6b7280);
+}
+
+/*
+ * Mensaje de error de un BLOQUE (la cartera), no de un campo. Los de campo se posicionan en el
+ * espacio que el propio campo reserva; éste no tiene ese contenedor, así que ocupa su renglón.
+ */
+.cobro-v2 .cobro-in-err--bloque {
+  position: static;
+  display: block;
+  margin: -8px 0 12px;
+}
+
+/*
+ * Motivo por el que una fila de la tabla no se puede elegir. Va en el renglón de abajo del número
+ * de comprobante —el lugar que en COBROS ocupa el ID de la venta vinculada—, así el aviso queda
+ * pegado a la factura que describe y no flotando en otra columna.
+ */
+.facturas-v2 .fact-fila-aviso {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--yellow, #b45309);
+  font-weight: 600;
+}
+
+/* ===== Cartera de cheques (etapa 3) =====
+   La tabla es la de anticipos —mismas clases `ant-*`, habilitadas porque la vista se suma el scope
+   `anticipos-v2`—. Acá viven sólo las dos cosas que esa tabla no tiene. */
+
+/* El bloque ocupa el renglón entero del formulario: su encabezado y su tabla no comparten línea
+   con ningún campo. */
+.cobro-v2 .pago-cartera-bloque {
+  flex: 1 0 100%;
+  width: 100%;
+  min-width: 0;
+}
+/* El encabezado del bloque respira contra la tabla, sin el margen suelto de una card propia. */
+.cobro-v2 .pago-cartera-bloque .cobro-card-desc {
+  margin-bottom: 12px;
+}
+
+/*
+ * Vencimiento PRÓXIMO (o ya pasado). Es un aviso sobre el papel que se está por endosar, así que se
+ * ve en la propia fila y no en un cartel aparte: para eso hay que poder leerlo mientras se elige.
+ */
+.anticipos-v2 .pago-venc--proximo {
+  color: var(--c-danger, #dc2626);
+  font-weight: 700;
+}
+
+/*
+ * Se intentó agregar sin marcar ningún cheque. Se pinta la TABLA entera y no un campo: lo que falta
+ * no es un dato sino la decisión, y no hay un control al que apuntar. Gana por especificidad a
+ * `.ant-row:hover td` para que el rojo no se pierda al pasar el mouse.
+ */
+.anticipos-v2 .ant-row.pago-fila--error td,
+.anticipos-v2 .ant-row.pago-fila--error:hover td {
+  background: var(--c-danger-soft, #fef2f2);
+  border-color: var(--c-danger, #dc2626);
+}
+.anticipos-v2 .ant-row.pago-fila--error .ant-nro {
+  color: var(--c-danger, #dc2626);
+}
+
+/*
+ * Error del formulario que NO pertenece a un campo. Va al final, que es justo antes de la tabla de
+ * cajas registradas: es donde mira el usuario después de apretar "+ Agregar" y ver que no pasó nada.
+ */
+.cobro-v2 .pago-form-error {
+  flex: 1 0 100%;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--c-danger, #dc2626);
+  /* El alto de UN renglón, con o sin texto adentro: es lo que hace que aparecer y desaparecer el
+     mensaje no mueva la tabla de cajas registradas de abajo. Va en `min-height` y no en un alto
+     fijo para que un mensaje que envuelva en dos líneas siga entrando. */
+  min-height: calc(13px * 1.45);
+}
+
+/*
+ * Banco de Origen de una transferencia: 40% del renglón, o sea un 60% más angosto de lo que medía.
+ *
+ * Heredaba el ancho del campo de cuenta del COBRO (`cobro-campo--ctatransf`), que crece hasta
+ * llenar la fila: allá el nombre de la cuenta trae el CBU completo y necesita todo ese espacio.
+ * Acá no: lo que se elige es de qué banco sale la plata, y la lista se lee igual en menos ancho.
+ *
+ * El `flex-grow` vuelve a 0 —era 1— porque sin eso el campo se estira igual y la medida no cambia
+ * nada. La regla empata en especificidad con la que pisa (cinco clases) y gana por venir después:
+ * `pagos.css` se importa detrás de `cobro.css`.
+ */
+.cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.pago-campo--banco-origen {
+  flex: 0 0 40%;
+  max-width: 40%;
+}
+
+/*
+ * Espera del cálculo de la retención, DENTRO del campo de importe. Toma las clases del input para
+ * medir y verse igual —`cobro-in` ya le da alto, borde y relleno—; acá sólo se resuelve cómo se
+ * acomoda su contenido, que es un ícono y un texto en vez de un valor tipeado.
+ *
+ * El texto va más chico que un importe: tiene que entrar en el ancho del campo (186px) sin cortarse.
+ */
+.cobro-v2 .pago-importe-calc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--c-text-secondary, #6b7280);
+  white-space: nowrap;
+  overflow: hidden;
+}

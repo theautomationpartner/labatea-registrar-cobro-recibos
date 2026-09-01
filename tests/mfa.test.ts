@@ -324,4 +324,34 @@ reiniciar()
   process.env.MFA_REQUERIDO = '1'
 }
 
+// ── La base caída no puede tumbar una capa apagada ──────────────────────────────────────────────
+/* El caso real: se despliega la app sin haber conectado todavía la base. `estadoMfa` reventaba con
+   un 500 y el frontend, que ante un estado ilegible muestra el muro —ante la duda se pregunta—,
+   dejaba la app ENTERA inutilizable con la capa apagada. Lo que se fija acá es la asimetría:
+   apagada degrada a inerte, encendida falla cerrada. */
+{
+  reiniciar()
+  const almacenRoto: AlmacenMfa = {
+    ...memoria.almacen,
+    async leerRegistro() {
+      throw new Error('falta DATABASE_URL (o POSTGRES_URL) en el servidor')
+    },
+  }
+  usarAlmacenMfa(almacenRoto)
+
+  process.env.MFA_REQUERIDO = '0'
+  const estado = await estadoMfa(usuario, undefined)
+  assert.equal(estado.exigido, false, 'apagada y sin base: se contesta igual')
+  assert.equal(estado.enrolado, false, 'y el estado inerte no inventa un enrolamiento')
+
+  process.env.MFA_REQUERIDO = '1'
+  let fallo = false
+  try {
+    await estadoMfa(usuario, undefined)
+  } catch {
+    fallo = true
+  }
+  assert.ok(fallo, 'encendida, el fallo se propaga: nadie pasa por una base que no contesta')
+}
+
 console.log('mfa: OK')

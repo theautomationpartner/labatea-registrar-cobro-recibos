@@ -291,3 +291,12 @@
 .card--flush {
   margin-bottom: 0;
 }
+
+/*
+ * El aviso de "no hay a quién enviarle" ocupa el lugar de la lista de contactos, DENTRO de `.selc`.
+ * Ahí su margen superior sobra: el del contenedor ya separó el bloque del rótulo de arriba, y los
+ * dos juntos abrían un hueco del doble.
+ */
+.selc > .envio-sin-contactos {
+  margin-top: 0;
+}

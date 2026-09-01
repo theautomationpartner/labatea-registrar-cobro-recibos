@@ -4,6 +4,7 @@
  * responden todas al mismo criterio.
  */
 import { money, round2 } from '@/lib/format'
+import { descripcionAnticipo } from './recibo'
 import type { AnticipoPendiente, FacturaPendiente } from '@/types'
 
 /** `id de factura → importe a cancelar`. Que la clave exista marca la factura como seleccionada. */
@@ -134,6 +135,92 @@ export function impactoImputacion(
   }
 }
 
+/* ===== Rótulos del paso ===== */
+
+/**
+ * Los textos que cambian entre COBROS y PAGOS, y NADA más.
+ *
+ * El paso 2 de los dos módulos es el mismo trabajo —elegir comprobantes que deben algo e indicar
+ * cuánto se cancela de cada uno—, así que comparte la tabla, el panel desplegable, sus animaciones
+ * y sus reglas. Lo único que se diferencia es cómo se nombra la operación: lo que en una cobranza
+ * "se cancela" y "se cobra", en un pago "se paga".
+ *
+ * Está acá, junto a las reglas de la imputación, y no dentro de un componente: los rótulos los
+ * consumen la tabla, el panel y el pie del paso, y con un solo origen no pueden contradecirse.
+ */
+export interface RotulosImputacion {
+  /** Encabezado de la columna del comprobante. */
+  colNro: string
+  /** Encabezado de la columna del importe original. */
+  colTotal: string
+  /** Encabezado de la columna del saldo que queda. */
+  colPendiente: string
+  /** Encabezado de la columna del anillo de progreso. */
+  colPagado: string
+  /** Rótulo del campo de importe del panel desplegable. */
+  campoImporte: string
+  /** Métrica: qué proporción del saldo cubre lo cargado. */
+  metricaProporcion: string
+  /** Métrica: el importe que se está imputando. */
+  metricaImporte: string
+  /** Métrica: cómo queda el saldo después de imputar. */
+  metricaResultante: string
+  /** Rótulo del anillo del panel. */
+  rotuloAnillo: string
+  /** Atajo que carga el saldo completo. */
+  atajoTotal: string
+  /** Total del pie del paso. */
+  totalPie: string
+  /**
+   * Se muestra el segundo renglón de la columna del comprobante (en COBROS, el ID de la venta que
+   * dejó la deuda). En PAGOS no hay tal cosa: la fila se identifica con un solo dato.
+   */
+  mostrarVinculo: boolean
+  /** Texto accesible de la casilla de cada fila. */
+  ariaIncluir: (nro: string) => string
+  /** Texto accesible de la casilla del encabezado. */
+  ariaTodas: string
+}
+
+/** Los rótulos de una COBRANZA. Son los que rigen si no se pasa ninguno: es el circuito original. */
+export const ROTULOS_COBRO: RotulosImputacion = {
+  colNro: 'N° Factura',
+  colTotal: 'Importe Original',
+  colPendiente: 'Saldo Pendiente',
+  colPagado: 'Pagado %',
+  campoImporte: 'Importe a cancelar $',
+  metricaProporcion: 'Se cancela',
+  metricaImporte: 'Monto a cobrar',
+  metricaResultante: 'Pendiente resultante',
+  rotuloAnillo: 'Pagado / Pendiente',
+  atajoTotal: 'Cancelar el total',
+  totalPie: 'TOTAL A CANCELAR',
+  mostrarVinculo: true,
+  ariaIncluir: (nro) => `Incluir la factura ${nro} en este cobro`,
+  ariaTodas: 'Seleccionar todas las facturas',
+}
+
+/**
+ * Los rótulos de un PAGO a proveedor. Son los MISMOS controles con el vocabulario del egreso: lo
+ * que allá se cancela, acá se paga. Nada más cambia —ni la lógica, ni las animaciones, ni el DOM—.
+ */
+export const ROTULOS_PAGO: RotulosImputacion = {
+  colNro: 'N° Factura',
+  colTotal: 'Importe Original',
+  colPendiente: 'Saldo Pendiente',
+  colPagado: 'Pagado %',
+  campoImporte: 'Importe a Pagar $',
+  metricaProporcion: 'Se paga',
+  metricaImporte: 'Monto a pagar',
+  metricaResultante: 'Pend de pagar resultante',
+  rotuloAnillo: 'Pagado / Pendiente',
+  atajoTotal: 'Pagar el total',
+  totalPie: 'TOTAL A PAGAR',
+  mostrarVinculo: false,
+  ariaIncluir: (nro) => `Incluir la factura ${nro} en este pago`,
+  ariaTodas: 'Seleccionar todas las facturas de compra',
+}
+
 /* ===== Aplicación de anticipos contra facturas ===== */
 
 /** `id de anticipo → importe aplicado`. Que la clave exista marca el anticipo como elegido. */
@@ -181,7 +268,7 @@ export function bloqueoAplicacion(
       titulo: 'Falta el importe a aplicar',
       mensaje:
         'Todos los anticipos seleccionados tienen que tener un importe mayor a $ 0. Completalo o desmarcá el anticipo.',
-      faltantes: sinImporte.map((a) => `Anticipo ${a.recibo || a.nombre}`),
+      faltantes: sinImporte.map((a) => descripcionAnticipo(a.nombre)),
     }
   }
   const excedidos = elegidos.filter((a) => excedeAnticipo(a, aplicaciones[a.id]))
@@ -190,7 +277,7 @@ export function bloqueoAplicacion(
       titulo: 'El importe supera el saldo del anticipo',
       mensaje: 'No se puede aplicar más de lo que el anticipo tiene pendiente de aplicar.',
       faltantes: excedidos.map(
-        (a) => `Anticipo ${a.recibo || a.nombre} · máximo ${money(a.pendiente)}`,
+        (a) => `${descripcionAnticipo(a.nombre)} · máximo ${money(a.pendiente)}`,
       ),
     }
   }

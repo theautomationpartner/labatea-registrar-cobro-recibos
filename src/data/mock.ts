@@ -4,10 +4,13 @@
  */
 import type {
   AnticipoPendiente,
+  ChequeEnCartera,
   Cliente,
   Contacto,
   CuentaPropia,
+  FacturaCompraPendiente,
   FacturaPendiente,
+  Proveedor,
   SaldosCliente,
   Usuario,
 } from '@/types'
@@ -36,6 +39,7 @@ export const CLIENTES: Cliente[] = [
     list: 'L1',
     ret: 'IVA',
     agenteRetencion: false,
+    categorias: ['Clientes'],
     condicionPago: 'CUENTA CORRIENTE',
     aceptaCheques: true,
     limit: 4_500_000,
@@ -57,6 +61,7 @@ export const CLIENTES: Cliente[] = [
     list: 'L2',
     ret: 'IIBB',
     agenteRetencion: true,
+    categorias: ['Clientes'],
     condicionPago: 'CONTADO',
     // No recibimos cheques de este cliente: el medio queda inhabilitado en el cobro.
     aceptaCheques: false,
@@ -79,6 +84,7 @@ export const CLIENTES: Cliente[] = [
     list: 'L3',
     ret: 'Ninguna',
     agenteRetencion: false,
+    categorias: ['Clientes'],
     condicionPago: 'CUENTA CORRIENTE',
     aceptaCheques: true,
     limit: 500_000,
@@ -101,6 +107,7 @@ export const CLIENTES: Cliente[] = [
     list: null,
     ret: 'Ninguna',
     agenteRetencion: false,
+    categorias: ['Clientes'],
     condicionPago: null,
     aceptaCheques: true,
     limit: 900_000,
@@ -122,6 +129,7 @@ export const CLIENTES: Cliente[] = [
     list: 'L4',
     ret: 'Ninguna',
     agenteRetencion: false,
+    categorias: ['Clientes'],
     condicionPago: 'CUENTA CORRIENTE',
     aceptaCheques: true,
     limit: 1_000_000,
@@ -268,7 +276,6 @@ export const ANTICIPOS_PENDIENTES: AnticipoPendiente[] = [
   {
     id: 'a-1',
     nombre: 'Anticipo - REC1001',
-    recibo: 'REC1001',
     fecha: '2026-09-01',
     importe: 2500,
     pendiente: 2500,
@@ -277,7 +284,6 @@ export const ANTICIPOS_PENDIENTES: AnticipoPendiente[] = [
   {
     id: 'a-2',
     nombre: 'Anticipo - REC1002',
-    recibo: 'REC1002',
     fecha: '2026-09-05',
     importe: 1800,
     pendiente: 1800,
@@ -286,7 +292,6 @@ export const ANTICIPOS_PENDIENTES: AnticipoPendiente[] = [
   {
     id: 'a-3',
     nombre: 'Anticipo - REC1004',
-    recibo: 'REC1004',
     fecha: '2026-08-20',
     importe: 5000,
     // Ya se aplicaron $ 1.800: lo que queda es lo único imputable.
@@ -305,3 +310,233 @@ export const SALDOS_CLIENTE: SaldosCliente = {
   anticipos: 8000,
 }
 
+
+/* ===== MÓDULO DE PAGOS ===== */
+
+/**
+ * Proveedores de prueba. Cubren los DOS casos que la etapa 1 tiene que saber resolver: el que opera
+ * en cuenta corriente CON su cuenta asignada —el único con el que se puede cancelar una factura de
+ * compra— y el que opera en cuenta corriente SIN ella, que es el que dispara el bloqueo.
+ *
+ * El tercero opera al contado: sirve para ver que la restricción de negocio lo deja afuera igual,
+ * aunque tenga cuenta.
+ */
+export const PROVEEDORES: Proveedor[] = [
+  {
+    id: 'p-1',
+    codigo: '1098',
+    name: 'Anbinder Aldo N.',
+    cuit: '20-12345678-9',
+    ptype: 'Persona Física',
+    status: 'Responsable Inscripto',
+    list: null,
+    ret: 'Ninguna',
+    agenteRetencion: false,
+    categorias: ['Proveedores'],
+    condicionPago: 'CUENTA CORRIENTE',
+    aceptaCheques: true,
+    limit: 0,
+    saldoCtaCte: 1_480_000,
+    lineaUtilizada: 1_480_000,
+    remitosPendFacturar: 0,
+    disponible: 0,
+    addr: 'Ruta 8 km 122, Pergamino',
+    activity: 'Activo',
+    situation: 'Liberado sin crédito',
+    tieneCtaCte: true,
+  },
+  {
+    id: 'p-2',
+    codigo: '1491',
+    name: 'Domingo Gonzalez y Cia S.A.',
+    cuit: '30-58884422-7',
+    ptype: 'Persona Jurídica',
+    status: 'Responsable Inscripto',
+    list: null,
+    ret: 'Ninguna',
+    agenteRetencion: false,
+    categorias: ['Proveedores'],
+    condicionPago: 'CUENTA CORRIENTE',
+    aceptaCheques: true,
+    limit: 0,
+    saldoCtaCte: 0,
+    lineaUtilizada: 0,
+    remitosPendFacturar: 0,
+    disponible: 0,
+    addr: 'Av. Mitre 2200, Rosario',
+    activity: 'Activo',
+    situation: 'Liberado sin crédito',
+    /* Sin cuenta corriente conectada: opera en cuenta corriente pero el sistema no tiene dónde
+       imputarle el movimiento, así que la etapa 1 lo frena. */
+    tieneCtaCte: false,
+  },
+  {
+    id: 'p-3',
+    codigo: '1492',
+    name: 'Saplda S.R.L.',
+    cuit: '30-71119988-4',
+    ptype: 'Persona Jurídica',
+    status: 'Responsable Inscripto',
+    list: null,
+    ret: 'Ninguna',
+    agenteRetencion: false,
+    categorias: ['Proveedores'],
+    condicionPago: 'PROVEED CONTADO',
+    aceptaCheques: true,
+    limit: 0,
+    saldoCtaCte: 0,
+    lineaUtilizada: 0,
+    remitosPendFacturar: 0,
+    disponible: 0,
+    addr: 'Colectora Oeste 4500, San Nicolás',
+    activity: 'Activo',
+    situation: 'Liberado sin crédito',
+    tieneCtaCte: true,
+  },
+]
+
+/**
+ * Facturas de compra pendientes de prueba. Espejo de `FACTURAS_PENDIENTES`: una pagada en parte,
+ * varias enteras por pagar y una sin vencimiento cargado, que es la que muestra "—" en su columna
+ * y en sus días de mora.
+ */
+export const FACTURAS_COMPRA_PENDIENTES: FacturaCompraPendiente[] = [
+  {
+    id: 'fc-1',
+    nro: 'FC-A-0001-00004521',
+    vencimiento: '2026-07-20',
+    total: 843_200.5,
+    totalFactura: 843_200.5,
+    importeNeto: 696_860,
+    pagado: 300_000,
+    pagadoPct: 36,
+    pendiente: 543_200.5,
+    estado: 'Cancelada Parcialmente',
+    parcial: true,
+  },
+  {
+    id: 'fc-2',
+    nro: 'FC-A-0003-00000188',
+    vencimiento: '2026-08-05',
+    total: 291_450,
+    totalFactura: 291_450,
+    importeNeto: 240_868,
+    pagado: 0,
+    pagadoPct: 0,
+    pendiente: 291_450,
+    estado: 'Pend de Pagar 100%',
+    parcial: false,
+  },
+  {
+    id: 'fc-3',
+    nro: 'FC-B-0002-00009017',
+    vencimiento: '2026-09-12',
+    total: 158_900.75,
+    totalFactura: 158_900.75,
+    importeNeto: 131_322,
+    pagado: 0,
+    pagadoPct: 0,
+    pendiente: 158_900.75,
+    estado: 'Pend de Pagar 100%',
+    parcial: false,
+  },
+  {
+    id: 'fc-4',
+    nro: 'FC-A-0001-00004610',
+    vencimiento: '',
+    total: 76_300,
+    totalFactura: 76_300,
+    importeNeto: null,
+    pagado: 0,
+    pagadoPct: 0,
+    pendiente: 76_300,
+    estado: 'Pend de Pagar 100%',
+    parcial: false,
+  },
+]
+
+/**
+ * Cheques de terceros en cartera, de prueba. Todos en estado "Pendiente": el servicio no trae otros,
+ * así que el mock no puede tenerlos sin mentir sobre lo que la pantalla recibe.
+ */
+export const CHEQUES_EN_CARTERA: ChequeEnCartera[] = [
+  {
+    id: 'ch-1',
+    codigo: 'CHEQUE-07',
+    numero: '00123456',
+    importe: 350_000,
+    vencimiento: '2026-09-05',
+    emision: '2026-07-05',
+    banco: 'Banco Galicia',
+    cuitEmisor: '30-70011122-3',
+    tipo: 'Cheque',
+    estado: 'Pendiente',
+  },
+  {
+    id: 'ch-2',
+    codigo: 'CHEQUE-11',
+    numero: '00987654',
+    importe: 543_200.5,
+    vencimiento: '2026-09-28',
+    emision: '2026-07-28',
+    banco: 'Banco Credicoop',
+    cuitEmisor: '27-25488991-0',
+    tipo: 'eCheq',
+    estado: 'Pendiente',
+  },
+  {
+    id: 'ch-3',
+    codigo: 'CHEQUE-14',
+    numero: '00456789',
+    importe: 120_000,
+    vencimiento: '2026-10-15',
+    emision: '2026-08-15',
+    banco: 'Banco Nación',
+    cuitEmisor: '30-58884422-7',
+    tipo: 'Cheque',
+    estado: 'Pendiente',
+  },
+]
+
+/**
+ * Anticipos de prueba con saldo a favor NUESTRO con el proveedor. Cubren los dos casos que la etapa
+ * de aplicación tiene que saber resolver: uno entero sin usar y otro ya aplicado en parte, que es el
+ * que llega con menos saldo del que nació.
+ */
+export const ANTICIPOS_PENDIENTES_PROVEEDOR: AnticipoPendiente[] = [
+  {
+    id: 'apr-1',
+    nombre: 'Anticipo - ANTICIPO-04',
+    fecha: '2026-07-02',
+    importe: 400_000,
+    pendiente: 400_000,
+    comentario: 'Adelanto por compra de insumos',
+  },
+  {
+    id: 'apr-2',
+    nombre: 'Anticipo - ANTICIPO-09',
+    fecha: '2026-08-11',
+    importe: 250_000,
+    pendiente: 150_000,
+    comentario: 'Saldo de una entrega anterior',
+  },
+]
+
+/**
+ * Parámetros de prueba de la retención de Ganancias, los mismos que en producción salen del board
+ * "⚙️Configuracion - Sistema". Con estos números una factura de 843.200 con neto de 696.860 retiene
+ * bastante más que el mínimo, así que el prototipo se puede recorrer entero sin cuenta de Monday.
+ */
+/**
+ * Con qué número nace la retención en el modo local. Es el que sigue al último del tablero real, así
+ * el prototipo escribe una línea con la misma forma que la de producción.
+ */
+export const NRO_RETENCION_MOCK = 'RETENC-005'
+
+export const PARAMETROS_RETENCION_MOCK = {
+  baseNoImponible: 67_170,
+  alicuota: 2,
+  /* El id real de la fila "Config calculo de Retencion a Imp Ganancias" del tablero: así el modo
+     local arma exactamente el mismo subelemento que el modo con token. */
+  itemId: '12912259087',
+}

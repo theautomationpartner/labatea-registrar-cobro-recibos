@@ -1184,6 +1184,23 @@
   border-color: var(--c-primary);
   box-shadow: 0 0 0 2px rgba(0, 115, 234, 0.15);
 }
+/* Importe que fija el sistema (cheque, retención): el campo se mantiene para que la columna se lea
+   igual en todas las filas, apagado y sin el realce del foco, que prometería una edición que no hay. */
+.cobro-v2 .cobro-imp-edit--fijo {
+  background: #f4f5f8;
+  border-color: #e6e9ef;
+}
+.cobro-v2 .cobro-imp-edit--fijo:focus-within {
+  border-color: #e6e9ef;
+  box-shadow: none;
+}
+.cobro-v2 .cobro-imp-edit--fijo .cobro-imp-pre,
+.cobro-v2 .cobro-imp-edit--fijo input {
+  color: var(--c-text-secondary);
+}
+.cobro-v2 .cobro-imp-edit--fijo input {
+  cursor: not-allowed;
+}
 .cobro-v2 .cobro-imp-pre {
   color: var(--c-text-secondary);
   font-weight: 600;

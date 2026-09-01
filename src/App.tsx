@@ -35,7 +35,7 @@ const VISTAS: Record<Paso, () => JSX.Element | null> = {
 }
 
 export function App() {
-  const { operacionApp, paso, tipoOperacion } = useApp()
+  const { operacionApp, paso, pasoPago, tipoOperacion } = useApp()
   const dispatch = useDispatch()
   const scrollRef = useRef<HTMLDivElement>(null)
   const { error: errorSeguridad, visible: avisoVisible } = useErrorSeguridad()
@@ -142,8 +142,8 @@ export function App() {
   /* Ruteo en DOS niveles, y en este orden:
 
        1. el MÓDULO. Cobros y Pagos son operaciones independientes —etapas propias, pantallas
-          propias—, así que lo primero que se decide es cuál se está operando. Pagos todavía no
-          tiene circuito definido y por eso resuelve en una sola vista.
+          propias—, así que lo primero que se decide es cuál se está operando. Pagos resuelve su
+          propia etapa adentro de `PagosView`, con su recorrido (ver `lib/pasosPago`).
        2. dentro de Cobros, la ETAPA. El paso 3 tiene DOS vistas según lo que se registre: con
           dinero (formas de pago) o aplicando el saldo a favor del cliente. Es la única etapa que
           cambia de pantalla según la operación; el resto del recorrido es el mismo. */
@@ -162,7 +162,7 @@ export function App() {
      pantalla. */
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 })
-  }, [paso, operacionApp])
+  }, [paso, pasoPago, operacionApp])
 
   /* Datos de sesión: se leen UNA sola vez, con el acceso YA confirmado. No dependen del cliente ni
      del cobro, así que no hay motivo para volver a pedirlos al avanzar de paso.

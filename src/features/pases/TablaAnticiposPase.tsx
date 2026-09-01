@@ -35,7 +35,7 @@ function ImporteAPasar({ anticipo, importe }: { anticipo: AnticipoPendiente; imp
         className={`ant-aplicar-in ${excede ? 'ant-aplicar-in--error' : ''}`}
         autoComplete="off"
         placeholder="0,00"
-        aria-label={`Importe a debitar del anticipo ${anticipo.recibo || anticipo.nombre}`}
+        aria-label={`Importe a debitar del anticipo ${anticipo.nombre}`}
         aria-invalid={excede || undefined}
         value={texto}
         onChange={(e) => {
@@ -96,11 +96,11 @@ export function TablaAnticiposPase({ anticipos }: { anticipos: readonly Anticipo
                     className="ant-check"
                     checked={elegido}
                     onChange={() => dispatch({ type: 'toggleAnticipoPase', anticipo: a })}
-                    aria-label={`Pasar el saldo del anticipo ${a.recibo || a.nombre}`}
+                    aria-label={`Pasar el saldo del anticipo ${a.nombre}`}
                   />
                 </td>
                 <td>
-                  <span className="ant-nro">{a.recibo || a.nombre}</span>
+                  <span className="ant-nro">{a.nombre}</span>
                   {a.comentario && <span className="ant-detalle">{a.comentario}</span>}
                 </td>
                 <td className="ant-col-cen">

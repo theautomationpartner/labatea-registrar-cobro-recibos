@@ -18,6 +18,13 @@ interface FiltroFacturasProps {
    * —su lugar es fijo— pero sin poder usarse: filtrar una lista que no llegó no haría nada.
    */
   deshabilitado?: boolean
+  /**
+   * Texto del campo vacío y su etiqueta accesible. Por defecto, los de COBROS. El módulo de PAGOS
+   * los cambia para nombrar la factura de compra; el resto de la barra —los dos botones, sus
+   * tooltips y su comportamiento— es idéntico.
+   */
+  placeholder?: string
+  aria?: string
 }
 
 /**
@@ -37,6 +44,8 @@ export function FiltroFacturas({
   todasElegidas,
   sinFacturas,
   deshabilitado = false,
+  placeholder = 'Filtrar por número de factura...',
+  aria = 'Filtrar facturas por número',
 }: FiltroFacturasProps) {
   return (
     <div className="fact-filtro">
@@ -45,9 +54,9 @@ export function FiltroFacturas({
         <input
           type="text"
           className="fact-filtro-input"
-          placeholder="Filtrar por número de factura..."
+          placeholder={placeholder}
           autoComplete="off"
-          aria-label="Filtrar facturas por número"
+          aria-label={aria}
           disabled={deshabilitado}
           value={valor}
           onChange={(e) => onValor(e.target.value)}

@@ -80,10 +80,24 @@ export interface AnticipoAplicado {
  * Sin número de comprobante: el anticipo ya es el comprobante, y su identificación viaja en el
  * nombre de la forma de pago.
  */
+/**
+ * Cómo se nombra un anticipo aplicado, en el documento y en su línea del tablero.
+ *
+ * Los anticipos ya se llaman "Anticipo - IDPAGO-009" en su propio tablero, así que anteponerle la
+ * palabra otra vez daba "Anticipo Anticipo - IDPAGO-009". El prefijo se agrega SÓLO si el nombre no
+ * lo trae: hace falta para los que se llaman de cualquier otra forma, donde sin él el renglón no
+ * diría de qué se trata.
+ */
+export const descripcionAnticipo = (nombre?: string): string => {
+  const texto = nombre?.trim()
+  if (!texto) return 'Anticipo'
+  return /^anticipo\b/i.test(texto) ? texto : `Anticipo ${texto}`
+}
+
 export const pagosDeAnticipos = (aplicados: readonly AnticipoAplicado[]): PagoRecibido[] =>
   aplicados.map((a) => ({
     id: a.id,
-    descripcion: a.nro ? `Anticipo ${a.nro}` : 'Anticipo',
+    descripcion: descripcionAnticipo(a.nro),
     comprobante: '',
     entregado: round2(a.importe),
   }))

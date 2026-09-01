@@ -77,6 +77,19 @@ function situacionDe(indice: number | null | undefined): SituacionCliente {
 
 const columnasCliente = Object.values(COL.cliente)
 
+/**
+ * Etiquetas de "✋Categoria" de la persona. La columna es multi-valor y Monday devuelve su texto
+ * como una lista separada por comas ("Clientes, Proveedores"), así que se parte y se limpia.
+ *
+ * De acá sale para qué operación sirve la persona (ver `lib/personas`), así que lo lee el mapeo
+ * común y no cada módulo: los dos lados del mostrador miran exactamente la misma columna.
+ */
+export const categoriasDePersona = (item: MondayItem): string[] =>
+  (byId(item)[COL.cliente.categoria]?.text ?? '')
+    .split(',')
+    .map((c) => c.trim())
+    .filter(Boolean)
+
 /** Campos que trae cada persona, con la Cta Cte conectada anidada (de ahí sale el crédito). */
 const CAMPOS_CLIENTE = `
   id name
@@ -102,10 +115,21 @@ const CAMPOS_CLIENTE = `
  * "Clientes" sin que la app deje de encontrar a nadie. Y van en la consulta —no filtrando la
  * respuesta— para que los lugares del resultado los ocupen sólo clientes utilizables.
  */
-const REGLAS_CLIENTE_OPERABLE = [
-  `{column_id: "${COL.cliente.estado}", compare_value: [${CLIENTE_ACTIVO_INDEX}], operator: any_of}`,
-  `{column_id: "${COL.cliente.categoria}", compare_value: [${CATEGORIA_CLIENTE_INDEX}], operator: any_of}`,
-].join(', ')
+export const REGLAS_CLIENTE_OPERABLE = reglasDePersona(CATEGORIA_CLIENTE_INDEX)
+
+/**
+ * Las mismas reglas para CUALQUIER categoría del board de Personas: activa y de la categoría que se
+ * pida. Existe como función porque el módulo de PAGOS busca exactamente igual pero del otro lado
+ * del mostrador —categoría "Proveedores"—, y duplicar la consulta habría sido duplicar también la
+ * regla de "sólo personas activas", que es la que hace que un ítem dado de baja se comporte como
+ * inexistente.
+ */
+export function reglasDePersona(categoriaIndex: number): string {
+  return [
+    `{column_id: "${COL.cliente.estado}", compare_value: [${CLIENTE_ACTIVO_INDEX}], operator: any_of}`,
+    `{column_id: "${COL.cliente.categoria}", compare_value: [${categoriaIndex}], operator: any_of}`,
+  ].join(', ')
+}
 
 /** Tope de coincidencias por columna. Sobra: si una búsqueda trae tantas, hay que afinarla. */
 const TOPE_RESULTADOS = 50
@@ -114,13 +138,18 @@ const TOPE_RESULTADOS = 50
 const literal = (t: string): string => JSON.stringify(t).slice(1, -1)
 
 /** Una consulta con nombre propio: `alias` la identifica en la respuesta. */
-const consultaPersonas = (alias: string, columna: string, valor: string): string => `
+const consultaPersonas = (
+  alias: string,
+  columna: string,
+  valor: string,
+  reglas: string,
+): string => `
   ${alias}: boards(ids: [${BOARDS.personas}]) {
     items_page(
       limit: ${TOPE_RESULTADOS},
       query_params: {rules: [
         {column_id: "${columna}", compare_value: ["${valor}"], operator: contains_text},
-        ${REGLAS_CLIENTE_OPERABLE}
+        ${reglas}
       ]}
     ) {
       items { ${CAMPOS_CLIENTE} }
@@ -133,11 +162,16 @@ type RespuestaPersonas = Record<string, { items_page: { items: MondayItem[] } }[
  * Busca personas por una o más columnas a la vez (una consulta con alias por columna, todas en la
  * misma solicitud). Devuelve los ítems sin repetir, respetando el orden en que se pidieron.
  */
-async function buscarPersonas(porColumna: readonly { columna: string; valor: string }[]) {
+async function buscarPersonas(
+  porColumna: readonly { columna: string; valor: string }[],
+  reglas: string,
+) {
   const usables = porColumna.filter((x) => x.valor.trim() !== '')
   if (usables.length === 0) return []
   const data = await mondayApi<RespuestaPersonas>(
-    `query { ${usables.map((x, i) => consultaPersonas(`q${i}`, x.columna, literal(x.valor))).join('')} }`,
+    `query { ${usables
+      .map((x, i) => consultaPersonas(`q${i}`, x.columna, literal(x.valor), reglas))
+      .join('')} }`,
   )
   const vistos = new Set<string>()
   const items: MondayItem[] = []
@@ -151,7 +185,12 @@ async function buscarPersonas(porColumna: readonly { columna: string; valor: str
   return items
 }
 
-function mapCliente(item: MondayItem): Cliente {
+/**
+ * Una fila del board de Personas → el modelo de la app. Se llama `mapPersona` y no `mapCliente`
+ * porque el board no distingue: la MISMA fila es un cliente o un proveedor según su "✋Categoria",
+ * y el módulo de PAGOS la lee campo por campo igual que éste (ver `services/monday/proveedores`).
+ */
+export function mapPersona(item: MondayItem): Cliente {
   const c = byId(item)
   /* Cta Cte conectada. El crédito se calcula acá a partir de las columnas base, no de las
      fórmulas del board:
@@ -181,6 +220,7 @@ function mapCliente(item: MondayItem): Cliente {
        de entrada, para que el resto del circuito —la ficha, el buscador, la comparación contra el
        emisor de un cheque o de una retención— trabaje siempre con el mismo formato. */
     cuit: formatearCuit(c[COL.cliente.cuit]?.text),
+    categorias: categoriasDePersona(item),
     ptype: c[COL.cliente.tipoPersona]?.text ?? '',
     status: c[COL.cliente.condFiscal]?.text ?? '',
     list: (c[COL.cliente.listaPrecio]?.text as ListaPrecio) || null,
@@ -218,31 +258,59 @@ export async function buscarClientes(termino: string): Promise<Cliente[]> {
   const t = termino.trim()
   if (!t) return []
 
-  if (!mondayHabilitado()) {
-    // Modo local: el mock es chico, así que se filtra en memoria.
-    const activos = CLIENTES.filter((c) => c.activity === 'Activo')
-    if (tipoBusqueda(t) === 'numero') {
-      const digitos = t.replace(/\D/g, '')
-      return activos.filter(
-        (c) => norm(c.codigo).includes(norm(t)) || c.cuit.replace(/\D/g, '').includes(digitos),
-      )
-    }
-    return activos
-      .map((c) => ({ c, s: similitud(t, c.name) }))
-      .filter((x) => x.s >= UMBRAL_SIMILITUD)
-      .sort((a, b) => b.s - a.s)
-      .map((x) => x.c)
-  }
+  // Modo local: el mock es chico, así que se filtra en memoria con el mismo criterio.
+  if (!mondayHabilitado()) return filtrarPersonasEnMemoria(CLIENTES, t)
 
+  return (await buscarPersonasPorTermino(t, REGLAS_CLIENTE_OPERABLE)).map(mapPersona)
+}
+
+/**
+ * Busca en el board de Personas por nombre, código o CUIT, con las reglas que se le pasen (la
+ * categoría y el estado activo). Un término NUMÉRICO se busca a la vez por código y por CUIT; uno
+ * con letras, por nombre.
+ *
+ * Es el buscador entero, sin el mapeo: lo comparten clientes y proveedores, que se buscan con los
+ * mismos criterios sobre el mismo tablero y sólo se diferencian en su categoría.
+ */
+export async function buscarPersonasPorTermino(
+  termino: string,
+  reglas: string,
+): Promise<MondayItem[]> {
+  const t = termino.trim()
+  if (!t) return []
   /* El CUIT se guarda SIN separadores ("30526228746"), así que se busca por sus dígitos: el
      usuario puede escribirlo con guiones o sin ellos y da lo mismo. */
-  const items =
-    tipoBusqueda(t) === 'numero'
-      ? await buscarPersonas([
+  return tipoBusqueda(t) === 'numero'
+    ? buscarPersonas(
+        [
           { columna: COL.cliente.codigo, valor: t },
           { columna: COL.cliente.cuit, valor: t.replace(/\D/g, '') },
-        ])
-      : await buscarPersonas([{ columna: 'name', valor: t }])
+        ],
+        reglas,
+      )
+    : buscarPersonas([{ columna: 'name', valor: t }], reglas)
+}
 
-  return items.map(mapCliente)
+/**
+ * Filtrado en memoria para el modo local (mock): el mismo criterio que resuelve la API con sus
+ * operadores —código o CUIT para un término numérico, nombre parecido para uno con letras—.
+ *
+ * Vive acá y se exporta porque el mock de proveedores se recorre igual: sin esto, el modo local
+ * tendría dos buscadores que se comportan distinto según a quién se busque.
+ */
+export function filtrarPersonasEnMemoria<T extends Cliente>(personas: readonly T[], termino: string): T[] {
+  const t = termino.trim()
+  if (!t) return []
+  const activos = personas.filter((c) => c.activity === 'Activo')
+  if (tipoBusqueda(t) === 'numero') {
+    const digitos = t.replace(/\D/g, '')
+    return activos.filter(
+      (c) => norm(c.codigo).includes(norm(t)) || c.cuit.replace(/\D/g, '').includes(digitos),
+    )
+  }
+  return activos
+    .map((c) => ({ c, s: similitud(t, c.name) }))
+    .filter((x) => x.s >= UMBRAL_SIMILITUD)
+    .sort((a, b) => b.s - a.s)
+    .map((x) => x.c)
 }

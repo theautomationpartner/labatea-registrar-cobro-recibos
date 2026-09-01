@@ -8,8 +8,9 @@
  *
  * Filtros del selector:
  *   · Equipo: sólo miembros de alguno de los equipos operadores.
- *   · Rol: se excluyen Visores (is_view_only) e Invitados (is_guest) y los usuarios desactivados;
- *     quedan los miembros (y admins) activos. El id numérico viaja como valor para asignar el cobro.
+ *   · Rol: se excluyen Visores (is_view_only) y los usuarios desactivados. Los INVITADOS sí entran:
+ *     quién puede operar lo decide la lista blanca de la Capa 2, no un flag de Monday (ver abajo).
+ *     El id numérico viaja como valor para asignar el cobro.
  */
 import { USUARIOS } from '@/data/mock'
 import { EQUIPOS_OPERADORES } from '@/lib/permisos'
@@ -30,7 +31,6 @@ interface MondayUser {
   id: string
   name: string
   enabled?: boolean | null
-  is_guest?: boolean | null
   is_view_only?: boolean | null
   teams?: MondayTeam[] | null
 }
@@ -133,8 +133,8 @@ const iniciales = (nombre: string): string =>
 
 /**
  * Usuarios habilitados a operar: miembros de "Vendedores" o "Administradores", ya filtrados por rol
- * (sin visores ni invitados) y mapeados al `Usuario` que consume la interfaz. Sin token (modo local)
- * devuelve el mock.
+ * (sin visores ni desactivados) y mapeados al `Usuario` que consume la interfaz. Sin token (modo
+ * local) devuelve el mock.
  *
  * Se consulta `users` con SUS equipos (en vez de traer los `teams` con sus usuarios): así quien está
  * en los dos equipos aparece UNA sola vez, sin deduplicar después, y es la misma entidad que
@@ -152,7 +152,6 @@ export async function getUsuarios(): Promise<Usuario[]> {
         id
         name
         enabled
-        is_guest
         is_view_only
         teams { id name }
       }
@@ -163,8 +162,20 @@ export async function getUsuarios(): Promise<Usuario[]> {
   // El filtro por nombre de equipo se resuelve en memoria: la API no filtra usuarios por equipo.
   return (data.users ?? [])
     .filter((u) => enAlgunEquipo(u, EQUIPOS_OPERADORES))
-    // Rol: se excluyen Visores (is_view_only) e Invitados (is_guest); sólo usuarios activos.
-    .filter((u) => !u.is_guest && !u.is_view_only && u.enabled !== false)
+    /* Rol: se excluyen Visores (`is_view_only`) y los usuarios desactivados. Un visor no puede
+       operar nada y un usuario dado de baja no puede ser responsable de un cobro.
+
+       Los INVITADOS (`is_guest`) sí entran, y sacar esa exclusión fue un arreglo, no un descuido.
+       Varias de las personas que operan la app son invitados de la cuenta —Dev TAP y Camila
+       Ferreras, hoy— y quedaban afuera del selector aunque el tablero privado de la lista blanca
+       las habilita explícitamente. El síntoma era que el selector arrancaba VACÍO en vez de
+       preseleccionar al usuario logueado: `usuarioPorDefecto` cruza la sesión contra esta lista, y
+       si la sesión no está en ella, no hay con qué matchear.
+
+       El criterio es el mismo que ya fija la Capa 2: quién puede operar lo decide la lista blanca
+       —una fila que sólo un administrador edita—, no un flag implícito de Monday. Dejar que
+       `is_guest` mande acá anulaba un permiso explícito con uno implícito, y encima en silencio. */
+    .filter((u) => !u.is_view_only && u.enabled !== false)
     .map((u) => ({
       id: String(u.id),
       name: u.name,

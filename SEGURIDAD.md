@@ -172,9 +172,21 @@ Es el mismo que usa operaciones de venta. Tablero **privado**, con cuatro column
 | Estado | `status` | `Activo` habilita; cualquier otra etiqueta (`Inactivo`) deja afuera |
 | ID APP | `dropdown_mm6jamkm` | **los IDs de las apps que esa persona puede usar** |
 
-**Lo único que hay que hacer para esta app:** agregar el **App ID de la app de cobros** como
-etiqueta nueva del dropdown "ID APP", y tildarlo en la fila de cada persona que tenga que entrar
-acá. Estar `Activo` no alcanza: sin el ID declarado, no entra.
+**Lo único que hay que hacer para esta app:** agregar `11865111` —el App ID de la app de cobros—
+como etiqueta del dropdown "ID APP", y tildarlo en la fila de cada persona que tenga que entrar acá.
+Estar `Activo` no alcanza: sin el ID declarado, no entra. **Ya está hecho.**
+
+Los dos ids en juego, verificados contra la API de Monday:
+
+| App de Monday | App ID | Vista |
+| --- | --- | --- |
+| `labatea-alta-de-venta` | `11968092` | operaciones de venta |
+| `labatea-registrar-cobros-pagos-app` | `11865111` | **ésta** (cobros y pagos) |
+
+Ojo con la columna "APP" (`dropdown_mm6jj6ex`), la de las etiquetas legibles *Venta* y
+*Cobros/Pagos*: el guardián **no la lee**. Es documentación para quien administra el tablero, no una
+regla. Quien decide es "ID APP", así que las dos tienen que decir lo mismo o la que mirás no es la
+que manda.
 
 - **Dar de alta:** fila nueva con el nombre, el User ID, el estado en `Activo` **y el ID de esta app
   en "ID APP"**. Entra en menos de 30 s (es lo que dura un "no" en caché).
@@ -184,15 +196,17 @@ acá. Estar `Activo` no alcanza: sin el ID declarado, no entra.
 
 ### 2. App de Monday
 
-monday.com → Developers → **la app que embebe la vista de cobros** → **Basic Information** → copiá
+monday.com → Developers → **`labatea-registrar-cobros-pagos-app`** → **Basic Information** → copiá
 el **Client Secret** (y de paso el Signing Secret, que va como rescate). De la misma pantalla sale
-el **App ID**, que es el que va en la columna "ID APP" del tablero.
+el **App ID** (`11865111`), que es el que va en la columna "ID APP" del tablero.
+
+**No sirve el secreto de `labatea-alta-de-venta`**: son dos apps distintas con dos secretos
+distintos, aunque compartan usuarios, tablero y base.
 
 **Cuál app importa.** El session token lleva su `app_id` adentro: con el secreto de otra app la
 firma no cierra nunca, y el síntoma es un 401 idéntico al de un usuario sin permisos. Ante la duda,
 el log del servidor dice `token inválido (app NNN)` y ese número tiene que ser el App ID del
-Developer Center. **No sirve el secreto de la app de operaciones de venta**: son dos apps distintas
-con dos secretos distintos, aunque compartan usuarios y base.
+Developer Center.
 
 ### 3. Probar en local
 
@@ -209,7 +223,7 @@ Si querés ejercitarlas igual: `vercel dev` con las variables cargadas y un JWT 
 mismo secreto —es lo que hace `test:guard`—:
 
 ```bash
-node -e "console.log(require('jsonwebtoken').sign({dat:{user_id:107870718,account_id:35883216,app_id:'<APP_ID>',is_guest:false}}, process.env.MONDAY_CLIENT_SECRET, {expiresIn:'5m'}))"
+node -e "console.log(require('jsonwebtoken').sign({dat:{user_id:107870718,account_id:35883216,app_id:'11865111',is_guest:false}}, process.env.MONDAY_CLIENT_SECRET, {expiresIn:'5m'}))"
 
 curl -X POST http://localhost:3000/api/monday -H "Authorization: Bearer <el-token>" -H "Content-Type: application/json" -d "{\"query\":\"{ me { id } }\"}"
 ```
@@ -224,7 +238,8 @@ Las capas 1 y 2 prueban de dónde viene el pedido y quién lo firma. Esta prueba
 su teléfono, y es la única que sobrevive a que a alguien le roben la sesión de Monday.
 
 **Estado: completa (backend + muro visual) y APAGADA hasta cargar sus variables.** Con
-`MFA_REQUERIDO` sin encender, el guardián no la exige y la app funciona como hasta ahora.
+`MFA_REQUERIDO` sin encender, el guardián no la exige y la app funciona con las Capas 1 y 2
+solamente — incluso sin `DATABASE_URL` cargada.
 
 ## Piezas
 
@@ -267,6 +282,12 @@ su teléfono, y es la única que sobrevive a que a alguien le roben la sesión d
   respaldo en memoria: la sesión de hoy no se rompe, el usuario tipea el código de nuevo mañana.
 - **Re-enrolarse invalida los dispositivos viejos.** Si alguien vuelve a enrolarse porque perdió el
   teléfono, lo último que se quiere es que el equipo del que lo encontró siga entrando.
+- **Apagada, la capa es inerte de verdad.** `estadoMfa` degrada a "no exigido" si la base no
+  contesta y `MFA_REQUERIDO` está apagado, en vez de devolver un 500. Sin eso, desplegar sin haber
+  conectado todavía la base tumbaba la app ENTERA: el frontend muestra el muro ante un estado que no
+  pudo leer —ante la duda se pregunta— y el muro tampoco podía hablar con el servidor. Encendida, en
+  cambio, el fallo se propaga y nadie pasa: un problema de infraestructura no puede transformarse en
+  un segundo factor salteado. Las dos ramas están fijadas en `npm run test:mfa`.
 - **El segundo factor se exige en el guardián**, junto con la firma y la lista blanca. No hay
   endpoint de datos que no pase por ahí, así que no existe la puerta de atrás de pegarle directo a
   `/api/monday`. Los `/api/mfa/*` y `/api/usuario` son la excepción necesaria: piden firma y lista

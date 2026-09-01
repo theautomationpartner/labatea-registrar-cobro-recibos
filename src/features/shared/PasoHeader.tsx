@@ -2,6 +2,7 @@ import { type ReactNode } from 'react'
 import { Stepper } from '@/components/ui/Stepper'
 import { SelectoresContexto } from '@/features/shared/TopSelectors'
 import { etiquetasDe, indiceDePaso, pasosDe } from '@/lib/pasos'
+import { etiquetasPago, indiceDePasoPago, pasosDePago } from '@/lib/pasosPago'
 import { useApp, useDispatch } from '@/state/hooks'
 
 interface PasoHeaderProps {
@@ -38,11 +39,35 @@ interface PasoHeaderProps {
  * bloqueados. El destino de cada índice sale del recorrido (mismo orden que las etiquetas).
  */
 export function PasoHeader({ actual, pasos = true, children }: PasoHeaderProps) {
-  const { paso, pasoMaxIdx, tipoOperacion } = useApp()
+  const {
+    operacionApp,
+    paso,
+    pasoMaxIdx,
+    pasoPago,
+    pasoPagoMaxIdx,
+    tipoOperacion,
+    tipoOperacionPago,
+  } = useApp()
   const dispatch = useDispatch()
-  const indice = actual ?? indiceDePaso(paso, tipoOperacion)
+
+  /* Qué recorrido dibuja el stepper. Se decide por el MÓDULO y no por el paso: Cobros y Pagos son
+     operaciones independientes, con etapas propias y estado propio, así que cada una navega por su
+     recorrido y por su índice de avance. Mezclarlos dejaría al usuario saltando a pasos ajenos. */
+  const enPagos = operacionApp === 'PAGOS'
+  const etiquetas = enPagos ? etiquetasPago(tipoOperacionPago) : etiquetasDe(tipoOperacion)
+  const indice =
+    actual ??
+    (enPagos
+      ? indiceDePasoPago(pasoPago, tipoOperacionPago)
+      : indiceDePaso(paso, tipoOperacion))
+  const maxAlcanzado = enPagos ? pasoPagoMaxIdx : pasoMaxIdx
 
   const irAPaso = (i: number) => {
+    if (enPagos) {
+      const destinoPago = pasosDePago(tipoOperacionPago)[i]
+      if (destinoPago) dispatch({ type: 'gotoPago', paso: destinoPago })
+      return
+    }
     const destino = pasosDe(tipoOperacion)[i]
     if (destino) dispatch({ type: 'goto', paso: destino })
   }
@@ -57,10 +82,10 @@ export function PasoHeader({ actual, pasos = true, children }: PasoHeaderProps) 
         {pasos && (
           <div className="paso-header-steps">
             <Stepper
-              steps={etiquetasDe(tipoOperacion)}
+              steps={etiquetas}
               current={indice}
               className="stepper--tight"
-              maxReached={pasoMaxIdx}
+              maxReached={maxAlcanzado}
               onStep={irAPaso}
             />
           </div>

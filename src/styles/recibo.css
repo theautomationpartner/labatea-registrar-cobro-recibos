@@ -468,6 +468,23 @@
   font-weight: 700;
   letter-spacing: 0.02em;
 }
+/* El total de la CONSTANCIA de retención. Misma anatomía que los otros dos totales, con la línea
+   superior en el violeta del documento fiscal para separarlo de lo entregado y lo cancelado. */
+.recibo-v2 .rec-total--ret {
+  border-top-color: #6b3fa0;
+}
+/* La leyenda al pie de la constancia. Va apagada y en chico: es una nota legal del documento, no un
+   dato de la operación, y no tiene que competir con el total que la precede. */
+.recibo-v2 .rec-afip {
+  margin: 10px 0 0;
+  padding-top: 8px;
+  border-top: 1px dashed var(--c-border);
+  color: var(--c-text-secondary);
+  font-size: 12px;
+  font-style: italic;
+  text-align: center;
+  letter-spacing: 0.2px;
+}
 .recibo-v2 .rec-total-val {
   font-size: 17px;
   font-weight: 800;

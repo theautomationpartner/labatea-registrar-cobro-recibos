@@ -60,6 +60,21 @@ export function manana(): string {
 }
 
 /**
+ * Días que FALTAN hasta esa fecha, contados por día y nunca por hora. Negativo si ya pasó, 0 si es
+ * hoy. Sin fecha devuelve `null`: no es lo mismo "vence hoy" que "no se sabe cuándo vence".
+ *
+ * Es el reverso de `diasDeMora`, que mira hacia atrás y recorta en cero. Acá el signo importa: la
+ * pregunta es cuánto falta, y un vencimiento pasado tiene que poder decirse como tal.
+ */
+export function diasHasta(iso: string): number | null {
+  const fecha = parseIso(iso)
+  if (!fecha) return null
+  const hoy = new Date()
+  hoy.setHours(0, 0, 0, 0)
+  return Math.floor((fecha.getTime() - hoy.getTime()) / MS_DIA)
+}
+
+/**
  * Días transcurridos desde el vencimiento hasta HOY. Si todavía no venció da 0 —no días
  * negativos: "faltan 5 días" no es mora—. Sin fecha de vencimiento devuelve `null`, que la UI
  * muestra como "—": no es lo mismo no deber días que no saber cuántos.

@@ -51,7 +51,7 @@ export function ReciboView() {
       esAplicacion
         ? anticipos
             .filter((a) => a.id in aplicaciones)
-            .map((a) => ({ id: a.id, nro: a.recibo || a.nombre, importe: aplicaciones[a.id] }))
+            .map((a) => ({ id: a.id, nro: a.nombre, importe: aplicaciones[a.id] }))
         : [],
     [esAplicacion, anticipos, aplicaciones],
   )
@@ -150,7 +150,7 @@ export function ReciboView() {
                 recibo={recibo}
                 fase={fase}
                 estado={estado}
-                anticipo={esAnticipo ? importeAnticipo : null}
+                anticipo={esAnticipo ? { importe: importeAnticipo } : null}
               />
 
               {/* En la vista, el envío es una línea. La clave elige el comprobante del catálogo.

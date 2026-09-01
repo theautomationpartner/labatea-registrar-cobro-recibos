@@ -1,7 +1,99 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { money } from '@/lib/format'
+import { usePlegable } from './usePlegable'
 import { SIN_DATO, type Recibo } from '@/lib/recibo'
 import type { FaseEmision } from '@/types'
+
+/**
+ * Los textos que cambian entre el RECIBO y la ORDEN DE PAGO. La card es la misma —cabecera con sus
+ * tres métricas y el detalle desplegable con las dos tablas—, y lo único que se diferencia es cómo
+ * se nombra el documento y su leyenda.
+ *
+ * Las TRES métricas de la cabecera y los dos totales del pie no están acá: son los mismos números
+ * dichos igual en los dos documentos.
+ */
+export interface RotulosDocumento {
+  /** Nombre del documento en la cabecera de la card. */
+  titulo: string
+  /** Pastilla que lo clasifica ("Documento de cobro" / "Documento de pago"). */
+  badge: string
+  /** Rótulo de la métrica del importe total. */
+  importe: string
+  /** Título de la tabla de lo que el documento cancela. */
+  tablaCancelado: string
+  /**
+   * Leyenda legal arriba de la tabla de pagos. `null` = no se dibuja: una orden de pago no recibe
+   * nada, así que "RECIBIMOS CONFORME…" sería falso.
+   */
+  leyenda: string | null
+  /**
+   * Cómo se muestra la línea del ANTICIPO, que ocupa el lugar de los comprobantes cuando el
+   * documento no cancela facturas. Los dos circuitos la publican distinto en el PDF que emite el
+   * tablero, y la card tiene que decir lo MISMO que el documento que se va a generar.
+   */
+  tablaAnticipo: {
+    /** Título de la tabla. */
+    titulo: string
+    /** Encabezado de la columna que nombra la línea. */
+    columna: string
+    /** Encabezado de la columna del importe. */
+    importe: string
+    /**
+     * Con las dos fechas del anticipo —emisión y vencimiento—, como las lleva la orden de pago
+     * emitida. El recibo no las publica, así que allá la tabla se queda en dos columnas.
+     */
+    conFechas: boolean
+  }
+}
+
+/** Los rótulos del RECIBO. Rigen si no se pasa ninguno: es el circuito original. */
+export const ROTULOS_DOC_RECIBO: RotulosDocumento = {
+  titulo: 'Recibo',
+  badge: 'Documento de cobro',
+  importe: 'Importe del recibo',
+  tablaCancelado: 'Comprobantes',
+  leyenda: 'RECIBIMOS CONFORME EL IMPORTE DETALLADO.',
+  tablaAnticipo: {
+    titulo: 'Anticipo',
+    columna: 'Concepto',
+    importe: 'Importe',
+    conFechas: false,
+  },
+}
+
+/** Los rótulos de la ORDEN DE PAGO: la misma card con el vocabulario del egreso. */
+export const ROTULOS_DOC_OP: RotulosDocumento = {
+  titulo: 'Orden de Pago',
+  badge: 'Documento de pago',
+  importe: 'Importe de la orden',
+  tablaCancelado: 'Facturas Canceladas',
+  /* SIN leyenda: la orden no declara haber recibido nada, declara lo que se entrega. */
+  leyenda: null,
+  /* El MISMO vocabulario que el PDF de la orden: "Entrega de Anticipos", las dos fechas y el
+     importe cancelado. */
+  tablaAnticipo: {
+    titulo: 'Entrega de Anticipos',
+    columna: 'Anticipos',
+    importe: 'Importe Cancelado',
+    conFechas: true,
+  },
+}
+
+/**
+ * La línea del ANTICIPO tal como la publica el documento. El importe es lo único que el recibo
+ * necesita; la orden de pago declara además con qué NOMBRE se escribe la línea en el tablero y sus
+ * dos fechas, que es lo que sale impreso.
+ */
+export interface LineaAnticipo {
+  /** Lo entregado a cuenta. Es el total cancelado del documento. */
+  importe: number
+  /** Cómo se nombra la línea. Por defecto, "Anticipo" a secas. */
+  nombre?: string
+  /** Fecha de emisión, si el documento la declara. */
+  emision?: string
+  /** Vencimiento del anticipo, en dd/mm/aaaa. */
+  vencimiento?: string
+}
 
 interface ReciboAGenerarProps {
   /** Las dos tablas del documento y sus totales, ya armadas por `lib/recibo`. */
@@ -11,24 +103,25 @@ interface ReciboAGenerarProps {
   /** Etiqueta del estado que publica el tablero. Es la que se muestra mientras se emite. */
   estado: string
   /**
-   * Importe del ANTICIPO cuando el recibo es de ese tipo; `null` en un cobro. Ocupa el lugar de la
-   * tabla de comprobantes: un anticipo no cancela facturas, declara dinero a cuenta.
+   * La línea del ANTICIPO cuando el documento es de ese tipo; `null` en un cobro o en un pago
+   * contra facturas. Ocupa el lugar de la tabla de comprobantes: un anticipo no cancela facturas,
+   * declara dinero a cuenta.
    */
-  anticipo?: number | null
+  anticipo?: LineaAnticipo | null
+  /** Cómo se nombra el documento. Por defecto, el RECIBO. */
+  rotulos?: RotulosDocumento
+  /**
+   * Encabezado de la primera columna de la tabla de lo ENTREGADO. Por defecto nombra las cajas, que
+   * es lo que esa tabla lista casi siempre.
+   *
+   * Lo pisa la APLICACIÓN de anticipos: ahí no entró plata por ninguna caja —lo que cubre las
+   * facturas es el saldo a favor que ya estaba—, así que la columna lista anticipos y llamarla
+   * "Forma de pago / Caja" nombraba algo que no está en la tabla.
+   */
+  columnaEntregado?: string
+  /** Cards que se emiten junto con el documento y se dibujan debajo de la suya. */
+  children?: ReactNode
 }
-
-/**
- * Cuánto dura el PLEGADO, en ms. Tiene que coincidir con la animación `rec-plegar` de `recibo.css`:
- * es el tiempo que el cuerpo sigue montado después de cerrarse, para que la salida se vea en vez de
- * desaparecer de un corte.
- *
- * Son los MISMOS tiempos que el despliegue de las facturas pendientes (ver `TablaFacturas`): abrir y
- * cerrar algo tiene que sentirse igual en toda la app.
- */
-const MS_PLEGADO = 200
-
-/** Cuánto dura el DESPLIEGUE. Coincide con `rec-desplegar`. */
-const MS_DESPLIEGUE = 240
 
 /** Métrica de la cabecera: rótulo chico arriba y el dato debajo. */
 function Dato({ rotulo, children, fuerte }: { rotulo: string; children: ReactNode; fuerte?: boolean }) {
@@ -58,49 +151,23 @@ const oDato = (valor: string) => valor || <span className="rec-sd">{SIN_DATO}</s
  * Los dos totales se muestran al pie de SU tabla, cada uno cerrando lo suyo: es lo que hace evidente
  * que lo entregado por el cliente y lo cancelado de sus facturas son el mismo importe.
  */
-export function ReciboAGenerar({ recibo, fase, estado, anticipo = null }: ReciboAGenerarProps) {
-  const [abierta, setAbierta] = useState(true)
-  /* Cuerpo que se está PLEGANDO: ya está cerrado, pero sigue montado hasta que termina la animación
-     de salida. Sin esto, cerrar lo desmonta en el acto y desaparece de un corte. */
-  const [cerrando, setCerrando] = useState(false)
-  /* Cuerpo recién abierto: es el único que se anima. La marca dura lo que dura la animación y se
-     borra sola, así la card no se despliega de nuevo en la cara del usuario cuando el componente se
-     re-renderiza por otro motivo —el estado de la emisión cambia varias veces—.
-
-     Arranca APAGADA aunque la card nazca abierta: al montarse no hay nada que animar. */
-  const [abriendo, setAbriendo] = useState(false)
-  const reloj = useRef<ReturnType<typeof setTimeout>>()
-
-  // Al desmontar (cambio de paso, fin de la operación) no puede quedar un temporizador buscándolo.
-  useEffect(() => () => clearTimeout(reloj.current), [])
-
-  /** Abre o cierra el cuerpo, dejándolo montado el tiempo que dura la animación de salida. */
-  const alternar = () => {
-    // Abrir y cerrar rápido no puede dejar dos animaciones peleándose por el mismo cuerpo.
-    clearTimeout(reloj.current)
-    if (abierta) {
-      setAbierta(false)
-      setAbriendo(false)
-      setCerrando(true)
-      reloj.current = setTimeout(() => setCerrando(false), MS_PLEGADO)
-      return
-    }
-    setCerrando(false)
-    setAbierta(true)
-    setAbriendo(true)
-    reloj.current = setTimeout(() => setAbriendo(false), MS_DESPLIEGUE)
-  }
-
-  /* El cuerpo está en pantalla mientras se lo lee Y mientras se pliega: hasta que la salida termina,
-     la card sigue siendo una card abierta. */
-  const visible = abierta || cerrando
+export function ReciboAGenerar({
+  recibo,
+  fase,
+  estado,
+  anticipo = null,
+  rotulos = ROTULOS_DOC_RECIBO,
+  columnaEntregado = 'Forma de pago / Caja',
+  children,
+}: ReciboAGenerarProps) {
+  const { abierta, abriendo, cerrando, visible, alternar } = usePlegable()
   const { comprobantes, pagos, totalEntregado } = recibo
   const enCurso = fase === 'creando' || fase === 'emitiendo'
   const emitido = fase === 'emitido'
   /* Un anticipo no tiene comprobantes que cancelar: lo que el recibo declara es su importe, y ése
      es su total cancelado. Es la misma línea que se escribe como subelemento en Monday. */
   const esAnticipo = anticipo !== null
-  const totalCancelado = esAnticipo ? anticipo : recibo.totalCancelado
+  const totalCancelado = esAnticipo ? anticipo.importe : recibo.totalCancelado
 
   return (
     <div className="comprobantes">
@@ -118,8 +185,8 @@ export function ReciboAGenerar({ recibo, fase, estado, anticipo = null }: Recibo
           >
             <i className={`fas fa-chevron-down comp-chev ${abierta ? 'open' : ''}`} />
             <span className="comp-tit">
-              Recibo
-              <span className="pbadge">{esAnticipo ? 'Anticipo' : 'Documento de cobro'}</span>
+              {rotulos.titulo}
+              <span className="pbadge">{esAnticipo ? 'Anticipo' : rotulos.badge}</span>
             </span>
           </button>
 
@@ -128,7 +195,7 @@ export function ReciboAGenerar({ recibo, fase, estado, anticipo = null }: Recibo
               {esAnticipo ? 'Anticipo' : comprobantes.length}
             </Dato>
             <Dato rotulo="Formas de pago">{pagos.length}</Dato>
-            <Dato rotulo="Importe del recibo" fuerte>
+            <Dato rotulo={rotulos.importe} fuerte>
               {money(totalCancelado)}
             </Dato>
           </div>
@@ -145,11 +212,11 @@ export function ReciboAGenerar({ recibo, fase, estado, anticipo = null }: Recibo
               className={`comp-ok ${emitido ? 'on' : ''} ${fase === 'error' ? 'comp-ok--err' : ''}`}
               title={
                 fase === 'error'
-                  ? `Error al emitir el recibo${estado ? ` · ${estado}` : ''}`
+                  ? `Error al emitir · ${rotulos.titulo}${estado ? ` · ${estado}` : ''}`
                   : enCurso
-                    ? `Emitiendo el recibo${estado ? ` · ${estado}` : ''}`
+                    ? `Emitiendo · ${rotulos.titulo}${estado ? ` · ${estado}` : ''}`
                     : emitido
-                      ? `Recibo emitido${estado ? ` · ${estado}` : ''}`
+                      ? `${rotulos.titulo} emitido${estado ? ` · ${estado}` : ''}`
                       : 'Pendiente de emisión'
               }
             >
@@ -181,13 +248,15 @@ export function ReciboAGenerar({ recibo, fase, estado, anticipo = null }: Recibo
           >
             <div className="rec-exp-in">
               <div className="comp-body">
-            <p className="rec-leyenda">RECIBIMOS CONFORME EL IMPORTE DETALLADO.</p>
+            {/* Leyenda legal. En una ORDEN DE PAGO no se dibuja: el documento no declara haber
+                recibido nada (ver `ROTULOS_DOC_OP`). */}
+            {rotulos.leyenda && <p className="rec-leyenda">{rotulos.leyenda}</p>}
 
             {/* --- Tabla 1 · las formas de pago con las que el cliente entregó el dinero --- */}
             <table className="comp-table rec-tabla">
               <thead>
                 <tr>
-                  <th>Forma de pago / Caja</th>
+                  <th>{columnaEntregado}</th>
                   <th>Nro de Comprobante</th>
                   <th className="ta-r">Importe Entregado</th>
                 </tr>
@@ -218,20 +287,38 @@ export function ReciboAGenerar({ recibo, fase, estado, anticipo = null }: Recibo
                 En un cobro son las facturas imputadas; en un anticipo, una sola línea con el
                 importe entregado a cuenta —exactamente el subelemento "Anticipo" que se escribe en
                 el tablero—. */}
-            <h4 className="rec-sub">{esAnticipo ? 'Anticipo' : 'Comprobantes'}</h4>
+            <h4 className="rec-sub">
+              {esAnticipo ? rotulos.tablaAnticipo.titulo : rotulos.tablaCancelado}
+            </h4>
             {esAnticipo ? (
               <table className="comp-table rec-tabla">
                 <thead>
                   <tr>
-                    <th>Concepto</th>
-                    <th className="ta-r">Importe</th>
+                    <th>{rotulos.tablaAnticipo.columna}</th>
+                    {/* Las fechas sólo donde el documento las publica: en el recibo la tabla se
+                        queda en dos columnas, como estaba. */}
+                    {rotulos.tablaAnticipo.conFechas && (
+                      <>
+                        <th>Fecha Emisión</th>
+                        <th>Fecha Venc.</th>
+                      </>
+                    )}
+                    <th className="ta-r">{rotulos.tablaAnticipo.importe}</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr>
                     <td>
-                      <span className="rec-comp">Anticipo</span>
+                      {/* El MISMO nombre que lleva el subelemento en el tablero: la card muestra
+                          la línea que se va a escribir, no una etiqueta parecida. */}
+                      <span className="rec-comp">{anticipo.nombre ?? 'Anticipo'}</span>
                     </td>
+                    {rotulos.tablaAnticipo.conFechas && (
+                      <>
+                        <td className="rec-fecha">{oDato(anticipo.emision ?? '')}</td>
+                        <td className="rec-fecha">{oDato(anticipo.vencimiento ?? '')}</td>
+                      </>
+                    )}
                     <td className="ta-r rec-imp">{money(totalCancelado)}</td>
                   </tr>
                 </tbody>
@@ -280,6 +367,11 @@ export function ReciboAGenerar({ recibo, fase, estado, anticipo = null }: Recibo
           </div>
         )}
       </div>
+
+      {/* Otras cards que se generan JUNTO con este documento —hoy, la constancia de retención de la
+          orden de pago—. Van acá adentro para quedar bajo el mismo "Comprobante a generar": son
+          parte de la misma emisión, no una sección aparte. */}
+      {children}
     </div>
   )
 }

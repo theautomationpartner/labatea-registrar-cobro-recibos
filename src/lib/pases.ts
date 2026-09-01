@@ -4,14 +4,16 @@
  */
 import { excedeAnticipo } from '@/lib/cobros'
 import { money, round2 } from '@/lib/format'
+import { ROTULO_ROL, type RolPersona } from '@/lib/personas'
 import type { AnticipoPendiente, CondicionPago } from '@/types'
 
 /**
- * El cliente opera al CONTADO, y por eso no puede participar de un pase —ni de un lado ni del otro—.
+ * La persona opera al CONTADO, y por eso no puede participar de un pase —ni de un lado ni del otro—.
  *
  * Un pase mueve saldo de cuenta corriente: a quien paga al contado no se le lleva una, así que
  * debitarle o acreditarle un saldo dejaría un movimiento sin cuenta donde impactar. La regla vale
- * para las DOS puntas, y por eso vive acá y no adentro de una pantalla.
+ * para las DOS puntas —y para los dos lados del mostrador, clientes o proveedores—, y por eso vive
+ * acá y no adentro de una pantalla.
  *
  * Sin condición de pago cargada NO se frena: la restricción la marca un CONTADO explícito y no la
  * ausencia del dato, igual que el resto de las validaciones de la app.
@@ -19,9 +21,15 @@ import type { AnticipoPendiente, CondicionPago } from '@/types'
 export const esContado = (condicion: CondicionPago | null | undefined): boolean =>
   condicion === 'CONTADO'
 
-/** Lo que se dice cuando el ORIGEN opera al contado. Nombra por qué, no sólo que no se puede. */
-export const MSG_CONTADO_ORIGEN =
-  'El cliente opera al CONTADO: no tiene cuenta corriente de la que debitar un saldo, así que no se le puede registrar un pase'
+/**
+ * Lo que se dice cuando el ORIGEN opera al contado. Nombra por qué, no sólo que no se puede.
+ *
+ * Es una FUNCIÓN del rol porque el pase se hace entre cuentas de clientes o entre cuentas de
+ * proveedores, y el mensaje tiene que hablar de la persona que el usuario efectivamente buscó: un
+ * "el cliente opera al CONTADO" sobre un proveedor manda a revisar la columna equivocada.
+ */
+export const msgContadoOrigen = (rol: RolPersona = 'cliente'): string =>
+  `El ${ROTULO_ROL[rol].singular} opera al CONTADO: no tiene cuenta corriente de la que debitar un saldo, así que no se le puede registrar un pase`
 
 /** Lo mismo para el DESTINO, que es la punta que recibe. */
 export const MSG_CONTADO_DESTINO =
@@ -87,7 +95,7 @@ export function bloqueoDePases(
     return {
       titulo: 'El importe supera el saldo del anticipo',
       mensaje: `${MSG_EXCEDE_ANTICIPO}.`,
-      faltantes: excedidos.map((a) => `${a.recibo || a.nombre} · máximo ${money(a.pendiente)}`),
+      faltantes: excedidos.map((a) => `${a.nombre} · máximo ${money(a.pendiente)}`),
     }
   }
 
@@ -96,7 +104,7 @@ export function bloqueoDePases(
     return {
       titulo: 'Falta el importe a debitar',
       mensaje: `${MSG_SIN_IMPORTE_ANTICIPO}.`,
-      faltantes: sinImporte.map((a) => a.recibo || a.nombre),
+      faltantes: sinImporte.map((a) => a.nombre),
     }
   }
 

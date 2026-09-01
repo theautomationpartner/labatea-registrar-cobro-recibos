@@ -17,7 +17,18 @@ const Req = () => <span className="cobro-req"> *</span>
  * Lee y escribe el estado global directo, como el formulario de cobro: son datos de la operación,
  * no de esta pantalla.
  */
-export function DatosAnticipo() {
+interface DatosAnticipoProps {
+  /**
+   * Cómo se rotula el importe. Por defecto, el del COBRO —el cliente entrega—; el módulo de PAGOS
+   * pasa el suyo, donde el dinero va para el otro lado. Es lo ÚNICO que cambia entre los dos: el
+   * detalle y el vencimiento describen al anticipo, no a quién lo entrega.
+   */
+  rotuloImporte?: string
+}
+
+export function DatosAnticipo({
+  rotuloImporte = 'Importe del anticipo que entrega el cliente',
+}: DatosAnticipoProps = {}) {
   const { importeAnticipo, detalleAnticipo, vencimientoAnticipo } = useApp()
   const dispatch = useDispatch()
 
@@ -49,7 +60,7 @@ export function DatosAnticipo() {
       <div className="cobro-anticipo-campos">
         <div className="cobro-anticipo-campo cobro-anticipo-campo--importe">
           <label className="cobro-anticipo-lbl" htmlFor="anticipo-importe">
-            Importe del anticipo que entrega el cliente
+            {rotuloImporte}
             <Req />
           </label>
           {/* Sin importe cargado la línea se pone en rojo: es el dato del que salen el total a

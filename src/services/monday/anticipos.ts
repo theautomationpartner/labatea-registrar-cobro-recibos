@@ -55,11 +55,10 @@ function mapAnticipo(item: MondayItem): AnticipoPendiente {
   return {
     id: item.id,
     nombre: item.name,
-    recibo: c[COL.anticipo.recibo]?.text?.trim() ?? '',
     fecha: c[COL.anticipo.fecha]?.text?.trim() ?? '',
     importe: num(valor(c[COL.anticipo.importe])),
     pendiente: num(valor(c[COL.anticipo.pendiente])),
-    comentario: c[COL.anticipo.comentario]?.text?.trim() ?? '',
+    comentario: c[COL.anticipo.detalle]?.text?.trim() ?? '',
   }
 }
 

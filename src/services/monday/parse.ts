@@ -10,7 +10,8 @@ export interface CV {
   display_value?: string | null
   /** Índice de la etiqueta en una columna status. Es más estable que su texto. */
   index?: number | null
-  linked_items?: { id: string; name: string; column_values: CV[] }[]
+  /** `board` sólo viene si la consulta lo pide: sirve para verificar de qué tablero es el vinculado. */
+  linked_items?: { id: string; name: string; board?: { id: string }; column_values: CV[] }[]
 }
 
 export interface MondayItem {

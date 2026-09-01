@@ -3,6 +3,7 @@ import { AvisoModal } from '@/components/ui/AvisoModal'
 import { ModalCargando } from '@/components/ui/ModalCargando'
 import { BuscarCliente, type BusquedaEstado } from '@/features/cliente/BuscarCliente'
 import { ClienteFicha } from '@/features/cliente/ClienteFicha'
+import { AvisoCategoriaAjena } from '@/features/shared/AvisoCategoriaAjena'
 import { ImpactoAnticipos } from './ImpactoAnticipos'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
 import { anticiposElegidos, totalAplicado } from '@/lib/cobros'
@@ -14,7 +15,15 @@ import {
   pasoAnterior,
 } from '@/lib/pasos'
 import { bloqueoDePases, esContado, MSG_CONTADO_DESTINO } from '@/lib/pases'
-import { esperarRegistro, getSaldosCliente, registrarPaseDeSaldo } from '@/services/monday'
+import { cumpleRol, rolDeOperacion, ROTULO_OPERACION } from '@/lib/personas'
+import type { Cliente } from '@/types'
+import {
+  buscarProveedores,
+  esperarRegistro,
+  getSaldosCliente,
+  registrarPaseDeSaldo,
+  tableroDeRegistroDelPase,
+} from '@/services/monday'
 import { useApp, useDispatch } from '@/state/hooks'
 
 /**
@@ -25,10 +34,11 @@ import { useApp, useDispatch } from '@/state/hooks'
  * separarlas en dos etapas obligaría a decidir a ciegas.
  *
  * El destino se elige con el MISMO buscador y la MISMA ficha del paso 1, no con un control propio:
- * las dos puntas del pase son clientes del tablero de Personas, y buscarlos de dos maneras distintas
- * dentro de la misma app obligaría a aprender dos veces lo mismo. La ficha aporta además el contexto
- * que la decisión necesita —cuánto debe, cuánto tiene a favor, cuánto le queda por cancelar—, que es
- * justamente lo que hay que mirar antes de elegir qué se hace con el saldo.
+ * las dos puntas del pase son personas del tablero de Personas —del lado del mostrador que se
+ * declaró en el paso 1—, y buscarlas de dos maneras distintas dentro de la misma app obligaría a
+ * aprender dos veces lo mismo. La ficha aporta además el contexto que la decisión necesita —cuánto
+ * debe, cuánto tiene a favor, cuánto le queda por cancelar—, que es justamente lo que hay que mirar
+ * antes de elegir qué se hace con el saldo.
  *
  * Buscador, ficha, pregunta y opciones viven en UNA sola card: es una decisión, no cuatro bloques.
  */
@@ -37,6 +47,8 @@ export function PaseDestinoView() {
     cliente,
     usuario,
     anticipos,
+    operacionApp,
+    paseCuentasDe,
     pasesDeAnticipo,
     clienteDestino,
     saldosDestino,
@@ -45,6 +57,12 @@ export function PaseDestinoView() {
   } = useApp()
   const dispatch = useDispatch()
   const [estadoBusqueda, setEstadoBusqueda] = useState<BusquedaEstado>('idle')
+  /**
+   * La persona que la búsqueda trajo y NO se pudo cargar como destino porque no es del lado del
+   * mostrador que el pase declaró. Mientras esto tenga valor hay una ventana abierta explicando por
+   * qué, y es lo único que se ve de ella: su ficha no llega a dibujarse.
+   */
+  const [personaAjena, setPersonaAjena] = useState<Cliente | null>(null)
   /* El registro está en curso: tapa la pantalla y apaga los dos botones. No hay un estado "listo"
      —la confirmación de Monday ES el final de la operación, y ahí la app se reinicia—, así que este
      componente nunca llega a dibujar un resultado. */
@@ -56,6 +74,10 @@ export function PaseDestinoView() {
      que se reintente algo que ya está en Monday. */
   const [avisoRegistro, setAvisoRegistro] = useState<string | null>(null)
 
+  /* De qué lado del mostrador es el pase. Es el MISMO rol con el que el paso 1 validó al origen
+     —sale del mismo lugar del estado—, y por eso las dos puntas no pueden terminar siendo de lados
+     distintos. Con el rol sin declarar no se llega hasta acá: sin origen cargado no hay pase. */
+  const rol = rolDeOperacion(operacionApp, paseCuentasDe) ?? 'cliente'
   const anterior = pasoAnterior('destino', tipoOperacion)
   /* Los anticipos elegidos en el paso 2 y lo que suman: ese total es a la vez lo que se debita del
      origen y lo que se acredita al destino. */
@@ -133,9 +155,12 @@ export function PaseDestinoView() {
     let escrito = false
     try {
       const itemId = await registrarPaseDeSaldo({
-        clienteOrigenId: cliente.id,
+        /* De quiénes son las cuentas decide EN QUÉ TABLERO se escribe todo: el de cobros para un
+           pase entre clientes y el de órdenes de pago para uno entre proveedores. */
+        rol,
+        personaOrigenId: cliente.id,
         nombreOrigen: cliente.name,
-        clienteDestinoId: clienteDestino.id,
+        personaDestinoId: clienteDestino.id,
         /* Un débito POR anticipo, con lo que se carga de cada uno: el subelemento queda linkeado a
            su propio saldo y el tablero muestra de dónde salió cada peso. */
         debitos: origenes.map((a) => ({ anticipoId: a.id, importe: pasesDeAnticipo[a.id] })),
@@ -148,7 +173,7 @@ export function PaseDestinoView() {
 
       /* El tablero tiene que decir que lo registró. Hasta que esa columna llega a "Registrado" la
          pantalla sigue tapada: la automatización es la que mueve el saldo de verdad. */
-      await esperarRegistro(itemId)
+      await esperarRegistro(itemId, tableroDeRegistroDelPase(rol))
 
       /* Registro CONFIRMADO por Monday: ESO cierra la operación. La app vuelve a su estado inicial
          en vez de mostrar un cartel de éxito —el pase ya está en el tablero, y dejar la pantalla del
@@ -196,7 +221,26 @@ export function PaseDestinoView() {
                 estado={estadoBusqueda}
                 onEstado={setEstadoBusqueda}
                 placeholder="Buscar cuenta destino por código, nombre o CUIT..."
-                onElegir={(cliente) => dispatch({ type: 'setClienteDestino', cliente })}
+                rol={rol}
+                /* Se busca contra la MISMA categoría que el origen: un pase mueve saldo entre dos
+                   cuentas del mismo lado del mostrador. */
+                {...(rol === 'proveedor'
+                  ? {
+                      buscarPersonas: buscarProveedores,
+                      mensajeVacio: 'Ingresá un nombre, código de proveedor o CUIT.',
+                      sujeto: 'el proveedor',
+                    }
+                  : {})}
+                /* La cuenta que RECIBE el saldo tiene que ser del mismo lado que la que lo entrega:
+                   un pase entre cuentas de clientes no puede terminar acreditándole a un proveedor,
+                   ni al revés. Se valida al elegir, antes de que la ficha muestre nada. */
+                onElegir={(persona) => {
+                  if (!cumpleRol(persona, rol)) {
+                    setPersonaAjena(persona)
+                    return
+                  }
+                  dispatch({ type: 'setClienteDestino', cliente: persona })
+                }}
               />
             </div>
 
@@ -297,6 +341,18 @@ export function PaseDestinoView() {
         >
           {MSG_CONTADO_DESTINO}.
         </AvisoModal>
+      )}
+      {/* La persona rechazada no llega a la ficha: la ventana es lo único que se ve de ella. Mismo
+          aviso —y misma regla— que en el paso 1 y en Pagos. Va acá, al final de la sección, con el
+          resto de las ventanas: su overlay es `position: fixed` y adentro de una card animada
+          quedaría anclado a la card en vez de a la pantalla. */}
+      {personaAjena && (
+        <AvisoCategoriaAjena
+          rol={rol}
+          operacion={ROTULO_OPERACION.PASES}
+          persona={personaAjena}
+          onClose={() => setPersonaAjena(null)}
+        />
       )}
     </section>
   )

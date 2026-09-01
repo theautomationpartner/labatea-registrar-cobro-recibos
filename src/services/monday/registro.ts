@@ -1,21 +1,57 @@
 /**
- * "🤖Estado Registro de Cobro" (color_mm5zkr61): el semáforo con el que el TABLERO procesa un ítem
- * de "➡️Recibos y Cobros", cualquiera sea la operación que lo creó.
+ * El semáforo con el que un TABLERO procesa el ítem que la app le dejó escrito.
  *
  * La app escribe UNA sola etiqueta —"Registrar"— y de ahí en más sólo lee. Ese cambio es lo que
  * dispara la automatización; el resto de los estados los mueve ella.
  *
- * Hoy lo usa UN solo circuito, el PASE DE SALDO (`pases.ts`): pide el registro y espera a que esta
- * misma columna llegue a "Registrado".
+ * Son DOS columnas, una por tablero, porque el pase de saldo se registra de los dos lados del
+ * mostrador: "🤖Estado Registro de Cobro" en "➡️Recibos y Cobros" cuando las cuentas son de
+ * clientes, y "🤖Estado Registro de Pago" en "⬅️ Pagos - PENDIENTES" cuando son de proveedores. El
+ * TRABAJO es el mismo —pedir y esperar—, así que se escribe una vez y se parametriza el tablero:
+ * duplicar el sondeo habría dejado dos esperas que se corrigen por separado.
  *
  * El COBRO no pasa por acá: un recibo se pide por su propia columna, "🤖Estado de Emision", que es
  * también donde se lo espera (ver `pedirEmision` y `getEstadoEmision` en `recibos.ts`). Son dos
  * semáforos distintos porque son dos trabajos distintos del tablero —registrar un movimiento y
  * emitir un documento—, y mezclarlos hacía que una operación esperara la señal de la otra.
  */
-import { COL, BOARDS, ESTADO_REGISTRO_INDEX } from './columns'
+import { COL, BOARDS, ESTADO_REGISTRO_INDEX, OP_REGISTRO_INDEX } from './columns'
 import { byId, type MondayItem } from './parse'
 import { mondayApi, mondayHabilitado } from './sdk'
+
+/**
+ * Dónde vive el semáforo de un tablero: su board, su columna y los índices que a la app le
+ * importan. Los índices NO coinciden entre los dos —"Registrar" es el 4 en el recibo y el 3 en la
+ * orden de pago—, y ése es justamente el motivo de que cada tablero traiga los suyos en vez de que
+ * el sondeo los tenga escritos adentro.
+ */
+export interface TableroDeRegistro {
+  board: number
+  columna: string
+  /** Lo ÚNICO que la app escribe. */
+  registrar: number
+  /** Los dos finales que cortan la espera. */
+  registrado: number
+  error: number
+}
+
+/** "➡️Recibos y Cobros": el pase entre cuentas de CLIENTES. Es el de siempre, y el que va por defecto. */
+export const REGISTRO_COBROS: TableroDeRegistro = {
+  board: BOARDS.cobros,
+  columna: COL.cobro.estadoRegistro,
+  registrar: ESTADO_REGISTRO_INDEX.registrar,
+  registrado: ESTADO_REGISTRO_INDEX.registrado,
+  error: ESTADO_REGISTRO_INDEX.error,
+}
+
+/** "⬅️ Pagos - PENDIENTES": la orden de pago, y el pase entre cuentas de PROVEEDORES. */
+export const REGISTRO_PAGOS: TableroDeRegistro = {
+  board: BOARDS.ordenesPago,
+  columna: COL.ordenPago.estadoRegistro,
+  registrar: OP_REGISTRO_INDEX.registrar,
+  registrado: OP_REGISTRO_INDEX.registrado,
+  error: OP_REGISTRO_INDEX.error,
+}
 
 /**
  * Pide que el tablero PROCESE el ítem: pone "🤖Estado Registro de Cobro" en "Registrar".
@@ -24,7 +60,10 @@ import { mondayApi, mondayHabilitado } from './sdk'
  * la identidad de la opción en el board, así que un cambio de rótulo no puede desviar la operación
  * a otro estado.
  */
-export async function pedirRegistro(itemId: string): Promise<void> {
+export async function pedirRegistro(
+  itemId: string,
+  tablero: TableroDeRegistro = REGISTRO_COBROS,
+): Promise<void> {
   if (!mondayHabilitado()) return
   await mondayApi(
     `mutation ($id: ID!, $board: ID!, $cv: JSON!) {
@@ -32,10 +71,8 @@ export async function pedirRegistro(itemId: string): Promise<void> {
     }`,
     {
       id: itemId,
-      board: BOARDS.cobros,
-      cv: JSON.stringify({
-        [COL.cobro.estadoRegistro]: { index: ESTADO_REGISTRO_INDEX.registrar },
-      }),
+      board: tablero.board,
+      cv: JSON.stringify({ [tablero.columna]: { index: tablero.registrar } }),
     },
   )
 }
@@ -65,14 +102,17 @@ export interface EstadoRegistro {
  * En modo local no hay automatización que registre nada, así que se responde "Registrado" de una:
  * el prototipo tiene que poder recorrerse entero sin cuenta de Monday.
  */
-export async function getEstadoRegistro(itemId: string): Promise<EstadoRegistro> {
+export async function getEstadoRegistro(
+  itemId: string,
+  tablero: TableroDeRegistro = REGISTRO_COBROS,
+): Promise<EstadoRegistro> {
   if (!mondayHabilitado()) return { fase: 'registrado', label: 'Registrado' }
 
   const data = await mondayApi<{ items: MondayItem[] }>(
     `query ($id: [ID!]) {
       items(ids: $id) {
         id
-        column_values(ids: ["${COL.cobro.estadoRegistro}"]) {
+        column_values(ids: ["${tablero.columna}"]) {
           id text
           ... on StatusValue { index }
         }
@@ -82,14 +122,10 @@ export async function getEstadoRegistro(itemId: string): Promise<EstadoRegistro>
   )
 
   const item = data.items?.[0]
-  const cv = item ? byId(item)[COL.cobro.estadoRegistro] : undefined
+  const cv = item ? byId(item)[tablero.columna] : undefined
   const index = cv?.index ?? null
   const fase: FaseRegistroBoard =
-    index === ESTADO_REGISTRO_INDEX.registrado
-      ? 'registrado'
-      : index === ESTADO_REGISTRO_INDEX.error
-        ? 'error'
-        : 'en-curso'
+    index === tablero.registrado ? 'registrado' : index === tablero.error ? 'error' : 'en-curso'
   return { fase, label: cv?.text?.trim() ?? '' }
 }
 
@@ -128,7 +164,10 @@ const esperar = (ms: number) => new Promise<void>((ok) => setTimeout(ok, ms))
  * dice qué pasó. NO distingue entre "falló" y "todavía no terminó" a la hora de dar por cerrada la
  * operación: en los dos casos lo cierto es lo mismo, que el registro no está confirmado.
  */
-export async function esperarRegistro(itemId: string): Promise<void> {
+export async function esperarRegistro(
+  itemId: string,
+  tablero: TableroDeRegistro = REGISTRO_COBROS,
+): Promise<void> {
   const vence = Date.now() + LIMITE_MS
   let fallosSeguidos = 0
 
@@ -136,7 +175,7 @@ export async function esperarRegistro(itemId: string): Promise<void> {
     await esperar(INTERVALO_MS)
     let actual: EstadoRegistro
     try {
-      actual = await getEstadoRegistro(itemId)
+      actual = await getEstadoRegistro(itemId, tablero)
       fallosSeguidos = 0
     } catch (e) {
       /* Una lectura suelta puede fallar por red sin que el registro esté mal: se reintenta unas

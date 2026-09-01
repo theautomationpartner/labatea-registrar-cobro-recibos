@@ -54,7 +54,7 @@ function ImporteAplicado({
         className={`ant-aplicar-in ${excede ? 'ant-aplicar-in--error' : ''}`}
         autoComplete="off"
         placeholder="0,00"
-        aria-label={`Importe a aplicar del anticipo ${anticipo.recibo || anticipo.nombre}`}
+        aria-label={`Importe a aplicar del anticipo ${anticipo.nombre}`}
         aria-invalid={excede || undefined}
         value={texto}
         onChange={(e) => {
@@ -119,11 +119,11 @@ export function TablaAnticipos({ anticipos, aplicaciones, cubierto }: TablaAntic
                     checked={elegido}
                     disabled={vedado}
                     onChange={() => dispatch({ type: 'toggleAnticipo', anticipo: a })}
-                    aria-label={`Aplicar el anticipo ${a.recibo || a.nombre}`}
+                    aria-label={`Aplicar el anticipo ${a.nombre}`}
                   />
                 </td>
                 <td>
-                  <span className="ant-nro">{a.recibo || a.nombre}</span>
+                  <span className="ant-nro">{a.nombre}</span>
                   {a.comentario && <span className="ant-detalle">{a.comentario}</span>}
                 </td>
                 <td className="ant-col-cen">

@@ -54,12 +54,15 @@ function construirLog(contactos: Contacto[], documento: string, numero: string):
 /** Envío del PDF al cliente. Hoy lo usa la emisión del recibo. */
 export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocumentoProps) {
   const state = useApp()
-  const { medioEnvio, contactos, cliente, documentoEnviado } = state
+  const { medioEnvio, contactos, documentoEnviado } = state
   const dispatch = useDispatch()
   /* El comprobante a enviar. Es lo ÚNICO que sabe de las diferencias entre uno y otro: el
      componente sólo le pregunta. */
   const comprobante = comprobanteEnviable(documento)
   const articulo = comprobante.articulo
+  /* De quién son los contactos: el cliente de la cobranza o el proveedor del pago. Lo dice el
+     comprobante, no el componente: es la misma consulta sobre el mismo board, con otro ítem. */
+  const titular = comprobante.titular(state)
   // ¿Ya fue emitido? De eso depende poder enviarlo.
   const emitido = comprobante.emitido(state)
   // Aviso al intentar enviar sin haber emitido el comprobante todavía.
@@ -97,14 +100,16 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
    */
   const [disponibles, setDisponibles] = useState<Contacto[]>([])
   const [cargando, setCargando] = useState(false)
-  // Si el cliente no tiene ningún contacto en el tablero, el envío no es posible.
+  /* No hay a quién enviarle, así que el envío no es posible y ni siquiera se ofrece. Qué cuenta
+     como "no hay" depende del comprobante: para el recibo alcanza con que el titular tenga algún
+     contacto cargado; para la orden de pago hace falta al menos uno que la ACEPTE. */
   const [sinContactos, setSinContactos] = useState(false)
   /* La selección elegida vive en el estado global y sobrevive a la navegación. Se lee por ref para
      no meterla en las deps del efecto (la pisaría en cada cambio). */
   const contactosRef = useRef(contactos)
   contactosRef.current = contactos
   useEffect(() => {
-    if (!cliente) {
+    if (!titular) {
       setDisponibles([])
       return
     }
@@ -112,10 +117,17 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
     setCargando(true)
     /* La consulta está CACHEADA por cliente y documento: al volver a esta etapa con el stepper
        resuelve al instante y no se le pega de nuevo a Monday. */
-    getContactosCliente(cliente.id, etiquetaContacto)
+    getContactosCliente(titular.id, etiquetaContacto)
       .then((cs) => {
         if (!vivo) return
-        setSinContactos(cs.length === 0)
+        /* BLOQUEO DE NEGOCIO: con `exigeContactoQueAcepta`, que el titular tenga contactos no
+           alcanza —tiene que haber al menos uno que declare que acepta ESTE comprobante—. Es lo
+           que inhabilita por completo el envío de una orden de pago a un proveedor sin
+           destinatarios válidos. */
+        const aceptan = cs.filter((c) => c.ok)
+        setSinContactos(
+          comprobante.exigeContactoQueAcepta ? aceptan.length === 0 : cs.length === 0,
+        )
         /* El buscador conserva a todos: el picker ya descarta los que están seleccionados,
            así que arranca mostrando sólo los que no aceptan, y un contacto quitado a mano
            vuelve a quedar disponible. */
@@ -137,7 +149,28 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
     return () => {
       vivo = false
     }
-  }, [cliente, etiquetaContacto, dispatch])
+  }, [titular, etiquetaContacto, comprobante.exigeContactoQueAcepta, dispatch])
+
+  /**
+   * Contactos que el buscador puede OFRECER.
+   *
+   * Con `exigeContactoQueAcepta` sólo se ofrecen los que aceptan el comprobante: si el picker
+   * dejara sumar a uno que no lo declaró, el usuario podría habilitar el botón agregándolo, y el
+   * bloqueo de negocio dejaría de serlo. Para el recibo se siguen ofreciendo todos —ahí sumar a
+   * alguien que no lo declaró es una decisión válida del usuario—.
+   */
+  const ofrecibles = comprobante.exigeContactoQueAcepta
+    ? disponibles.filter((c) => c.ok)
+    : disponibles
+
+  /**
+   * No hay a quién enviarle. El bloque de envío se muestra IGUAL —el medio, el buscador vacío y la
+   * lista— y lo que ocupa el lugar de los contactos es el aviso: así se ve QUÉ falta en el lugar
+   * donde iría, en vez de reemplazar la pantalla entera por un cartel.
+   *
+   * Con el envío ya hecho no se muestra: ahí el "Enviado exitosamente" tiene que seguir a la vista.
+   */
+  const sinDestinatarios = sinContactos && !enviadoOk
 
   /** Contactos elegidos como ids numéricos de Monday. */
   const contactoItemIds = () =>
@@ -229,20 +262,7 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
           a la vista aunque se vuelva a entrar a la etapa. */}
       {cargando && !enviadoOk ? (
         <div className="contactos-cargando">
-          <i className="fas fa-spinner fa-spin" /> Cargando contactos del cliente…
-        </div>
-      ) : sinContactos && !enviadoOk ? (
-        /* Sin contactos en el tablero no hay a quién enviarle: se explica y no se ofrece envío. */
-        <div className="envio-sin-contactos" role="alert">
-          <i className="fas fa-triangle-exclamation" />
-          <div>
-            <div className="envio-sin-contactos-t">El cliente no tiene contactos asignados</div>
-            <p>
-              {cliente?.name ? <strong>{cliente.name}</strong> : 'Este cliente'} no tiene contactos
-              cargados en el tablero de Contactos, así que no es posible realizar el envío.
-              Asignale al menos un contacto y volvé a reintentar.
-            </p>
-          </div>
+          <i className="fas fa-spinner fa-spin" /> Cargando contactos…
         </div>
       ) : (
         <>
@@ -266,12 +286,24 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
             </select>
           </div>
 
-          <ContactosPicker disponibles={disponibles} />
+          <ContactosPicker disponibles={ofrecibles} />
 
           <div className="font-b" style={{ fontSize: 14, marginTop: 24 }}>
             Contactos seleccionados ({contactos.length})
           </div>
           <div className="selc">
+            {/* Sin destinatarios el aviso ocupa el lugar de la lista: es exactamente lo que falta y
+                está donde iría. La lista queda vacía por construcción —el picker no tiene nada que
+                ofrecer—, así que no hay dos estados que puedan contradecirse. */}
+            {sinDestinatarios && (
+              <div className="envio-sin-contactos" role="alert">
+                <i className="fas fa-triangle-exclamation" />
+                <div>
+                  <div className="envio-sin-contactos-t">{comprobante.sinContactos.titulo}</div>
+                  <p>{comprobante.sinContactos.mensaje(titular?.name ?? 'Esta persona')}</p>
+                </div>
+              </div>
+            )}
             {contactos.map((c) => {
               const falta = faltaParaMedio(c, medioEnvio)
               /* Sólo se marca al contacto que NO tiene por dónde recibirlo. Con "Ambos", que le
@@ -323,12 +355,18 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
               className="btn-block btn-block--enviar"
               /* El fondo verde de éxito depende de la bandera GLOBAL (`enviadoOk`): se conserva al
                  volver a esta etapa con el stepper. */
+              /* El fondo dice en qué estado está: verde el envío hecho, rojo el fallido, GRIS el
+                 que no se puede disparar —sin destinatarios— y azul el que espera el click. El gris
+                 es lo que lo distingue de un botón vivo: con el azul al 50% que deja `:disabled`,
+                 un control bloqueado se sigue leyendo como accionable. */
               style={{
                 background: enviadoOk
                   ? 'var(--green)'
                   : estadoEnvio === 'error'
                     ? 'var(--red)'
-                    : 'var(--primary-blue)',
+                    : contactos.length === 0
+                      ? 'var(--c-text-secondary, #6b7280)'
+                      : 'var(--primary-blue)',
               }}
               disabled={contactos.length === 0 || enviando || enviadoOk}
               aria-busy={enviando}

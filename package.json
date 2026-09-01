@@ -14,7 +14,8 @@
     "test:guard": "esbuild tests/guard-sesion.test.ts --bundle --platform=node --format=esm --packages=external --tsconfig=tsconfig.json --outfile=node_modules/.cache/guard.test.mjs && node node_modules/.cache/guard.test.mjs",
     "test:whitelist": "esbuild tests/lista-blanca.test.ts --bundle --platform=node --format=esm --packages=external --tsconfig=tsconfig.json --outfile=node_modules/.cache/whitelist.test.mjs && node node_modules/.cache/whitelist.test.mjs",
     "test:mfa": "esbuild tests/mfa.test.ts --bundle --platform=node --format=esm --packages=external --tsconfig=tsconfig.json --outfile=node_modules/.cache/mfa.test.mjs && node node_modules/.cache/mfa.test.mjs",
-    "test:seguridad": "npm run test:portero && npm run test:guard && npm run test:whitelist && npm run test:mfa"
+    "test:seguridad": "npm run test:portero && npm run test:guard && npm run test:whitelist && npm run test:mfa",
+    "test:pagos": "esbuild tests/pagos.test.tsx --bundle --platform=node --format=esm --packages=external --tsconfig=tsconfig.json --define:import.meta.env.DEV=true --define:import.meta.env.VITE_MONDAY_TOKEN=undefined --outfile=node_modules/.cache/pagos.test.mjs && node node_modules/.cache/pagos.test.mjs"
   },
   "dependencies": {
     "jsonwebtoken": "^9.0.3",

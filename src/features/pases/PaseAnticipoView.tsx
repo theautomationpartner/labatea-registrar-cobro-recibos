@@ -11,23 +11,41 @@ import {
   pasoAnterior,
   siguientePaso,
 } from '@/lib/pasos'
-import { getAnticiposPendientes } from '@/services/monday'
+import { rolDeOperacion } from '@/lib/personas'
+import { getAnticiposPendientes, getAnticiposProveedor } from '@/services/monday'
 import { useApp, useDispatch } from '@/state/hooks'
 import { TablaAnticiposPase } from './TablaAnticiposPase'
 
 /**
  * PASES DE SALDO · paso 2: qué saldo se mueve.
  *
- * Lista los anticipos del cliente ORIGEN con la misma lectura cacheada que usa la aplicación de
+ * Lista los anticipos de la persona ORIGEN con la misma lectura cacheada que usa la aplicación de
  * anticipos, y con SU MISMA tabla (ver `TablaAnticiposPase`): es la misma pregunta —de qué saldo a
  * favor se dispone y cuánto se usa— hecha en otro recorrido.
+ *
+ * La PANTALLA es una sola, idéntica de los dos lados del mostrador: mismos textos, misma tabla,
+ * mismas reglas. Lo ÚNICO que cambia es de qué tablero se leen los anticipos —el de clientes o el de
+ * proveedores (18428353259, ver `services/monday/anticiposProveedor`)—, y eso lo decide el lado
+ * declarado en el paso 1. Son el mismo dato con la misma forma, así que de la lectura para acá nada
+ * vuelve a preguntarse de quién es el saldo.
  *
  * Lo único propio del pase es que se elige UN anticipo: mueve saldo de uno a una cuenta, no reparte
  * entre varios. El importe nace en el saldo completo y queda editable para pasar menos.
  */
 export function PaseAnticipoView() {
-  const { cliente, anticipos, anticiposClienteId, pasesDeAnticipo, tipoOperacion } = useApp()
+  const {
+    cliente,
+    anticipos,
+    anticiposClienteId,
+    operacionApp,
+    paseCuentasDe,
+    pasesDeAnticipo,
+    tipoOperacion,
+  } = useApp()
   const dispatch = useDispatch()
+  /* De qué lado del mostrador es el pase. Es lo ÚNICO que esta pantalla necesita saber, y para una
+     sola cosa: contra qué tablero se leen los anticipos. */
+  const rol = rolDeOperacion(operacionApp, paseCuentasDe) ?? 'cliente'
   const enCache = !!cliente && anticiposClienteId === cliente.id
   const [cargando, setCargando] = useState(!enCache)
   // Motivo por el que no se puede avanzar, mostrado al intentarlo.
@@ -45,7 +63,11 @@ export function PaseAnticipoView() {
     }
     let vivo = true
     setCargando(true)
-    getAnticiposPendientes(cliente.id)
+    /* La MISMA lectura de los dos lados: cambia el tablero, no la forma. Los dos devuelven
+       `AnticipoPendiente`, así que de acá para abajo la pantalla no vuelve a preguntarse de quién
+       es el saldo. */
+    const leerAnticipos = rol === 'proveedor' ? getAnticiposProveedor : getAnticiposPendientes
+    leerAnticipos(cliente.id)
       .then((as) => {
         if (!vivo) return
         dispatch({ type: 'setAnticipos', anticipos: as, clienteId: cliente.id })
@@ -54,13 +76,13 @@ export function PaseAnticipoView() {
       .catch(() => {
         if (!vivo) return
         dispatch({ type: 'setAnticipos', anticipos: [], clienteId: null })
-        dispatch({ type: 'errorMonday', accion: 'obtener los anticipos del cliente' })
+        dispatch({ type: 'errorMonday', accion: 'obtener los anticipos de la cuenta origen' })
         setCargando(false)
       })
     return () => {
       vivo = false
     }
-  }, [cliente, anticiposClienteId, dispatch])
+  }, [cliente, anticiposClienteId, dispatch, rol])
 
   const destino = siguientePaso('anticipoOrigen', tipoOperacion)
   const anterior = pasoAnterior('anticipoOrigen', tipoOperacion)
@@ -86,8 +108,8 @@ export function PaseAnticipoView() {
           <div className="cobro-static">
             <div className="cobro-card">
               <p className="cobro-vacio">
-                <i className="fas fa-user-slash" /> Todavía no hay un cliente seleccionado. Volvé al
-                paso 1 para elegirlo.
+                <i className="fas fa-user-slash" /> Todavía no hay una cuenta origen seleccionada.
+                Volvé al paso 1 para elegirla.
               </p>
             </div>
           </div>
@@ -102,7 +124,7 @@ export function PaseAnticipoView() {
 
               {cargando ? (
                 <p className="cobro-vacio">
-                  <i className="fas fa-spinner fa-spin" /> Buscando los anticipos del cliente...
+                  <i className="fas fa-spinner fa-spin" /> Buscando los anticipos de la cuenta...
                 </p>
               ) : anticipos.length === 0 ? (
                 <p className="cobro-vacio">

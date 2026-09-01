@@ -1,51 +1,46 @@
-import { PasoHeader } from '@/features/shared/PasoHeader'
+import { useApp } from '@/state/hooks'
+import type { PasoPago } from '@/types'
+import { AplicarAnticipoView } from './AplicarAnticipoView'
+import { FacturasCompraView } from './FacturasCompraView'
+import { OrdenPagoView } from './OrdenPagoView'
+import { ProveedorView } from './ProveedorView'
+import { RegistrarPagoView } from './RegistrarPagoView'
 
 /**
- * Módulo de PAGOS. Es una operación INDEPENDIENTE de Cobros: no comparte etapas, ni pantallas, ni
- * el estado de trabajo —cambiar de módulo descarta lo que se venía cargando en el otro (ver
- * `setOperacionApp`)—.
+ * Vista de cada etapa del módulo de PAGOS. El estado dice en qué paso está y acá se resuelve qué se
+ * dibuja. Es la tabla equivalente a la de COBROS en `App`, y vive aparte por la misma razón por la
+ * que el recorrido vive en `lib/pasosPago`: las dos operaciones son independientes y no comparten
+ * ni una sola clave de navegación.
+ */
+const VISTAS: Record<PasoPago, () => JSX.Element | null> = {
+  proveedor: ProveedorView,
+  facturasCompra: FacturasCompraView,
+  pago: RegistrarPagoView,
+  orden: OrdenPagoView,
+}
+
+/**
+ * Módulo de PAGOS. Es una operación INDEPENDIENTE de Cobros: no comparte etapas, ni estado de
+ * trabajo —cambiar de módulo descarta lo que se venía cargando en el otro (ver `setOperacionApp`)—.
  *
- * Su circuito todavía no está definido, así que esta vista es lo único que el módulo dibuja: la
- * barra de contexto —que es lo que permite volver a Cobros— y el aviso de que las etapas se
- * especifican aparte.
+ * Su recorrido son cuatro etapas: a quién se le paga, qué facturas de compra se cancelan, con qué
+ * cajas se paga, y la emisión y el envío de la orden de pago.
  *
- * El encabezado va SIN barra de etapas a propósito. Mostrar acá el stepper de Cobros sería afirmar
- * un recorrido que este módulo no tiene, y dejaría al usuario navegando pasos ajenos.
+ * Lo que SÍ comparte con Cobros son las PIEZAS: el buscador de personas, la ficha, la tabla de
+ * comprobantes pendientes con su panel desplegable, la cabecera de totales, la tabla de movimientos,
+ * el resumen del documento, la card del comprobante y el bloque de envío son los MISMOS
+ * componentes, parametrizados con los rótulos del egreso.
  *
- * Cuando Pagos tenga sus etapas, se reemplaza el cuerpo de esta vista por su propio recorrido: el
- * ruteo de `App` ya lo trata como un circuito aparte, así que no hay que tocar el de Cobros.
+ * Esta vista es sólo el ruteo. El encabezado —con su barra de etapas propia— lo pone cada etapa a
+ * través de `PasoHeader`, que resuelve el stepper por módulo.
  */
 export function PagosView() {
-  return (
-    <section className="view paso-layout">
-      <PasoHeader pasos={false} />
-
-      <div className="paso-body">
-        <header className="header-section">
-          <div className="step-indicator-main">
-            <div className="step-badge-main">
-              <i className="fas fa-money-bill-transfer" />
-            </div>
-            <div className="step-details-main">
-              <h1 className="step-title-main">Pagos</h1>
-              <p className="step-desc-main">
-                Registro de pagos a proveedores. Es un circuito propio, independiente del de cobros.
-              </p>
-            </div>
-          </div>
-        </header>
-
-        <div className="card card--config en-desarrollo">
-          <i className="fas fa-screwdriver-wrench" />
-          <div>
-            <strong>Módulo en construcción</strong>
-            <p className="muted">
-              Las etapas y las pantallas de Pagos todavía no están definidas. Mientras tanto, volvé
-              a <strong>Cobros</strong> desde el selector del encabezado para operar.
-            </p>
-          </div>
-        </div>
-      </div>
-    </section>
-  )
+  const { pasoPago, tipoOperacionPago } = useApp()
+  /* La etapa 3 tiene DOS vistas según lo que se registre: con dinero (cajas) o aplicando el saldo a
+     favor que ya teníamos con el proveedor. Es la única etapa que cambia de pantalla según la
+     operación; el resto del recorrido comparte las mismas. Es el mismo ruteo que hace `App` para el
+     paso 3 de Cobros. */
+  const Vista =
+    pasoPago === 'pago' && tipoOperacionPago === 'aplicacion' ? AplicarAnticipoView : VISTAS[pasoPago]
+  return <Vista />
 }

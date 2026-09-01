@@ -308,14 +308,48 @@ export interface EstadoMfa {
   exigido: boolean
 }
 
+/** Lo que se contesta cuando la capa está apagada y la base no está a mano. */
+const INERTE: EstadoMfa = {
+  enrolado: false,
+  confirmado: false,
+  dispositivoConfiable: false,
+  codigosRestantes: 0,
+  exigido: false,
+}
+
+/**
+ * Qué pantalla corresponde.
+ *
+ * ── Por qué el try/catch, y por qué mira `exigido` para decidir ──
+ * Esta consulta tocaba la base SIEMPRE, apagada o no. Con `MFA_REQUERIDO` sin encender y sin
+ * `DATABASE_URL`, el resultado era un 500; y como el frontend muestra el muro ante un estado que no
+ * pudo leer —ante la duda se pregunta, que es lo correcto—, una base sin configurar dejaba la app
+ * ENTERA inutilizable. Eso contradecía lo que promete el interruptor: apagada, la capa tiene que
+ * quedar inerte, no tumbar todo. `exigirMfa` ya respetaba el apagado; sólo faltaba acá.
+ *
+ * La distinción es la que importa: con la capa ENCENDIDA el fallo se propaga y el muro aparece
+ * —falla cerrada, un problema de infraestructura no puede transformarse en un segundo factor
+ * salteado—; con la capa APAGADA no hay nada que proteger todavía y el fallo no puede costar más
+ * que lo que la capa vale.
+ */
 export async function estadoMfa(u: Usuario, deviceToken: string | undefined): Promise<EstadoMfa> {
-  const registro = await mfaStore().leerRegistro(u)
-  return {
-    enrolado: registro !== null,
-    confirmado: registro?.confirmado ?? false,
-    dispositivoConfiable: await dispositivoConfiable(u, deviceToken),
-    codigosRestantes: registro?.confirmado ? await mfaStore().cuantosCodigosQuedan(u) : 0,
-    exigido: mfaRequerido(),
+  const exigido = mfaRequerido()
+
+  try {
+    const registro = await mfaStore().leerRegistro(u)
+    return {
+      enrolado: registro !== null,
+      confirmado: registro?.confirmado ?? false,
+      dispositivoConfiable: await dispositivoConfiable(u, deviceToken),
+      codigosRestantes: registro?.confirmado ? await mfaStore().cuantosCodigosQuedan(u) : 0,
+      exigido,
+    }
+  } catch (e) {
+    if (exigido) throw e
+    /* Al log, no a la respuesta: que la capa esté apagada no vuelve normal que la base no conteste,
+       y sin este renglón el síntoma sería que "no pasa nada" hasta el día que se encienda. */
+    console.warn('[mfa] capa apagada y sin estado legible: ' + (e as Error).message)
+    return INERTE
   }
 }
 

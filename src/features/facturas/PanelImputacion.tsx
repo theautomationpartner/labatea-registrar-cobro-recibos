@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Donut } from '@/components/ui/Donut'
-import { colorCancelacion, excedeSaldo, impactoImputacion, MENSAJE_EXCESO } from '@/lib/cobros'
+import {
+  colorCancelacion,
+  excedeSaldo,
+  impactoImputacion,
+  MENSAJE_EXCESO,
+  ROTULOS_COBRO,
+  type RotulosImputacion,
+} from '@/lib/cobros'
 import { formatearImporteAR, importeATexto, money } from '@/lib/format'
 import type { FacturaPendiente } from '@/types'
 
@@ -9,6 +16,12 @@ interface PanelImputacionProps {
   /** Importe a cancelar ya guardado en el estado. 0 = todavía sin cargar. */
   importe: number
   onImporte: (importe: number) => void
+  /**
+   * Cómo se nombra la operación. Por defecto la COBRANZA, que es el circuito original; el módulo de
+   * PAGOS pasa los suyos (ver `ROTULOS_PAGO`). Sólo cambian TEXTOS: la lógica, las validaciones y
+   * el DOM son exactamente los mismos.
+   */
+  rotulos?: RotulosImputacion
 }
 
 /** Texto del input para un importe: vacío mientras no se cargó nada, para no arrancar con un "0". */
@@ -21,7 +34,12 @@ const aTexto = (importe: number): string => (importe > 0 ? importeATexto(importe
  * El porcentaje del anillo se mide contra el SALDO PENDIENTE de la factura, no contra su total: lo
  * que se está decidiendo es qué parte de la deuda se cancela con este cobro.
  */
-export function PanelImputacion({ factura, importe, onImporte }: PanelImputacionProps) {
+export function PanelImputacion({
+  factura,
+  importe,
+  onImporte,
+  rotulos = ROTULOS_COBRO,
+}: PanelImputacionProps) {
   /* El input muestra el importe con formato argentino, así que su texto es estado propio: el
      estado global sólo guarda el número. */
   const [texto, setTexto] = useState(() => aTexto(importe))
@@ -42,7 +60,7 @@ export function PanelImputacion({ factura, importe, onImporte }: PanelImputacion
     <div className="fact-panel">
       <div className="fact-panel-pago">
         <label className="fact-panel-lbl" htmlFor={`imp-${factura.id}`}>
-          Importe a cancelar $
+          {rotulos.campoImporte}
         </label>
         <div className={`fact-input-wrap ${excede ? 'fact-input-wrap--error' : ''}`}>
           <span className="fact-input-signo">$</span>
@@ -79,27 +97,27 @@ export function PanelImputacion({ factura, importe, onImporte }: PanelImputacion
               disabled={cancelaTodo}
               onClick={() => onImporte(factura.pendiente)}
             >
-              Cancelar el total
+              {rotulos.atajoTotal}
             </button>
           </div>
         )}
       </div>
 
       <div className="fact-panel-graf">
-        <span className="fact-panel-lbl">Pagado / Pendiente</span>
+        <span className="fact-panel-lbl">{rotulos.rotuloAnillo}</span>
         <div className="fact-panel-graf-in">
           <Donut percent={pct} color={color} />
           <dl className="fact-panel-metricas">
             <div>
-              <dt>Se cancela</dt>
+              <dt>{rotulos.metricaProporcion}</dt>
               <dd style={{ color }}>{pct}%</dd>
             </div>
             <div>
-              <dt>Monto a cobrar</dt>
+              <dt>{rotulos.metricaImporte}</dt>
               <dd>{money(aCobrar)}</dd>
             </div>
             <div>
-              <dt>Pendiente resultante</dt>
+              <dt>{rotulos.metricaResultante}</dt>
               <dd className={cancelaTodo ? 't-green' : 't-red'}>{money(pendienteResultante)}</dd>
             </div>
           </dl>
