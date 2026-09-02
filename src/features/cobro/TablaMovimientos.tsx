@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { esPagoConTarjeta, esRetencion } from '@/lib/pagos'
+import { esChequeDeCobro, esPagoConTarjeta, esRetencion } from '@/lib/pagos'
 import { money } from '@/lib/format'
 import { useDispatch } from '@/state/hooks'
 import type { MovimientoPago } from '@/types'
@@ -54,10 +54,12 @@ export interface FilaMovimiento {
  * el resto sí, para poder revisar los datos antes de emitir el recibo.
  */
 function detalleDe(m: MovimientoPago): Dato[] {
-  if (m.formaPago === 'Cheque') {
+  /* Papel y electrónico despliegan lo MISMO: cuál de los dos es ya lo dice la columna del medio de
+     la propia fila, así que repetirlo acá como un dato más sería decirlo dos veces en la misma
+     pantalla. */
+  if (esChequeDeCobro(m.formaPago)) {
     return [
       { label: 'Número de cheque', valor: m.numeroCheque || '—' },
-      { label: 'Tipo', valor: m.formatoCheque === 'eCheq' ? 'eCheq' : 'Papel' },
       { label: 'Fecha de emisión', valor: m.fechaEmisionCheque || '—' },
       { label: 'Fecha de vencimiento', valor: m.chequeVencimiento || '—' },
       { label: 'Banco emisor', valor: m.bancoEmisor || '—' },

@@ -4,6 +4,7 @@ import { EnviarDocumento } from '@/features/shared/EnviarDocumento'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
 import { descripcionDePaso, etiquetaDePaso, numeroDePaso, pasoAnterior } from '@/lib/pasos'
 import { armarRecibo, pagosDeAnticipos, NRO_RECIBO } from '@/lib/recibo'
+import { pedirRegistro } from '@/services/monday'
 import { useApp, useDispatch } from '@/state/hooks'
 import { ReciboAGenerar } from './ReciboAGenerar'
 import { ResumenRecibo } from './ResumenRecibo'
@@ -29,10 +30,15 @@ export function ReciboView() {
     vencimientoAnticipo,
     anticipos,
     aplicaciones,
+    reciboId,
   } = useApp()
   const dispatch = useDispatch()
   // Aviso al intentar cerrar la operación sin haber emitido el recibo.
   const [aviso, setAviso] = useState(false)
+  /* El pedido de registro está en vuelo. Mientras tanto el botón de cierre se apaga: es una
+     escritura que impacta la cuenta corriente del cliente, y repetirla por un doble click la
+     pediría dos veces. */
+  const [registrando, setRegistrando] = useState(false)
   /* Todo el ciclo de la emisión —escritura, pedido al tablero y seguimiento del estado— vive en el
      hook. Acá sólo se lo dispara y se reparte su estado entre las dos cards. Ese estado lo guarda el
      hook en el estado GLOBAL, así que volver un paso y regresar reencuentra el recibo emitido en vez
@@ -104,15 +110,45 @@ export function ReciboView() {
     })
   }
 
-  /* Cierra la operación y deja la app lista para la próxima cobranza. Con el recibo sin emitir el
-     botón sigue activo a propósito: la ventana explica por qué no se puede cerrar, en vez de dejar
-     un botón muerto sin motivo (mismo criterio que el resto de los pasos). */
+  /**
+   * Cierra la operación y deja la app lista para la próxima cobranza. Con el recibo sin emitir el
+   * botón sigue activo a propósito: la ventana explica por qué no se puede cerrar, en vez de dejar
+   * un botón muerto sin motivo (mismo criterio que el resto de los pasos).
+   *
+   * Antes de cerrar le PIDE al tablero que registre el cobro —"🤖Estado Registro de Cobro" en
+   * "Registrar"—, que es lo que dispara la automatización que impacta la cuenta corriente del
+   * cliente y marca las facturas como cobradas. Va acá y no al emitir el recibo porque necesita
+   * que el ítem tenga ya todos sus subelementos colgados.
+   *
+   * Se ESPERA la respuesta en vez de largarla y cerrar: si la escritura falla, la operación queda
+   * a medio camino —el recibo existe y se emitió, pero nada impactó en la cuenta y las facturas
+   * siguen figurando pendientes de cobro— y el usuario ya se fue a la pantalla siguiente, sin nada
+   * que le avise. Por eso el cierre sólo ocurre cuando el pedido entró; si no, se avisa y el botón
+   * queda disponible para reintentar.
+   *
+   * Es el MISMO criterio que la orden de pago (ver `finalizar` en `OrdenPagoView`): las dos son la
+   * última escritura de su operación y la que impacta la cuenta corriente, así que las dos se
+   * confirman antes de dar la operación por cerrada.
+   */
   const finalizar = () => {
     if (fase !== 'emitido') {
       setAviso(true)
       return
     }
-    dispatch({ type: 'reset' })
+    if (registrando) return
+    /* Sin id no hay a quién pedirle el registro. No debería pasar —el recibo emitido siempre dejó
+       su ítem—, pero de darse, cerrar igual es mejor que dejar al usuario encerrado en la etapa. */
+    if (!reciboId) {
+      dispatch({ type: 'reset' })
+      return
+    }
+    setRegistrando(true)
+    pedirRegistro(reciboId)
+      .then(() => dispatch({ type: 'reset' }))
+      .catch(() => {
+        setRegistrando(false)
+        dispatch({ type: 'errorMonday', accion: 'pedir el registro del cobro' })
+      })
   }
 
   return (
@@ -177,8 +213,23 @@ export function ReciboView() {
             {/* Sin rótulo de estado al lado del botón: en qué anda la emisión ya lo dicen el propio
                 botón "Emitir el recibo" y el semáforo de la card del documento, los dos a la vista.
                 Repetirlo acá era decir tres veces lo mismo. */}
-            <button type="button" className="btn btn-primary" onClick={finalizar}>
-              <i className="fas fa-flag-checkered" /> Finalizar Operación
+            {/* Mientras el pedido viaja, el botón lo dice en vez de quedarse mudo: es la última
+                escritura de la operación y la que impacta la cuenta corriente. */}
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={registrando}
+              onClick={finalizar}
+            >
+              {registrando ? (
+                <>
+                  <i className="fas fa-circle-notch fa-spin" /> Registrando el cobro…
+                </>
+              ) : (
+                <>
+                  <i className="fas fa-flag-checkered" /> Finalizar Operación
+                </>
+              )}
             </button>
           </div>
         </div>

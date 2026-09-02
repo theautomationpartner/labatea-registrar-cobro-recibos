@@ -7,11 +7,14 @@ import {
   TIPOS_RETENCION,
   MSG_CHEQUE_CLIENTE_NO,
   MSG_CHEQUE_VENC_CORTO,
+  MSG_ECHEQ_SIN_ENDOSO,
   MSG_TARJETA_VENC_CORTO,
   validarCuitEmisor,
   cuitCompleto,
   emisorDelCliente,
   esAnticipoDeCobro,
+  endosadoALaBatea,
+  esChequeDeCobro,
   esPagoConTarjeta,
   esRetencion,
   partesCuit,
@@ -24,7 +27,7 @@ import { aIso, desdeIso, manana } from '@/lib/dates'
 import { formatearImporteAR, importeATexto, money } from '@/lib/format'
 import type { DatosComprobante } from '@/services/make'
 import { useApp, useDispatch } from '@/state/hooks'
-import type { CuentaPropia, FormaPago, FormatoCheque, MovimientoPago } from '@/types'
+import type { CuentaPropia, FormaPago, MovimientoPago } from '@/types'
 import { BancoEmisorSelect } from './BancoEmisorSelect'
 import { LectorComprobante, type VolcadoDatos } from './LectorComprobante'
 import { TipoTarjetaSelect } from './TipoTarjetaSelect'
@@ -46,7 +49,6 @@ const BORRADOR_VACIO: Borrador = {
   fechaEmisionCheque: '',
   bancoEmisor: '',
   cuitEmisor: '',
-  formatoCheque: 'FISICO',
   cuentaPropia: null,
   cuentaPropiaId: null,
   comprobanteNombre: '',
@@ -57,12 +59,6 @@ const BORRADOR_VACIO: Borrador = {
   vencimientoTarjeta: '',
   numeroCupon: '',
 }
-
-/** Formato del cheque: el valor es el del sistema, el rótulo es el que ve el usuario. */
-const FORMATOS_CHEQUE: { valor: FormatoCheque; rotulo: string }[] = [
-  { valor: 'FISICO', rotulo: 'Papel' },
-  { valor: 'eCheq', rotulo: 'eCheq' },
-]
 
 /**
  * Cuánto dura el PLEGADO del bloque de un medio de cobro, en ms. Tiene que coincidir con la
@@ -83,7 +79,9 @@ type Ramal = 'cheque' | 'transferencia' | 'retencion' | 'tarjeta' | null
  * el bloque sería un parpadeo gratuito.
  */
 const ramalDe = (forma: string): Ramal => {
-  if (forma === 'Cheque') return 'cheque'
+  /* El cheque de papel y el eCheq son dos medios del catálogo pero UN solo ramal: piden los mismos
+     campos, así que pasar de uno al otro no debe plegar ni desplegar nada. */
+  if (esChequeDeCobro(forma)) return 'cheque'
   if (forma === 'Transferencia') return 'transferencia'
   if (esRetencion(forma)) return 'retencion'
   if (esPagoConTarjeta(forma as FormaPago)) return 'tarjeta'
@@ -396,7 +394,13 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
   // Al desmontar el formulario no puede quedar un temporizador buscando un ramal que ya no está.
   useEffect(() => () => clearTimeout(relojRamal.current), [])
 
-  const esCheque = borrador.formaPago === 'Cheque'
+  /* Los DOS cheques —papel y electrónico— comparten todo el ramal: mismos campos, mismas
+     validaciones y el mismo lector. Lo único que los separa es a qué caja del tablero va el
+     movimiento (ver `CAJA_INDEX`), que se resuelve al escribirlo. */
+  const esCheque = esChequeDeCobro(borrador.formaPago)
+  /* De los dos, el ELECTRÓNICO tiene una validación propia: su endoso (ver `aplicarDatos`). El
+     papel no la tiene porque se recibe en la mano, y ahí no hay endoso que leer. */
+  const esEcheq = borrador.formaPago === 'Echeq'
   const esTransferencia = borrador.formaPago === 'Transferencia'
   /* Cualquier medio que empiece con "Retencion" (IVA, IIBB, GAN…) comparte el mismo ramal:
      importe + comprobante adjunto, los dos obligatorios para poder agregar el movimiento. */
@@ -747,7 +751,9 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
         'chequeVencimiento',
         'bancoEmisor',
         'cuitEmisor',
-        'formatoCheque',
+        /* El FORMATO no entra: papel o electrónico es la decisión que el usuario ya tomó al elegir
+           el medio, y dejar que el documento la pise cambiaría el movimiento de caja por detrás,
+           sin ningún campo en pantalla donde se vea ni se pueda corregir. */
       ] as const)
     /* La CUENTA no está: el comprobante de una transferencia dice de dónde salió el dinero, no en
        cuál de las cuentas de La Batea entró. Eso lo elige el usuario. */
@@ -793,6 +799,17 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
    * comparación contra el cliente lo que habilita el alta, y eso no lo puede traer un documento—.
    */
   const aplicarDatos = (datos: DatosComprobante): VolcadoDatos => {
+    /* eCHEQ · a nombre de QUIÉN quedó el cheque decide si el documento sirve, antes que cualquier
+       otro dato: sólo lo puede depositar aquel a cuyo favor está, así que si no es La Batea no hay
+       nada suyo que valga la pena cargar —el importe y las fechas pueden estar perfectos y el
+       cheque seguir siendo incobrable para nosotros—.
+
+       Se avisa SIN bloquear: el usuario puede reemplazar el documento por uno bien endosado o
+       cambiar de medio, y dejar el formulario trabado no le daría ninguna salida más que ésas. */
+    if (esEcheq && !endosadoALaBatea(datos.cuitDestinatario)) {
+      return { cargados: 0, rechazo: MSG_ECHEQ_SIN_ENDOSO }
+    }
+
     /* RETENCIONES · el certificado tiene que ser del cliente de la operación. La comparación es
        contra el CUIT que la lectura sacó del propio documento, y se hace ANTES de tocar un solo
        campo: si el comprobante es de otro contribuyente, no hay nada suyo que valga la pena cargar.
@@ -838,7 +855,6 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
       if (d.chequeVencimiento) s.chequeVencimiento = d.chequeVencimiento
       if (d.bancoEmisor) s.bancoEmisor = deCatalogo(d.bancoEmisor, BANCOS_EMISORES_BASE)
       if (d.cuitEmisor) s.cuitEmisor = d.cuitEmisor
-      if (d.formatoCheque) s.formatoCheque = d.formatoCheque
       /* El impuesto que reconoció el documento MANDA sobre el que se había declarado: los datos
          que entran son los de ese certificado, y dejarlos bajo otro tipo los mandaría a la caja
          equivocada. El escenario avisa del cambio con una advertencia; acá se acata. */
@@ -1045,12 +1061,16 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
       {/* EFECTIVO: no pide nada más, así que el "+ Agregar" cierra la fila principal. */}
       {!conLector && botonAgregar()}
 
-      {/* CHEQUE. El papel —o el PDF del eCheq— trae TODOS los datos, así que la pantalla se arma
-          igual que la de retenciones: el recuadro de carga a la izquierda y, a su derecha, los
-          campos que esa lectura completa.
+      {/* CHEQUE y ECHEQ. Un solo bloque para los dos: el papel y el electrónico piden exactamente
+          los mismos datos, y CUÁL de los dos es ya quedó dicho en el selector de medio —por eso acá
+          no hay ningún campo "Tipo": sería preguntar de nuevo algo ya contestado, con la chance de
+          que las dos respuestas no coincidan—.
+
+          El documento trae TODOS los datos, así que la pantalla se arma igual que la de retenciones:
+          el recuadro de carga a la izquierda y, a su derecha, los campos que esa lectura completa.
 
           Van en el orden en que se lee el cheque que el cliente tiene en la mano: cuánto es, QUÉ
-          documento es (tipo, número y sus dos fechas) y QUIÉN responde por él (CUIT del emisor, que
+          documento es (número y sus dos fechas) y QUIÉN responde por él (CUIT del emisor, que
           además hay que validar contra el cliente, y el banco contra el que se libra). */}
       {(esCheque || saliendo === 'cheque') && (
         <div
@@ -1062,30 +1082,6 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
 
             <div className="cobro-lector-campos">
               {campoImporte()}
-
-              <div className="cobro-form-campo cobro-form-campo--val cobro-campo--formato">
-                <label htmlFor="cobro-cheque-formato">
-                  Tipo
-                  <Req />
-                </label>
-                <select
-                  id="cobro-cheque-formato"
-                  className="cobro-in"
-                  value={borrador.formatoCheque ?? 'FISICO'}
-                  onChange={(e) =>
-                    setBorrador({
-                      ...borrador,
-                      formatoCheque: e.target.value as FormatoCheque,
-                    })
-                  }
-                >
-                  {FORMATOS_CHEQUE.map((f) => (
-                    <option key={f.valor} value={f.valor}>
-                      {f.rotulo}
-                    </option>
-                  ))}
-                </select>
-              </div>
 
               <div className="cobro-form-campo cobro-form-campo--val cobro-campo--nro">
                 <label htmlFor="cobro-cheque-nro">

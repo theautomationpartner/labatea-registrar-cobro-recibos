@@ -853,7 +853,8 @@ export const CAJA_ANTICIPO_INDEX = 11
  * Los índices salen del propio tablero: {"0":"Transferencia","1":"Cheque","2":"Efectivo",
  * "3":"Tarjeta de Debito","4":"Tarjeta de Crédito","6":"Retencion IIBB","7":"Retencion IG",
  * "8":"Retencion IVA","9":"Dif de Caja","10":"Fact Cancelada","11":"Anticipo",
- * "12":"Retencion IIBB","13":"Retencion CCSS"} — OJO, no siguen el orden en que se ven, falta el 5,
+ * "12":"Retencion IIBB","13":"Retencion CCSS","14":"Debito x Pase de Saldo",
+ * "15":"Credito x Pase de Saldo","16":"Echeq"} — OJO, no siguen el orden en que se ven, falta el 5,
  * y el 12 es un DUPLICADO de "Retencion IIBB": las retenciones de IIBB se escriben en el 6, que es
  * donde están las que ya se registraron.
  *
@@ -863,7 +864,11 @@ export const CAJA_ANTICIPO_INDEX = 11
  */
 export const CAJA_INDEX: Record<Exclude<FormaPago, FormaPagoSinIndice>, number> = {
   Transferencia: 0,
+  /* El PAPEL. El cheque ELECTRÓNICO tiene su propia etiqueta —"Echeq", el 16, agregada después y
+     por eso al final de la lista—, igual que en el tablero de la orden de pago: son dos cajas
+     distintas del board, no un cheque con un atributo al lado. */
   Cheque: 1,
+  Echeq: 16,
   Efectivo: 2,
   'Tarjeta de débito': 3,
   'Tarjeta de crédito': 4,

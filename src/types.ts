@@ -214,7 +214,17 @@ export interface Cliente {
  */
 export type FormaPago =
   | 'Efectivo'
+  /**
+   * CHEQUE de papel y CHEQUE ELECTRÓNICO. Son dos medios separados del catálogo —no un cheque con
+   * un campo "tipo" al lado— porque el tablero también los separa: cada uno tiene su etiqueta en
+   * "✋Caja" y su valor en "🤖Origen Cheque". Elegirlo en el selector deja registrado QUÉ documento
+   * es sin un campo extra que pueda quedar en desacuerdo con el medio.
+   *
+   * Piden EXACTAMENTE los mismos datos y comparten el mismo ramal de carga (ver `esChequeDeCobro`):
+   * lo único que cambia entre uno y otro es a qué caja del tablero va el movimiento.
+   */
   | 'Cheque'
+  | 'Echeq'
   | 'Transferencia'
   | 'Retencion IVA'
   | 'Retencion IIBB'
@@ -254,7 +264,10 @@ export interface MovimientoPago {
   id: string
   formaPago: FormaPago
   importe: number
-  /** Sólo cheque: no puede vencer después del día de hoy (ver `chequeInvalido`). */
+  /**
+   * Cheque y eCheq: no puede vencer ANTES de hoy (ver `chequeInvalido`). Hacia adelante no hay
+   * tope —un vencimiento lejano es un cheque diferido, no un error—.
+   */
   chequeVencimiento: string
   /** Cheque: número, fecha de emisión (dd/mm/aaaa) y banco emisor. */
   numeroCheque?: string
@@ -279,8 +292,6 @@ export interface MovimientoPago {
    * "🤖Nro Comprobante" que el número del cheque, el del cupón y el del certificado.
    */
   nroComprobanteTransferencia?: string
-  /** Cheque: formato del documento, físico o electrónico (eCheq). */
-  formatoCheque?: FormatoCheque
   /**
    * Cuenta bancaria PROPIA sobre la que impacta el pago, elegida del tablero de configuración: en la
    * transferencia es la cuenta de destino; en la tarjeta, el "Banco de Acreditación".
@@ -627,7 +638,9 @@ export interface MovimientoCaja {
   cuitEmisor?: string
   /**
    * Papel o electrónico. Alimenta "🤖Origen Cheque" del subelemento de la orden, que es la misma
-   * distinción que el recibo escribe desde `MovimientoPago.formatoCheque`.
+   * distinción que el recibo escribe en SU columna homónima. Acá es un CAMPO del movimiento porque
+   * el pago tiene una sola caja "Cheque"; en el cobro son dos medios separados del catálogo
+   * ("Cheque" y "Echeq") y el formato se deriva de cuál se eligió (ver `formatoDeCheque`).
    *
    * En un cheque de CARTERA sale del tablero ("🤖Tipo de Cheque"); en uno NUEVO queda sin definir,
    * porque el formulario todavía no lo pregunta, y entonces la columna se OMITE en vez de asumir

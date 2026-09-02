@@ -15,12 +15,13 @@
  */
 import { parseDate } from '@/lib/dates'
 import { money, round2 } from '@/lib/format'
-import type { Cliente, FormaPago, MovimientoPago } from '@/types'
+import type { Cliente, FormaPago, FormatoCheque, MovimientoPago } from '@/types'
 
 /** Medios de cobro que se ofrecen, en el orden en que aparecen en el selector. */
 export const FORMAS_PAGO: readonly FormaPago[] = [
   'Efectivo',
   'Cheque',
+  'Echeq',
   'Transferencia',
   'Retencion IVA',
   'Retencion IIBB',
@@ -62,10 +63,18 @@ export const MEDIO_RETENCION = 'Retencion'
  * Es la diferencia entre una lista de seis opciones y una de diez, casi todas iguales salvo la
  * sigla: el usuario elige primero CÓMO le pagaron y recién después, si hace falta, el detalle.
  */
+const MEDIOS_SIN_RETENCION = FORMAS_PAGO.filter((f) => !esRetencion(f))
+
+/* Dónde se inserta la opción genérica: justo DESPUÉS de la transferencia, que es donde termina el
+   dinero que entra en efectivo o por banco y empieza lo demás. Se busca por nombre y no por
+   posición: sumar un medio al catálogo —como el eCheq— movería un índice fijo y mandaría la
+   retención al medio de la lista. */
+const CORTE_RETENCION = MEDIOS_SIN_RETENCION.indexOf('Transferencia') + 1
+
 export const MEDIOS_COBRO: readonly string[] = [
-  ...FORMAS_PAGO.filter((f) => !esRetencion(f)).slice(0, 3),
+  ...MEDIOS_SIN_RETENCION.slice(0, CORTE_RETENCION),
   MEDIO_RETENCION,
-  ...FORMAS_PAGO.filter((f) => !esRetencion(f)).slice(3),
+  ...MEDIOS_SIN_RETENCION.slice(CORTE_RETENCION),
 ]
 
 /**
@@ -90,6 +99,25 @@ export const tipoDeRetencion = (forma: FormaPago | string | undefined): string =
 /** Las dos tarjetas comparten el mismo ramal de carga (datos del plástico + acreditación). */
 export const esPagoConTarjeta = (forma: FormaPago | null | undefined): boolean =>
   forma === 'Tarjeta de débito' || forma === 'Tarjeta de crédito'
+
+/**
+ * El medio es un CHEQUE, de papel o electrónico. Los dos son medios propios del catálogo y piden
+ * exactamente los mismos datos —número, las dos fechas, CUIT del emisor y banco—, así que comparten
+ * ramal de carga, validaciones y detalle en la tabla. Mismo criterio que las dos tarjetas.
+ */
+export const esChequeDeCobro = (forma: FormaPago | string | null | undefined): boolean =>
+  forma === 'Cheque' || forma === 'Echeq'
+
+/**
+ * Qué DOCUMENTO es el cheque, a partir del medio elegido. Es la única traducción entre las dos
+ * formas de nombrar lo mismo: el catálogo del cobro ("Cheque" / "Echeq") y el formato con el que el
+ * tablero identifica al papel y al electrónico (ver `CHEQUE_ORIGEN_LABEL`).
+ *
+ * Existe para que el formato NO sea un dato guardado al lado del medio: derivándolo, no hay forma
+ * de registrar un movimiento que diga "Echeq" y viaje al tablero como cheque de papel.
+ */
+export const formatoDeCheque = (forma: FormaPago | string): FormatoCheque =>
+  forma === 'Echeq' ? 'eCheq' : 'FISICO'
 
 /* ===== Cheque ===== */
 
@@ -218,13 +246,60 @@ export function validarCuitEmisor(
   return digitosCuit(cuitEmisor) === delCliente ? 'cliente-no-acepta' : 'ok'
 }
 
+/* ===== eCheq: el endoso ===== */
+
+/**
+ * CUIT de LA BATEA. Es el destinatario que tiene que figurar en el endoso de un eCheq para que se
+ * lo pueda depositar.
+ *
+ * Va escrito con los guiones del formato del país, igual que todo CUIT en esta app: la comparación
+ * es por dígitos (`mismoCuit`), así que el formato es sólo para que se lea.
+ */
+export const CUIT_LA_BATEA = '30-70906788-1'
+
+/**
+ * El eCheq quedó A NOMBRE DE LA BATEA: el CUIT del beneficiario que devolvió la lectura es el
+ * nuestro.
+ *
+ * A diferencia del cheque de papel —que se recibe con el documento en la mano—, un eCheq vive en el
+ * sistema del banco y sólo lo puede depositar aquel a cuyo favor está. Por eso el control NO es
+ * contra el cliente sino contra NOSOTROS: un eCheq que quedó a nombre de otro contribuyente no lo
+ * cobra La Batea por más que todos sus datos estén completos y el cliente sea el correcto.
+ *
+ * Se compara el DESTINO y nunca el endosante: el endosante es quien nos transfirió el cheque —un
+ * tercero, por definición— y exigirle nuestro CUIT rechazaría todos los eCheq endosados, que son
+ * justamente los que llegan bien.
+ *
+ * Que el endoso figure PENDIENTE de aceptación no lo invalida: el cheque ya está a nuestro nombre y
+ * aceptarlo es un trámite nuestro en el banco. El escenario lo informa como advertencia y así se
+ * muestra, sin frenar la carga.
+ *
+ * Sin CUIT de destino devuelve `false`, y a propósito: acá la ausencia del dato NO es un permiso
+ * —al revés que en el resto de las validaciones de la app—. Un eCheq del que no se pudo leer a
+ * nombre de quién quedó es exactamente el que no se sabe si se va a poder cobrar.
+ */
+export const endosadoALaBatea = (cuitDestinatario: string | undefined): boolean =>
+  mismoCuit(cuitDestinatario, CUIT_LA_BATEA)
+
+/**
+ * Lo que se dice cuando el eCheq no quedó a nuestro nombre. Nombra las DOS salidas posibles —que se
+ * endose a La Batea, o que se cobre con otro medio—, porque desde la pantalla no hay nada que
+ * corregir: el endoso se hace en el banco, no en este formulario.
+ */
+export const MSG_ECHEQ_SIN_ENDOSO =
+  `El eCheq no figura a nombre de La Batea (CUIT ${CUIT_LA_BATEA}), así que no se va a poder depositar. Pedí que se endose a La Batea y volvé a cargar el comprobante, o registrá el cobro con otro medio.`
+
 /**
  * REGLA DEL CHEQUE: el VENCIMIENTO no puede ser ANTERIOR al día en que se emite el recibo, que es
  * hoy. Un cheque ya vencido no lo paga el banco, así que darlo por cobrado dejaría asentado un
  * ingreso de dinero que no va a ocurrir.
  *
  * De hoy en adelante entra todo: un cheque al día vence hoy mismo y uno de pago diferido vence
- * después, y los dos son cobrables.
+ * después, y los dos son cobrables. No hay tope por arriba —un vencimiento lejano es un cheque
+ * diferido, no un error—, así que lo único que se controla es que no haya quedado atrás.
+ *
+ * Vale IGUAL para el papel y para el eCheq: los dos se cobran por su vencimiento (ver
+ * `esChequeDeCobro`).
  *
  * La fecha de EMISIÓN del cheque no entra en la regla: es un dato del documento —cuándo lo libró su
  * emisor— y puede ser de cualquier día anterior. Se pide cargada, nada más.
@@ -255,7 +330,7 @@ export function vencimientoChequeInvalido(vencimiento: string | undefined): bool
 export function chequeInvalido(
   m: Pick<MovimientoPago, 'formaPago' | 'chequeVencimiento'>,
 ): boolean {
-  if (m.formaPago !== 'Cheque') return false
+  if (!esChequeDeCobro(m.formaPago)) return false
   return vencimientoChequeInvalido(m.chequeVencimiento)
 }
 
@@ -495,7 +570,9 @@ export function bloqueoCobro(
     return {
       titulo: 'Hay un cheque vencido',
       mensaje: `${MSG_CHEQUE_VENCIMIENTO}.`,
-      faltantes: fueraDeFecha.map((m) => `Cheque ${m.numeroCheque?.trim() || 's/nro'}`),
+      /* Se nombra el MEDIO y no "Cheque" a secas: en la lista pueden convivir un cheque de papel y
+         un eCheq, y decirle "Cheque" a los dos obligaría a buscar cuál es cuál en la tabla. */
+      faltantes: fueraDeFecha.map((m) => `${m.formaPago} ${m.numeroCheque?.trim() || 's/nro'}`),
     }
   }
 

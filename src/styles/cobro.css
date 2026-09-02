@@ -778,8 +778,11 @@
   max-width: 100%;
 }
 /* Cheque: los campos que no entran en la medida de todos los demás. Cada uno pide lo que su
-   contenido necesita —el CUIT son tres tramos más el botón "Validar", el tipo son dos palabras
-   cortas—, y con esas bases el renglón se parte solo en dos líneas parejas. */
+   contenido necesita —el CUIT son tres tramos más el botón "Validar"—, y con esas bases el renglón
+   se parte solo en dos líneas parejas.
+
+   El `--formato` es del formulario de PAGOS, que sigue preguntando papel o eCheq en un campo: en
+   COBROS esa pregunta la contesta el propio medio de cobro y el campo no existe. */
 .cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-campo--formato {
   flex: 0 0 120px;
 }

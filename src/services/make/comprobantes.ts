@@ -79,6 +79,19 @@ export interface DatosComprobante {
   chequeVencimiento?: string
   bancoEmisor?: string
   cuitEmisor?: string
+  /**
+   * eCHEQ · CUIT del BENEFICIARIO, o sea a nombre de quién quedó el cheque después del último
+   * endoso ("cuit_destino" en el contrato CHEQUE_V1). Es el dato que dice quién lo puede depositar.
+   *
+   * OJO con el vocabulario del documento: el eCheq trae TRES CUIT y sólo éste sirve para el
+   * control. El "cuit_emisor" es el librador que lo emitió, y el "cuit_endosante" es quien nos lo
+   * transfirió —un tercero—: compararlo contra el nuestro rechazaría todos los eCheq endosados,
+   * que son justamente los que llegan bien.
+   *
+   * No se carga en ningún campo —el formulario no lo pide—: sirve sólo para contrastarlo contra el
+   * CUIT propio antes de volcar nada (ver `endosadoALaBatea` en `lib/pagos`).
+   */
+  cuitDestinatario?: string
   formatoCheque?: FormatoCheque
   // Retenciones
   /**
@@ -307,6 +320,17 @@ const ALIAS: Record<keyof DatosComprobante, string[]> = {
   ],
   bancoEmisor: ['bancoEmisor', 'banco', 'bankName'],
   cuitEmisor: ['cuitEmisor', 'cuitOrigen', 'cuit', 'cuitLibrador', 'taxId'],
+  /* A nombre de QUIÉN quedó el cheque. En un endoso hay dos partes y tomar la equivocada invertiría
+     la comparación, así que "endosante" —el que nos lo pasa— queda deliberadamente afuera: el que
+     tiene que dar nuestro CUIT es el DESTINO. */
+  cuitDestinatario: [
+    'cuitDestino',
+    'cuitDestinatario',
+    'cuitBeneficiario',
+    'cuitTitular',
+    'destinatario',
+    'beneficiario',
+  ],
   formatoCheque: ['formatoCheque', 'tipoCheque', 'formato'],
   /* Sin un alias suelto "tipo": lo llevarían también `tipo_valido` y `tipo_detectado`, que son el
      veredicto del documento y no el impuesto. */
@@ -383,7 +407,21 @@ const ALIAS_PROHIBIDOS: Partial<Record<keyof DatosComprobante, string[]>> = {
   /* El comprobante trae los DOS lados de la operación. El alias "cuit" alcanza por parcial a
      cualquiera de ellos, y tomar el equivocado es exactamente el error que hay que evitar: el
      retenido y el destinatario son La Batea, no el cliente que se está validando. */
-  cuitEmisor: ['cuitSujetoRetenido', 'sujetoRetenido', 'cuitRetenido', 'cuitDestino'],
+  cuitEmisor: [
+    'cuitSujetoRetenido',
+    'sujetoRetenido',
+    'cuitRetenido',
+    'cuitDestino',
+    /* Mismo riesgo en el eCheq: trae el CUIT del LIBRADOR y el del endoso, y el alias suelto "cuit"
+       alcanza por parcial a los dos. Sin esta veda, un eCheq que no traiga emisor cargaría acá el
+       CUIT de La Batea y la validación contra el cliente compararía contra nosotros mismos. */
+    'cuitEndosante',
+    'endosante',
+  ],
+  /* "tipo_beneficiario" dice NOMINAL o AL PORTADOR: es la clase de cheque, no quién lo cobra. El
+     alias "beneficiario" lo alcanza por parcial y su valor pasaría el filtro de "sirve" —es texto
+     no vacío—, gastando el campo en algo que nunca va a ser un CUIT. */
+  cuitDestinatario: ['tipoBeneficiario'],
 }
 
 /**
@@ -446,6 +484,7 @@ function normalizar(fuente: Record<string, unknown>): DatosComprobante {
   poner('chequeVencimiento', aFecha(leer('chequeVencimiento')))
   poner('bancoEmisor', aTexto(leer('bancoEmisor')))
   poner('cuitEmisor', aCuit(leer('cuitEmisor')))
+  poner('cuitDestinatario', aCuit(leer('cuitDestinatario')))
   poner('formatoCheque', aFormatoCheque(leer('formatoCheque')))
   poner('tipoRetencion', aTexto(leer('tipoRetencion')))
   poner('anioRetencion', aAnio(leer('anioRetencion')))

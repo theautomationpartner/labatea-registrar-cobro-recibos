@@ -42,7 +42,14 @@
  */
 import { round2 } from '@/lib/format'
 import { aIso } from '@/lib/dates'
-import { cuitCompleto, esAnticipoDeCobro, esRetencion, esPagoConTarjeta } from '@/lib/pagos'
+import {
+  cuitCompleto,
+  esAnticipoDeCobro,
+  esChequeDeCobro,
+  esRetencion,
+  esPagoConTarjeta,
+  formatoDeCheque,
+} from '@/lib/pagos'
 import type { MovimientoPago } from '@/types'
 import {
   BANCO_EMISOR_LABEL,
@@ -204,7 +211,8 @@ function columnasDifCaja(diferencia: number): Record<string, unknown> {
  * movimiento; a partir de ahí, cada medio completa lo suyo y nada más:
  *
  *   · Transferencia → la cuenta propia que recibió el dinero y el número de la operación.
- *   · Cheque        → número, CUIT del emisor, emisión, vencimiento, origen y banco.
+ *   · Cheque/Echeq  → número, CUIT del emisor, emisión, vencimiento, origen y banco. Los dos medios
+ *                     escriben lo mismo salvo la caja y el origen, que es lo que los distingue.
  *   · Tarjeta       → banco emisor, tipo, cupón, vencimiento y cuenta de acreditación.
  *   · Retención     → nada extra acá: lo único que agrega es su comprobante, que es un archivo.
  *   · EFECTIVO      → NADA: se queda con la caja y el importe, por definición del requerimiento.
@@ -233,7 +241,7 @@ function columnasPago(m: MovimientoPago): Record<string, unknown> {
     return cv
   }
 
-  if (m.formaPago === 'Cheque') {
+  if (esChequeDeCobro(m.formaPago)) {
     /* El número del cheque va a "🤖Nro Comprobante", que es de TEXTO: se escribe tal como se cargó,
        sin recortarle nada. Un cheque puede llevar ceros a la izquierda o un prefijo, y filtrarle los
        no-dígitos —como hacía falta cuando la columna era numérica— le cambiaba el número. */
@@ -247,8 +255,10 @@ function columnasPago(m: MovimientoPago): Record<string, unknown> {
     // "🤖Fecha Venc" es la MISMA columna que usa el vencimiento de la tarjeta.
     const vencimiento = fechaCol(m.chequeVencimiento)
     if (vencimiento) cv[COL.cobroSub.vencimiento] = vencimiento
-    const origen = dropdown(m.formatoCheque ? CHEQUE_ORIGEN_LABEL[m.formatoCheque] : null)
-    if (origen) cv[COL.cobroSub.origenCheque] = origen
+    /* "🤖Origen Cheque" (dropdown_mm5yveka) dice CUÁL de los dos documentos es. Sale del propio
+       medio elegido —no de un campo aparte—, así que va SIEMPRE: un cheque registrado sin origen
+       dejaría al tablero sin saber si el papel existe o si hay un eCheq que acreditar. */
+    cv[COL.cobroSub.origenCheque] = { labels: [CHEQUE_ORIGEN_LABEL[formatoDeCheque(m.formaPago)]] }
     const banco = dropdown(bancoDelTablero(m.bancoEmisor))
     if (banco) cv[COL.cobroSub.bancoEmisor] = banco
     return cv

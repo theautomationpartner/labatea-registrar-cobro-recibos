@@ -10,7 +10,7 @@
  */
 import { desdeIso } from '@/lib/dates'
 import { round2 } from '@/lib/format'
-import { esAnticipoDeCobro, esPagoConTarjeta, esRetencion } from '@/lib/pagos'
+import { esAnticipoDeCobro, esChequeDeCobro, esPagoConTarjeta, esRetencion } from '@/lib/pagos'
 import type { Imputaciones } from '@/lib/cobros'
 import type { FacturaPendiente, MovimientoPago } from '@/types'
 
@@ -121,7 +121,7 @@ export interface Recibo {
  * la columna con algo que el documento no declara.
  */
 export function comprobanteDePago(m: MovimientoPago): string {
-  if (m.formaPago === 'Cheque') return m.numeroCheque?.trim() ?? ''
+  if (esChequeDeCobro(m.formaPago)) return m.numeroCheque?.trim() ?? ''
   if (esPagoConTarjeta(m.formaPago)) return m.numeroCupon?.trim() ?? ''
   if (esRetencion(m.formaPago)) return m.nroComprobanteRetencion?.trim() ?? ''
   return ''
