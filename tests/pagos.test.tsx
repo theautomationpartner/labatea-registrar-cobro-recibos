@@ -19,6 +19,7 @@ import {
   FACTURAS_COMPRA_PENDIENTES,
   ANTICIPOS_PENDIENTES_PROVEEDOR,
 } from '@/data/mock'
+import { ROTULOS_COBRO, ROTULOS_PAGO } from '@/lib/cobros'
 
 const aplicar = (estado: AppState, acciones: Action[]): AppState =>
   acciones.reduce((acc, a) => reducer(acc, a), estado)
@@ -111,6 +112,42 @@ casos.push({
   nombre: 'etapa 2 · factura sin total cargado: se ve y explica por qué no se puede imputar',
   estado: sinTotal,
   contiene: ['PROVEEDOR TEST - №0002-00003313', 'Sin &quot;$ Total a pagar&quot; cargado en el tablero'],
+})
+
+/* La FECHA DE EMISIÓN es de Cobros: la factura de compra no publica ese dato, así que su tabla no
+   dibuja la columna en vez de llenarla de guiones. Los dos rótulos se comparan juntos porque es una
+   sola tabla parametrizada, y lo que hay que atajar es que se filtre de un circuito al otro. */
+const columnaEmision: { nombre: string; ok: boolean }[] = [
+  { nombre: 'COBROS la muestra', ok: ROTULOS_COBRO.mostrarEmision === true },
+  { nombre: 'PAGOS no', ok: ROTULOS_PAGO.mostrarEmision === false },
+]
+
+for (const c of columnaEmision) {
+  if (!c.ok) {
+    fallasAplicacion++
+    console.log(`FALLA  emisión · ${c.nombre}`)
+  } else {
+    console.log(`OK     emisión · ${c.nombre}`)
+  }
+}
+
+casos.push({
+  nombre: 'etapa 2 · la tabla de PAGOS no trae la columna de emisión',
+  estado: etapa2,
+  contiene: ['>Vencimiento<'],
+  noContiene: ['>Emisión<'],
+})
+
+casos.push({
+  nombre: 'etapa 2 · los dos importes se leen igual, sin rojo en el pendiente',
+  estado: etapa2,
+  contiene: ['Total Factura', 'Saldo Pendiente'],
+  noContiene: [
+    // El rojo queda para la mora, no para un saldo que todavía no es un problema.
+    'fact-pend',
+    // El rótulo viejo de la columna.
+    'Importe Original',
+  ],
 })
 
 // ETAPA 2 · con una factura elegida: se despliega el panel con sus rótulos

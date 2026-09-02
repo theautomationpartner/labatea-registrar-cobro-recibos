@@ -75,10 +75,12 @@ function Mora({ vencimiento }: { vencimiento: string }) {
  * su panel de pago: la configuración vive PEGADA a la factura que configura, en vez de en un
  * formulario aparte donde habría que volver a decir de qué comprobante se está hablando.
  *
- * Sin columnas "Fecha" ni "Acciones": la primera no aporta al cobro y la segunda no tiene ninguna
- * acción que ofrecer en este paso. Tampoco "Pagado" ni "Falta": lo cobrado ya se lee en el anillo
- * de "Pagado %" y lo que falta ES el saldo pendiente, que tiene su propia columna —eran
- * las dos el mismo dato dicho por segunda vez—.
+ * Sin columna "Acciones": no hay ninguna acción que ofrecer en este paso. Tampoco "Pagado" ni
+ * "Falta": lo cobrado ya se lee en el anillo de "Pagado %" y lo que falta ES el saldo pendiente,
+ * que tiene su propia columna —eran las dos el mismo dato dicho por segunda vez—.
+ *
+ * Las FECHAS van juntas, emisión antes que vencimiento, que es como se lee una factura. La emisión
+ * sólo aparece donde el tablero la publica (ver `mostrarEmision`).
  *
  * Las filas llegan ordenadas por vencimiento, de la más vieja a la más nueva (ver el servicio de
  * facturas): la tabla las dibuja en el orden en que las recibe.
@@ -211,6 +213,7 @@ export function TablaFacturas({
               />
             </th>
             <th>{rotulos.colNro}</th>
+            {rotulos.mostrarEmision && <th className="fact-col-cen">Emisión</th>}
             <th className="fact-col-cen">Vencimiento</th>
             <th className="fact-col-cen">Días de Mora</th>
             <th className="fact-col-cen">{rotulos.colTotal}</th>
@@ -270,14 +273,23 @@ export function TablaFacturas({
                     </span>
                   )}
                 </td>
+                {/* La emisión NO se pinta de rojo: el que puede estar vencido es el vencimiento. */}
+                {rotulos.mostrarEmision && (
+                  <td className="fact-col-cen">
+                    {desdeIso(f.emision) || <span className="fact-mora-sd">—</span>}
+                  </td>
+                )}
                 <td className={`fact-col-cen ${vencida ? 'fact-mora' : ''}`}>
                   {vence || <span className="fact-mora-sd">—</span>}
                 </td>
                 <td className="fact-col-cen">
                   <Mora vencimiento={f.vencimiento} />
                 </td>
+                {/* Los dos importes se leen igual —negro y en negrita—: el saldo pendiente no es
+                    una alarma, es el otro número de la factura. El rojo queda para lo que sí lo es:
+                    el vencimiento pasado y sus días de mora. */}
                 <td className="fact-col-cen fact-num">{money(f.total)}</td>
-                <td className="fact-col-cen fact-num fact-pend">{money(f.pendiente)}</td>
+                <td className="fact-col-cen fact-num">{money(f.pendiente)}</td>
                 <td className="fact-col-cen">
                   <div className="fact-pagado">
                     <Donut
@@ -297,7 +309,8 @@ export function TablaFacturas({
 
               {(elegida || seCierra) && (
                 <tr className="fact-exp">
-                  <td colSpan={8}>
+                  {/* Ocupa la fila entera, así que sigue a la cantidad de columnas que haya. */}
+                  <td colSpan={rotulos.mostrarEmision ? 9 : 8}>
                     {/* Dos envoltorios para poder animar el DESPLIEGUE: el de afuera anima su alto
                         (de 0fr a 1fr) y el de adentro recorta lo que todavía no entra. Sin esto el
                         panel aparecía de golpe y empujaba la tabla de un salto. */}

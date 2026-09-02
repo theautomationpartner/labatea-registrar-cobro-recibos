@@ -43,7 +43,6 @@
 import { round2 } from '@/lib/format'
 import { aIso } from '@/lib/dates'
 import { cuitCompleto, esAnticipoDeCobro, esRetencion, esPagoConTarjeta } from '@/lib/pagos'
-import { descripcionAnticipo } from '@/lib/recibo'
 import type { MovimientoPago } from '@/types'
 import {
   BANCO_EMISOR_LABEL,
@@ -568,7 +567,9 @@ export async function emitirRecibo(datos: DatosRecibo): Promise<ResultadoRecibo>
   const medios: SubitemACrear[] = esAplicacion
     ? anticiposAplicados.map((a, i) => ({
         alias: `an${i}`,
-        nombre: descripcionAnticipo(a.nro),
+        /* "Anticipo" a secas, igual que la línea de la entrega y que el otro circuito. CUÁL se
+           aplicó lo dice su relación (`COL.cobroSub.anticipoAplicado`), no el nombre. */
+        nombre: 'Anticipo',
         columnas: columnasAnticipoAplicado(a.id, a.importe),
       }))
     : movimientosOrdenados.map((m, i) => ({

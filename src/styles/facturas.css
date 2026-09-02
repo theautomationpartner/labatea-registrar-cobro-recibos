@@ -312,10 +312,6 @@
   font-size: 12px;
   color: var(--c-text-muted);
 }
-/* El saldo pendiente es el número que decide el cobro: se destaca en rojo. */
-.fact-pend {
-  color: #d92d20;
-}
 /* Factura vencida: la fecha y los días de mora se leen como alarma. */
 .fact-mora {
   color: #d92d20;

@@ -34,10 +34,11 @@ export default defineConfig(({ mode }) => {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
       },
     },
-    /* Puerto propio: 5181. La app de operaciones de venta usa el 5180, así que las dos pueden
-       correr a la vez en la misma máquina. `strictPort` evita que Vite salte a otro sin avisar. */
+    /* Puerto propio: 5186. La app de operaciones de venta usa el 5180, así que las dos pueden
+       correr a la vez en la misma máquina. `strictPort` evita que Vite salte a otro sin avisar: si
+       el puerto está ocupado, falla y se ve, en vez de levantar en uno que nadie sabe cuál es. */
     server: {
-      port: 5181,
+      port: 5186,
       strictPort: true,
       // Proxy hacia las APIs externas en desarrollo: evita CORS al pegar desde el navegador.
       proxy: {

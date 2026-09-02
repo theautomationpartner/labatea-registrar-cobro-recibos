@@ -176,6 +176,14 @@ export interface RotulosImputacion {
    * dejó la deuda). En PAGOS no hay tal cosa: la fila se identifica con un solo dato.
    */
   mostrarVinculo: boolean
+  /**
+   * Se muestra la columna FECHA DE EMISIÓN, a la izquierda del vencimiento.
+   *
+   * Sólo en COBROS: la factura pendiente publica su "🤖Fecha Emision" (`date_mm648d33`) y las dos
+   * fechas juntas dicen de cuándo viene la deuda, no sólo cuándo venció. La factura de compra no
+   * trae ese dato, así que en PAGOS la columna se OMITE en vez de dibujar una fila de guiones.
+   */
+  mostrarEmision: boolean
   /** Texto accesible de la casilla de cada fila. */
   ariaIncluir: (nro: string) => string
   /** Texto accesible de la casilla del encabezado. */
@@ -185,7 +193,7 @@ export interface RotulosImputacion {
 /** Los rótulos de una COBRANZA. Son los que rigen si no se pasa ninguno: es el circuito original. */
 export const ROTULOS_COBRO: RotulosImputacion = {
   colNro: 'N° Factura',
-  colTotal: 'Importe Original',
+  colTotal: 'Total Factura',
   colPendiente: 'Saldo Pendiente',
   colPagado: 'Pagado %',
   campoImporte: 'Importe a cancelar $',
@@ -196,6 +204,7 @@ export const ROTULOS_COBRO: RotulosImputacion = {
   atajoTotal: 'Cancelar el total',
   totalPie: 'TOTAL A CANCELAR',
   mostrarVinculo: true,
+  mostrarEmision: true,
   ariaIncluir: (nro) => `Incluir la factura ${nro} en este cobro`,
   ariaTodas: 'Seleccionar todas las facturas',
 }
@@ -206,7 +215,7 @@ export const ROTULOS_COBRO: RotulosImputacion = {
  */
 export const ROTULOS_PAGO: RotulosImputacion = {
   colNro: 'N° Factura',
-  colTotal: 'Importe Original',
+  colTotal: 'Total Factura',
   colPendiente: 'Saldo Pendiente',
   colPagado: 'Pagado %',
   campoImporte: 'Importe a Pagar $',
@@ -217,6 +226,8 @@ export const ROTULOS_PAGO: RotulosImputacion = {
   atajoTotal: 'Pagar el total',
   totalPie: 'TOTAL A PAGAR',
   mostrarVinculo: false,
+  /* La factura de compra pendiente no publica su fecha de emisión. */
+  mostrarEmision: false,
   ariaIncluir: (nro) => `Incluir la factura ${nro} en este pago`,
   ariaTodas: 'Seleccionar todas las facturas de compra',
 }

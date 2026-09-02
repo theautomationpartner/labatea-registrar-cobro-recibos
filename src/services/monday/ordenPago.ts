@@ -24,7 +24,6 @@
  */
 import { aIso } from '@/lib/dates'
 import { round2 } from '@/lib/format'
-import { descripcionAnticipo } from '@/lib/recibo'
 import {
   esAnticipoDePago,
   esCajaCheque,
@@ -162,12 +161,13 @@ export function columnasAnticipoAplicado(importe: number): Record<string, unknow
 }
 
 /**
- * Cómo se NOMBRA la línea del anticipo en el tablero.
+ * Cómo se describe el anticipo EN PANTALLA: "Anticipo · <detalle>".
  *
- * El detalle que escribe el usuario va acá y no en una columna propia porque el board de
- * subelementos de la orden NO tiene una de texto largo —el del recibo sí, "🤖Detalle"
- * (long_text_mm65mm0k)—. El nombre del ítem es el único lugar donde ese dato se conserva, y
- * perderlo sería peor: es el motivo por el que se entregó la plata.
+ * Ya NO nombra la línea del tablero —ahí dice "Anticipo" a secas, como la del recibo—: el detalle
+ * tiene su propia columna desde que el board sumó "🤖Detalle Anticipo" (`text_mm6naqq7`), que es
+ * donde se lo busca y donde se lo puede filtrar. Lo que queda acá es el renglón de la card, donde
+ * el detalle sí aporta: es la única línea del documento y hay lugar para decir por qué se entregó
+ * la plata.
  */
 export const nombreAnticipoPago = (detalle?: string): string => {
   const texto = detalle?.trim()
@@ -473,7 +473,11 @@ export async function crearOrdenDePago(datos: DatosOrdenPago): Promise<Resultado
       ? [
           {
             alias: 'a0',
-            nombre: nombreAnticipoPago(datos.detalleAnticipo),
+            /* "Anticipo", a secas. El DETALLE ya no vive en el nombre: desde que el board tiene su
+               "🤖Detalle Anticipo" (`text_mm6naqq7`) el dato está en su columna, que es donde se lo
+               busca y donde se lo puede filtrar. Meterlo además en el nombre daba una línea distinta
+               por operación para algo que siempre es lo mismo. */
+            nombre: 'Anticipo',
             columnas: columnasAnticipoPago(
               round2(datos.anticipo ?? 0),
               datos.vencimientoAnticipo,
@@ -502,7 +506,10 @@ export async function crearOrdenDePago(datos: DatosOrdenPago): Promise<Resultado
     ...(esAplicacion
       ? aplicados.map((a, i) => ({
           alias: `an${i}`,
-          nombre: descripcionAnticipo(a.nro),
+          /* También "Anticipo" a secas. CUÁL se aplicó no se pierde: la relación al ítem del
+             anticipo se escribe desde el lado del anticipo (ver `vincularAnticiposAplicados`), que
+             es el único lado que tiene esa columna. El nombre no es la trazabilidad. */
+          nombre: 'Anticipo',
           columnas: columnasAnticipoAplicado(a.importe),
         }))
       : entregadas.map((m, i) => ({

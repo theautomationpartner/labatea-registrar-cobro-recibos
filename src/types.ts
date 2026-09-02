@@ -97,9 +97,9 @@ export interface FacturaPendiente {
    */
   idVenta: string
   /**
-   * "🤖Fecha Emision Fact" de la venta vinculada, en ISO (yyyy-MM-dd). Vacío si no hay venta
-   * conectada o si el tablero todavía no cargó la fecha. Es la fecha de emisión que el recibo
-   * declara para cada comprobante cancelado.
+   * "🤖Fecha Emision" (`date_mm648d33`) de la propia factura, en ISO (yyyy-MM-dd). Vacío si el
+   * tablero todavía no la cargó. Es la fecha que el recibo declara para cada comprobante cancelado
+   * y la que la tabla del paso 2 muestra al lado del vencimiento.
    */
   emision: string
   /**
