@@ -18,8 +18,10 @@ import {
   MSG_RETENCION_MINIMO,
   MSG_RETENCION_MINIMO_CORTO,
   type ResultadoRetencion,
+  cajaRepetida,
+  numeroDeCaja,
 } from '@/lib/pagosProveedor'
-import { getFacturasCompraPendientes } from '@/services/monday'
+import { chequeYaRegistrado, getFacturasCompraPendientes } from '@/services/monday'
 import {
   chequeVencido,
   fechaPagoChequeInvalida,
@@ -61,6 +63,7 @@ const BORRADOR_VACIO: Borrador = {
   formatoCheque: undefined,
   bancoOrigen: null,
   bancoOrigenId: null,
+  nroComprobanteTransferencia: '',
 }
 
 /** Formato del cheque que se libra: el valor es el del sistema, el rótulo el que ve el usuario. */
@@ -152,6 +155,20 @@ export function FormularioPago({ bloqueado = false, diferencia = 0 }: Formulario
    * pantalla: el borrador describe UN movimiento, y esto produce varios.
    */
   const [chequesElegidos, setChequesElegidos] = useState<string[]>([])
+  /* La consulta de duplicados está en vuelo. Mientras tanto el "+ Agregar" se apaga y lo dice: es
+     una lectura contra Monday y un doble click dispararía dos altas del mismo cheque. */
+  const [validando, setValidando] = useState(false)
+  /* El cheque que se intentó agregar YA está registrado en el tablero. Guarda lo que la ventana
+     necesita nombrar: si es cheque o eCheq, y con qué CUIT y número se lo encontró. */
+  const [duplicado, setDuplicado] = useState<{
+    formato: FormatoCheque
+    cuit: string
+    numero: string
+  } | null>(null)
+  /* La caja que se intentó agregar ya estaba EN LA TABLA. Es otro problema que el duplicado del
+     tablero —acá no hay una orden anterior, está dos veces en este mismo pago— y por eso tiene su
+     propio aviso. */
+  const [repetida, setRepetida] = useState<{ caja: string; numero: string } | null>(null)
   // Recién al intentar agregar se muestran los errores: no se reta al usuario mientras carga.
   const [intento, setIntento] = useState(false)
   /**
@@ -430,6 +447,10 @@ export function FormularioPago({ bloqueado = false, diferencia = 0 }: Formulario
        nada, `mal()` daba siempre falso y el campo se quedaba mudo —sin borde rojo y sin mensaje—
        aunque el avance sí estuviera frenado. */
     bancoOrigenId: esTransferencia && !borrador.bancoOrigenId,
+    /* El NÚMERO de la transferencia. Es obligatorio porque es lo único que la distingue de otra:
+       sin él, dos transferencias del mismo importe son indistinguibles y no hay forma de saber si
+       la segunda es otra operación o la primera cargada dos veces. */
+    nroTransferencia: esTransferencia && !borrador.nroComprobanteTransferencia?.trim(),
   }
   const completo = !Object.values(faltantes).some(Boolean)
 
@@ -451,8 +472,10 @@ export function FormularioPago({ bloqueado = false, diferencia = 0 }: Formulario
     setIntento(false)
   }
 
-  const agregar = () => {
+  const agregar = async () => {
     setIntento(true)
+    // Con una consulta en vuelo no se arranca otra: el botón ya lo dice, y esto lo hace cumplir.
+    if (validando) return
 
     /* RETENCIÓN · lo que decide si se puede agregar NO es el formulario sino el cálculo: si no
        cerró, se explica por qué y no entra nada. Es la barrera del mínimo no retenible y también la
@@ -487,6 +510,49 @@ export function FormularioPago({ bloqueado = false, diferencia = 0 }: Formulario
     }
 
     if (!completo || bloqueado) return
+
+    /* Lo que se resuelve SIN salir a la red: la misma caja ya cargada en esta tabla. Va antes del
+       control contra Monday porque es más barato y más frecuente —el caso típico es un doble alta
+       del mismo comprobante— y porque no tiene sentido preguntarle al tablero por un cheque que ya
+       está a la vista dos renglones más arriba. */
+    if (!esDeCartera) {
+      const yaCargada = cajaRepetida(pago.movimientos, borrador)
+      if (yaCargada) {
+        setRepetida({ caja: borrador.formaPago, numero: numeroDeCaja(borrador) })
+        return
+      }
+    }
+
+    /* CHEQUE NUEVO · antes de agregarlo se le pregunta al tablero si ese papel ya existe. Sólo el
+       nuevo: el de CARTERA sale de ese mismo tablero, así que preguntarle por él daría siempre que
+       sí —se encontraría a sí mismo—, y que no se pueda elegir dos veces ya lo garantiza la lista,
+       que descarta los que este pago viene usando. */
+    if (esNuevo && proveedor) {
+      setValidando(true)
+      try {
+        const yaExiste = await chequeYaRegistrado({
+          clienteId: proveedor.id,
+          numero: borrador.numeroCheque,
+          cuitEmisor: borrador.cuitEmisor,
+          /* El TIPO acota la búsqueda al formato que se está cargando, con las etiquetas del
+             tablero: "Cheque" para el papel y "eCheq" para el electrónico. */
+          tipo: borrador.formatoCheque === 'eCheq' ? 'eCheq' : 'Cheque',
+        })
+        if (yaExiste) {
+          setDuplicado({
+            formato: borrador.formatoCheque ?? 'FISICO',
+            cuit: borrador.cuitEmisor?.trim() ?? '',
+            numero: borrador.numeroCheque?.trim() ?? '',
+          })
+          return
+        }
+      } catch {
+        dispatch({ type: 'errorMonday', accion: 'verificar si el cheque ya estaba registrado' })
+        return
+      } finally {
+        setValidando(false)
+      }
+    }
 
     /* CARTERA · un movimiento por cheque. El importe NO se pide: es el del papel, y es exactamente
        lo que va a sumar al TOTAL PAGADO. Los datos del cheque se copian del tablero en vez de
@@ -722,11 +788,19 @@ export function FormularioPago({ bloqueado = false, diferencia = 0 }: Formulario
       <button
         type="button"
         className="cobro-btn cobro-btn--primary"
-        disabled={calculandoRetencion}
+        disabled={calculandoRetencion || validando}
         title={calculandoRetencion ? 'Esperá a que termine el cálculo de la retención' : undefined}
-        onClick={agregar}
+        onClick={() => void agregar()}
       >
-        <i className="fas fa-plus" /> Agregar
+        {validando ? (
+          <>
+            <i className="fas fa-circle-notch fa-spin" /> Validando…
+          </>
+        ) : (
+          <>
+            <i className="fas fa-plus" /> Agregar
+          </>
+        )}
       </button>
     </div>
   )
@@ -1011,6 +1085,32 @@ export function FormularioPago({ bloqueado = false, diferencia = 0 }: Formulario
               'cobro-campo--ctatransf pago-campo--banco-origen',
             )}
 
+            {/* NRO DE TRANSFERENCIA · el identificador que da el banco. Es lo único que distingue
+                una transferencia de otra, así que sin él no se puede saber si la que se está
+                cargando es una operación nueva o la anterior por segunda vez. */}
+            <div className="cobro-form-campo cobro-form-campo--val">
+              <label htmlFor="pago-transf-nro">
+                Nro de Transferencia
+                <Req />
+              </label>
+              <input
+                id="pago-transf-nro"
+                type="text"
+                className={`cobro-in ${mal('nroTransferencia') ? 'cobro-in--error' : ''}`}
+                autoComplete="off"
+                aria-invalid={mal('nroTransferencia') || undefined}
+                value={borrador.nroComprobanteTransferencia ?? ''}
+                onChange={(e) =>
+                  setBorrador({ ...borrador, nroComprobanteTransferencia: e.target.value })
+                }
+              />
+              {mal('nroTransferencia') && (
+                <span className="cobro-in-err" role="alert">
+                  Ingresá el número
+                </span>
+              )}
+            </div>
+
             {botonAgregar()}
           </div>
         </div>
@@ -1081,6 +1181,31 @@ export function FormularioPago({ bloqueado = false, diferencia = 0 }: Formulario
           onClose={() => setAvisoRetencion(null)}
         >
           {avisoRetencion.mensaje}
+        </AvisoModal>
+      )}
+
+      {/* DUPLICADO EN EL TABLERO · el papel ya está registrado. No hay corrección posible sobre
+          estos datos: hay que traer otro cheque, y por eso el mensaje termina pidiéndolo. */}
+      {duplicado && proveedor && (
+        <AvisoModal
+          titulo={`${duplicado.formato === 'eCheq' ? 'ECHEQ' : 'CHEQUE'} duplicado`}
+          onClose={() => setDuplicado(null)}
+        >
+          Ya existe un cheque registrado con el mismo CUIT Emisor{' '}
+          <strong>{duplicado.cuit}</strong> y número <strong>{duplicado.numero}</strong> para{' '}
+          <strong>{proveedor.name}</strong>. Ingresá un cheque diferente.
+        </AvisoModal>
+      )}
+
+      {/* REPETIDA EN ESTA TABLA · el mismo comprobante dos veces en el mismo pago. Es otro problema
+          —no hay una orden anterior, está a la vista unos renglones más arriba— y por eso se dice
+          distinto: acá alcanza con quitar o corregir la que ya está. */}
+      {repetida && (
+        <AvisoModal titulo="Ese movimiento ya está cargado" onClose={() => setRepetida(null)}>
+          {repetida.numero
+            ? `Ya hay una caja ${repetida.caja} con el número ${repetida.numero} en las cajas registradas de este pago.`
+            : `Ya hay una caja ${repetida.caja} registrada en este pago.`}{' '}
+          Quitá o corregí la que ya está en la tabla.
         </AvisoModal>
       )}
     </fieldset>

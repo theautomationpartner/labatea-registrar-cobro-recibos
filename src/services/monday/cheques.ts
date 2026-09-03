@@ -92,6 +92,11 @@ export interface ChequeABuscar {
   numero: string | undefined
   /** CUIT del librador, con guiones o sin ellos: se compara por dígitos. */
   cuitEmisor: string | undefined
+  /**
+   * Acota la búsqueda a un TIPO del tablero ("Cheque" / "eCheq"). Sin valor busca en los dos, que es
+   * lo que corresponde cuando lo que se controla es el papel y no su formato.
+   */
+  tipo?: string
 }
 
 /**
@@ -116,6 +121,7 @@ export async function chequeYaRegistrado({
   clienteId,
   numero,
   cuitEmisor,
+  tipo,
 }: ChequeABuscar): Promise<boolean> {
   const nro = (numero ?? '').trim()
   if (!nro || !cuitEmisor?.trim() || !clienteId) return false
@@ -128,6 +134,7 @@ export async function chequeYaRegistrado({
           limit: ${TOPE_CHEQUES},
           query_params: {rules: [
             {column_id: "${COL.chequeCartera.persona}", compare_value: [${Number(clienteId)}], operator: any_of}
+            ${tipo ? `,{column_id: "${COL.chequeCartera.tipo}", compare_value: ${JSON.stringify([tipo])}, operator: any_of}` : ''}
           ]}
         ) {
           items {

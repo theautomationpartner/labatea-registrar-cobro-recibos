@@ -664,6 +664,11 @@ export interface MovimientoCaja {
    */
   fechaPagoCheque?: string
   /* --- Transferencia --- */
+  /**
+   * "Nro de Transferencia": el identificador que da el banco. Es lo que distingue una transferencia
+   * de otra, y por eso es también con lo que se detecta que la misma se cargó dos veces.
+   */
+  nroComprobanteTransferencia?: string
   /** Banco de ORIGEN: la cuenta propia desde la que sale la transferencia. Obligatorio. */
   bancoOrigen?: string | null
   /** ID del ítem de esa cuenta en el tablero de configuración, que es lo que linkea el pago. */

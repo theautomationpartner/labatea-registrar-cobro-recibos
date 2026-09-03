@@ -1024,7 +1024,7 @@ for (const r of revisiones) {
 import { columnasCaja, columnasFacturaCompra, columnasOrdenPago } from '@/services/monday/ordenPago'
 import { BOARDS, COL, OP_REGISTRO_INDEX } from '@/services/monday/columns'
 import { REGISTRO_COBROS, REGISTRO_PAGOS } from '@/services/monday/registro'
-import { vencimientoDeCajaCheque } from '@/lib/pagosProveedor'
+import { cajaRepetida, numeroDeCaja, vencimientoDeCajaCheque } from '@/lib/pagosProveedor'
 import { chequeVencido, fechaPagoChequeInvalida } from '@/lib/pagos'
 import { siguienteNroSerie } from '@/services/monday/retencionGanancias'
 import { descripcionAnticipo } from '@/lib/recibo'
@@ -2312,6 +2312,115 @@ for (const l of lineaRet) {
     console.log(`FALLA  línea retención · ${l.nombre}`)
   } else {
     console.log(`OK     línea retención · ${l.nombre}`)
+  }
+}
+
+/* ===== DUPLICADOS dentro de la tabla =====
+   La misma caja no se puede cargar dos veces. Cada una se identifica por su número; las que no
+   tienen uno —efectivo, anticipo— se pueden repetir, porque dos entregas de efectivo son dos
+   movimientos válidos. */
+
+const chequeA = { formaPago: 'Cheque' as const, importe: 1, numeroCheque: '00123456', cuitEmisor: '30-70011122-3' }
+
+const duplicados: { nombre: string; ok: boolean }[] = [
+  {
+    nombre: 'el mismo cheque dos veces se detecta',
+    ok: !!cajaRepetida([{ id: 'a', ...chequeA }], chequeA),
+  },
+  {
+    /* El CUIT se compara por DÍGITOS: los guiones son formato, no identidad. */
+    nombre: 'el CUIT se compara sin guiones',
+    ok: !!cajaRepetida([{ id: 'a', ...chequeA }], { ...chequeA, cuitEmisor: '30700111223' }),
+  },
+  {
+    nombre: 'mismo número con OTRO emisor no es duplicado',
+    ok: !cajaRepetida([{ id: 'a', ...chequeA }], { ...chequeA, cuitEmisor: '27-25488991-0' }),
+  },
+  {
+    /* Un cheque NUESTRO no trae CUIT: lo libramos contra una cuenta propia, así que el número solo
+       alcanza para distinguirlo. */
+    nombre: 'sin CUIT, el número solo identifica al cheque propio',
+    ok:
+      !!cajaRepetida(
+        [{ id: 'a', formaPago: 'Cheque', importe: 1, numeroCheque: '999' }],
+        { formaPago: 'Cheque', importe: 1, numeroCheque: '999' },
+      ) &&
+      /* Y no se confunde con uno de un tercero que casualmente lleve el mismo número. */
+      !cajaRepetida(
+        [{ id: 'a', formaPago: 'Cheque', importe: 1, numeroCheque: '999' }],
+        { formaPago: 'Cheque', importe: 1, numeroCheque: '999', cuitEmisor: '30-70011122-3' },
+      ),
+  },
+  {
+    nombre: 'la misma transferencia dos veces se detecta',
+    ok: !!cajaRepetida(
+      [{ id: 'a', formaPago: 'Transferencia', importe: 1, nroComprobanteTransferencia: 'TR-9' }],
+      { formaPago: 'Transferencia', importe: 1, nroComprobanteTransferencia: 'TR-9' },
+    ),
+  },
+  {
+    nombre: 'dos transferencias con distinto número conviven',
+    ok: !cajaRepetida(
+      [{ id: 'a', formaPago: 'Transferencia', importe: 1, nroComprobanteTransferencia: 'TR-9' }],
+      { formaPago: 'Transferencia', importe: 1, nroComprobanteTransferencia: 'TR-10' },
+    ),
+  },
+  {
+    /* Una orden practica UNA retención: dos serían dos veces el mismo impuesto sobre las mismas
+       facturas. No hay número que comparar —lo asigna el tablero al emitir—, así que la caja misma
+       es su identidad. */
+    nombre: 'una segunda retención es un duplicado',
+    ok: !!cajaRepetida(
+      [{ id: 'a', formaPago: 'Retencion GAN', importe: 1 }],
+      { formaPago: 'Retencion GAN', importe: 2 },
+    ),
+  },
+  {
+    nombre: 'el EFECTIVO se puede repetir: no tiene número',
+    ok: !cajaRepetida(
+      [{ id: 'a', formaPago: 'Efectivo', importe: 1 }],
+      { formaPago: 'Efectivo', importe: 1 },
+    ),
+  },
+  {
+    nombre: 'y el ANTICIPO tampoco se bloquea',
+    ok: !cajaRepetida(
+      [{ id: 'a', formaPago: 'Anticipo', importe: 1 }],
+      { formaPago: 'Anticipo', importe: 1 },
+    ),
+  },
+  {
+    /* Sin número cargado todavía no hay identidad: lo que falta ya lo reclama el formulario. */
+    nombre: 'un cheque a medio cargar no se compara con nada',
+    ok: !cajaRepetida([{ id: 'a', ...chequeA }], { formaPago: 'Cheque', importe: 1 }),
+  },
+  {
+    nombre: 'el número que nombra el aviso sale de la caja',
+    ok:
+      numeroDeCaja(chequeA) === '00123456' &&
+      numeroDeCaja({ formaPago: 'Transferencia', nroComprobanteTransferencia: 'TR-9' }) === 'TR-9' &&
+      numeroDeCaja({ formaPago: 'Efectivo' }) === '',
+  },
+  {
+    /* El número de la transferencia viaja al tablero, en la columna del comprobante de la línea. */
+    nombre: 'la transferencia escribe su número en el subelemento',
+    ok:
+      columnasCaja({
+        id: 't1',
+        formaPago: 'Transferencia',
+        importe: 1,
+        bancoOrigenId: '7',
+        nroComprobanteTransferencia: 'TR-9',
+      })['text_mm6kvwmn'] === 'TR-9',
+  },
+]
+
+for (const c of duplicados) {
+  if (!c.ok) {
+    fallas++
+    console.log(`FALLA  duplicados · ${c.nombre}`)
+  } else {
+    console.log(`OK     duplicados · ${c.nombre}`)
   }
 }
 

@@ -57,6 +57,19 @@ const tipoBusqueda = (t: string): TipoBusqueda =>
   /^[\d.\s-]+$/.test(t) && /\d/.test(t) ? 'numero' : 'nombre'
 
 /**
+ * Las formas en que ESE MISMO CUIT puede estar escrito en el tablero. Se comparan todas porque el
+ * board no es consistente: hay personas con "30709067881" y otras con "30-70906788-1", las dos
+ * cargadas a mano. Buscando una sola forma, la mitad de los clientes no aparecería.
+ *
+ * Con la comparación exacta esto no es opcional: `contains_text` toleraba la diferencia de formato
+ * por accidente —los dígitos aparecían igual—, y al pasar a `any_of` hay que nombrarlas.
+ */
+function variantesDeCuit(termino: string): string[] {
+  const digitos = termino.replace(/\D/g, '')
+  return [...new Set([termino.trim(), digitos, formatearCuit(digitos)])].filter(Boolean)
+}
+
+/**
  * Situación del cliente a partir del ÍNDICE de la columna status, no de su texto: las etiquetas
  * del board ("0-Liberado Con Credito"…) se pueden reescribir, los índices no.
  *
@@ -137,18 +150,31 @@ const TOPE_RESULTADOS = 50
 /** Escapa el término para poder interpolarlo en la query sin romperla. */
 const literal = (t: string): string => JSON.stringify(t).slice(1, -1)
 
+/**
+ * Cómo se compara una columna contra lo que se tecleó.
+ *
+ *   · `exacto`  · el valor de la columna es IGUAL a alguno de los que se pasan (`any_of`). Es lo que
+ *     usan el código y el CUIT: son identificadores, no texto a explorar. Con `contains_text` un
+ *     "7001" traía además al cliente cuyo CUIT termina en 7001, que no tiene nada que ver.
+ *   · `parcial` · la columna CONTIENE lo tecleado (`contains_text`). Es lo del nombre, donde buscar
+ *     por una palabra suelta es justamente el punto.
+ */
+interface CriterioPersona {
+  columna: string
+  /** Con `exacto` se comparan TODOS: sirve para aceptar el mismo dato escrito de varias formas. */
+  valores: readonly string[]
+  exacto: boolean
+}
+
 /** Una consulta con nombre propio: `alias` la identifica en la respuesta. */
-const consultaPersonas = (
-  alias: string,
-  columna: string,
-  valor: string,
-  reglas: string,
-): string => `
+const consultaPersonas = (alias: string, criterio: CriterioPersona, reglas: string): string => `
   ${alias}: boards(ids: [${BOARDS.personas}]) {
     items_page(
       limit: ${TOPE_RESULTADOS},
       query_params: {rules: [
-        {column_id: "${columna}", compare_value: ["${valor}"], operator: contains_text},
+        {column_id: "${criterio.columna}", compare_value: [${criterio.valores
+          .map((v) => `"${literal(v)}"`)
+          .join(', ')}], operator: ${criterio.exacto ? 'any_of' : 'contains_text'}},
         ${reglas}
       ]}
     ) {
@@ -162,16 +188,13 @@ type RespuestaPersonas = Record<string, { items_page: { items: MondayItem[] } }[
  * Busca personas por una o más columnas a la vez (una consulta con alias por columna, todas en la
  * misma solicitud). Devuelve los ítems sin repetir, respetando el orden en que se pidieron.
  */
-async function buscarPersonas(
-  porColumna: readonly { columna: string; valor: string }[],
-  reglas: string,
-) {
-  const usables = porColumna.filter((x) => x.valor.trim() !== '')
+async function buscarPersonas(porColumna: readonly CriterioPersona[], reglas: string) {
+  const usables = porColumna
+    .map((x) => ({ ...x, valores: x.valores.filter((v) => v.trim() !== '') }))
+    .filter((x) => x.valores.length > 0)
   if (usables.length === 0) return []
   const data = await mondayApi<RespuestaPersonas>(
-    `query { ${usables
-      .map((x, i) => consultaPersonas(`q${i}`, x.columna, literal(x.valor), reglas))
-      .join('')} }`,
+    `query { ${usables.map((x, i) => consultaPersonas(`q${i}`, x, reglas)).join('')} }`,
   )
   const vistos = new Set<string>()
   const items: MondayItem[] = []
@@ -278,17 +301,19 @@ export async function buscarPersonasPorTermino(
 ): Promise<MondayItem[]> {
   const t = termino.trim()
   if (!t) return []
-  /* El CUIT se guarda SIN separadores ("30526228746"), así que se busca por sus dígitos: el
-     usuario puede escribirlo con guiones o sin ellos y da lo mismo. */
+  /* El código y el CUIT se buscan EXACTOS: son identificadores, y una coincidencia parcial mezcla
+     clientes que no tienen nada que ver —"7001" traía, además del cliente 7001, al cliente cuyo
+     CUIT TERMINA en 7001—. El nombre sigue siendo parcial, que es para lo que sirve buscar por
+     nombre. */
   return tipoBusqueda(t) === 'numero'
     ? buscarPersonas(
         [
-          { columna: COL.cliente.codigo, valor: t },
-          { columna: COL.cliente.cuit, valor: t.replace(/\D/g, '') },
+          { columna: COL.cliente.codigo, valores: [t], exacto: true },
+          { columna: COL.cliente.cuit, valores: variantesDeCuit(t), exacto: true },
         ],
         reglas,
       )
-    : buscarPersonas([{ columna: 'name', valor: t }], reglas)
+    : buscarPersonas([{ columna: 'name', valores: [t], exacto: false }], reglas)
 }
 
 /**
@@ -303,9 +328,11 @@ export function filtrarPersonasEnMemoria<T extends Cliente>(personas: readonly T
   if (!t) return []
   const activos = personas.filter((c) => c.activity === 'Activo')
   if (tipoBusqueda(t) === 'numero') {
+    /* EXACTO, igual que contra Monday: el código tal cual y el CUIT por sus dígitos, que es la
+       forma de comparar el mismo número escrito con guiones o sin ellos. */
     const digitos = t.replace(/\D/g, '')
     return activos.filter(
-      (c) => norm(c.codigo).includes(norm(t)) || c.cuit.replace(/\D/g, '').includes(digitos),
+      (c) => norm(c.codigo) === norm(t) || c.cuit.replace(/\D/g, '') === digitos,
     )
   }
   return activos

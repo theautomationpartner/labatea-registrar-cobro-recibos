@@ -257,6 +257,10 @@ export function columnasCaja(m: MovimientoCaja, nroRetencion?: string | null): R
   if (esCajaTransferencia(m.formaPago)) {
     const origen = relacion(m.bancoOrigenId)
     if (origen) columnas[COL.ordenPagoSub.bancoOrigen] = origen
+    /* El número de la operación bancaria va a la MISMA columna que el número del cheque: es el
+       "Nro Comprobante" de la línea, y las dos cajas nunca conviven en un mismo subelemento. */
+    const nro = m.nroComprobanteTransferencia?.trim()
+    if (nro) columnas[COL.ordenPagoSub.nroComprobante] = nro
     return columnas
   }
 

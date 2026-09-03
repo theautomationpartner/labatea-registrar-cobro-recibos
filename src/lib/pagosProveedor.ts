@@ -436,6 +436,61 @@ export function chequeCompleto(
 export const ANTICIPO_PAGO_EXIGE_DETALLE_Y_VENC = false
 
 /**
+ * Qué IDENTIFICA a una caja ya cargada, para poder decir que la misma se está cargando dos veces.
+ * Cadena vacía = no tiene identidad y no se compara con nada.
+ *
+ * Es el espejo de `identidadDeMovimiento` del cobro, con los matices de este circuito:
+ *
+ *   · CHEQUE · el número, más el CUIT del emisor cuando lo hay. El de CARTERA lo trae del tablero;
+ *     el NUEVO lo libramos nosotros, así que su emisor es siempre el mismo y el número alcanza para
+ *     distinguirlo —es una sola chequera—. NO entra el formato: un mismo papel no puede estar dos
+ *     veces, se lo haya cargado como cheque o como eCheq.
+ *   · TRANSFERENCIA · el número de la operación bancaria.
+ *   · RETENCIÓN · no lleva número propio: el suyo lo asigna el tablero al emitir, y para una misma
+ *     orden sería el mismo. Su identidad es la caja a secas, o sea que una orden practica UNA
+ *     retención: dos serían dos veces el mismo impuesto sobre las mismas facturas.
+ *
+ * EFECTIVO y ANTICIPO devuelven `''` a propósito: no tienen número que los distinga, y dos entregas
+ * de efectivo en el mismo pago son dos movimientos válidos.
+ */
+export function identidadDeCaja(m: Pick<MovimientoCaja, 'formaPago' | 'numeroCheque' | 'cuitEmisor' | 'nroComprobanteTransferencia'>): string {
+  if (esCajaCheque(m.formaPago)) {
+    const nro = (m.numeroCheque ?? '').trim().toLowerCase()
+    if (!nro) return ''
+    const cuit = (m.cuitEmisor ?? '').replace(/\D/g, '')
+    /* Sin CUIT el cheque es NUESTRO: lo libramos contra una cuenta propia, así que el número no se
+       repite salvo que sea el mismo papel. */
+    return `cheque|${cuit || 'propio'}|${nro}`
+  }
+  if (esCajaTransferencia(m.formaPago)) {
+    const nro = (m.nroComprobanteTransferencia ?? '').trim().toLowerCase()
+    return nro ? `transferencia|${nro}` : ''
+  }
+  if (esRetencionGAN(m.formaPago)) return 'retencion'
+  return ''
+}
+
+/**
+ * La caja que se quiere agregar YA está en la tabla, o `null` si es nueva. Devuelve el movimiento
+ * REPETIDO —y no un booleano— para que el aviso pueda nombrarlo.
+ */
+export function cajaRepetida(
+  movimientos: readonly MovimientoCaja[],
+  candidato: MovimientoCaja | Omit<MovimientoCaja, 'id'>,
+): MovimientoCaja | null {
+  const identidad = identidadDeCaja(candidato)
+  if (!identidad) return null
+  return movimientos.find((m) => identidadDeCaja(m) === identidad) ?? null
+}
+
+/** El número con el que se nombra la caja repetida en el aviso. */
+export function numeroDeCaja(m: Pick<MovimientoCaja, 'formaPago' | 'numeroCheque' | 'nroComprobanteTransferencia'>): string {
+  if (esCajaCheque(m.formaPago)) return m.numeroCheque?.trim() ?? ''
+  if (esCajaTransferencia(m.formaPago)) return m.nroComprobanteTransferencia?.trim() ?? ''
+  return ''
+}
+
+/**
  * El VENCIMIENTO de un movimiento de cheque, venga de donde venga.
  *
  * Son dos orígenes y una sola respuesta:
