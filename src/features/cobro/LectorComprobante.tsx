@@ -30,13 +30,16 @@ type Estado = 'vacio' | 'en-espera' | 'procesando' | 'listo' | 'con-aviso' | 'si
 export interface VolcadoDatos {
   /** Cuántos campos entraron. Cero cuando hubo rechazo. */
   cargados: number
-  /** Por qué no se cargó nada, si es que el contenido no corresponde. */
+  /** Por qué no se cargó nada, si es que el contenido no corresponde. Es el TÍTULO del aviso. */
   rechazo?: string
+  /** Qué hacer al respecto: la bajada que va debajo del motivo. */
+  ayuda?: string
   /**
    * El rechazo es BLOQUEANTE: el documento no es de esta operación y con él no se puede seguir.
    *
-   * Se muestra como error del documento —en rojo y sin ofrecer reintentar—, no como advertencia:
-   * insistir con el mismo archivo daría igual, y lo único que resuelve es cargar el que corresponde.
+   * NO cambia cómo se ve —los dos casos son advertencias sobre el documento, no fallas del
+   * servicio—: lo que cambia es que mientras siga adjunto el movimiento no se registra, y que no se
+   * ofrece reintentar, porque insistir con el mismo archivo daría idéntico.
    */
   bloqueante?: boolean
 }
@@ -54,10 +57,13 @@ interface LectorComprobanteProps {
   /** Documento cargado, que vive en el borrador del movimiento. `null` = todavía no hay nada. */
   archivo: File | null
   /**
-   * Entrega el documento para que quede en el borrador. Sólo entrega ARCHIVOS: el recuadro no
-   * quita el comprobante —se reemplaza subiendo otro encima—, así que nunca manda `null`.
+   * Entrega el documento para que quede en el borrador, o `null` para QUITARLO.
+   *
+   * El `null` llega desde "Eliminar", que es la salida del recuadro: descarta el comprobante y, con
+   * él, los datos que esa lectura había volcado en el formulario. Quien lo recibe se ocupa de las
+   * dos cosas —acá el recuadro sólo avisa que el documento se fue—.
    */
-  onArchivo: (archivo: File) => void
+  onArchivo: (archivo: File | null) => void
   /**
    * Vuelca sobre el formulario los datos que devolvió el escenario, ya normalizados, y responde
    * CUÁNTOS entraron. El número lo pone quien los recibe y no quien los lee, porque cuáles
@@ -131,9 +137,12 @@ export function LectorComprobante({
      muestra SÓLO EL PRIMERO: encadenar varios avisos en el recuadro convierte el resultado en un
      párrafo que nadie lee, y lo que falte ya está marcado en rojo en su propio campo. */
   const [avisos, setAvisos] = useState<string[]>([])
-  /* El error es del ARCHIVO y no del momento: no se pudo convertir a PDF. Cambia lo que se ofrece
-     —otro documento, no un reintento— y por eso se guarda aparte del texto del error. */
-  const [fatal, setFatal] = useState(false)
+  /* Título del aviso cuando el caso tiene uno propio ("El documento ingresado NO es un Cheque").
+     Vacío, cada estado usa el suyo por defecto. */
+  const [titulo, setTitulo] = useState('')
+  /* ¿Tiene sentido volver a mandar EL MISMO archivo? No lo tiene cuando el documento no es el que
+     se esperaba: ahí lo que hay que cambiar es el archivo, no repetir la llamada. */
+  const [reintentable, setReintentable] = useState(true)
   const [dragOver, setDragOver] = useState(false)
 
   const inputRef = useRef<HTMLInputElement>(null)
@@ -161,7 +170,8 @@ export function LectorComprobante({
       setDetalle('')
       setCampos(0)
       setAvisos([])
-      setFatal(false)
+      setTitulo('')
+      setReintentable(true)
       return
     }
     /* Falta un dato previo: el documento se queda cargado y la lectura NO sale. El archivo no se
@@ -173,7 +183,8 @@ export function LectorComprobante({
       setEstado('en-espera')
       setDetalle(esperandoPor)
       setCampos(0)
-      setFatal(false)
+      setTitulo('')
+      setReintentable(true)
       return
     }
     if (procesado.current === archivo) return
@@ -185,7 +196,8 @@ export function LectorComprobante({
     if (problema) {
       setEstado('error')
       setDetalle(problema)
-      setFatal(false)
+      setTitulo('')
+      setReintentable(true)
       return
     }
     void leer(archivo)
@@ -211,7 +223,8 @@ export function LectorComprobante({
     setDetalle('')
     setCampos(0)
     setAvisos([])
-    setFatal(false)
+    setTitulo('')
+    setReintentable(true)
     // Documento nuevo: lo que se haya rechazado antes dejó de estar en juego.
     onRechazo?.(false)
     try {
@@ -232,17 +245,21 @@ export function LectorComprobante({
       if (ctrl.signal.aborted) return
 
       // Terminó la lectura: los datos se cargan en los campos del medio y se cuenta qué entró.
-      const { cargados, rechazo, bloqueante } = onDatos(lectura.datos)
+      const { cargados, rechazo, ayuda, bloqueante } = onDatos(lectura.datos)
       setCampos(cargados)
 
       /* El contenido no corresponde a esta operación: la lectura anduvo, pero lo que trajo no se
-         puede usar. Se avisa con el motivo y NO se cargó ningún campo. En rojo cuando el rechazo es
-         bloqueante —el documento es de otro—, en ámbar cuando sólo faltó poder confirmarlo. */
+         puede usar. Es un problema del DOCUMENTO —no del servicio—, así que se muestra como
+         ADVERTENCIA en los dos casos: el rojo queda reservado para cuando el escenario no responde.
+
+         Lo que sí distingue al bloqueante es que con ese archivo adjunto el movimiento no se puede
+         registrar, y que no se ofrece reintentar: mandar el mismo documento de nuevo daría igual. */
       if (rechazo) {
-        setEstado(bloqueante ? 'error' : 'sin-datos')
-        setFatal(Boolean(bloqueante))
+        setEstado('sin-datos')
+        setTitulo(`Error: ${rechazo}`)
+        setDetalle(ayuda ?? '')
+        setReintentable(!bloqueante)
         if (bloqueante) onRechazo?.(true)
-        setDetalle(rechazo)
         return
       }
 
@@ -251,13 +268,20 @@ export function LectorComprobante({
          que devolvió datos de otro medio de cobro—. */
       if (cargados === 0) {
         setEstado('sin-datos')
-        setDetalle(
-          !lectura.respondioJson
-            ? 'El servidor recibió el documento pero no devolvió ningún dato. Cargá los campos a mano o volvé a intentar.'
-            : lectura.campos === 0
-              ? 'El documento se leyó, pero no se reconoció ningún dato. Cargá los campos a mano o volvé a intentar.'
-              : `Los datos leídos no corresponden a ${formaPago}. Revisá que el documento sea el del medio de cobro elegido.`,
-        )
+        if (!lectura.respondioJson) {
+          setTitulo('Error: El servidor recibió el documento pero no devolvió ningún dato')
+          setDetalle('Cargá los campos a mano o volvé a intentar.')
+        } else if (lectura.campos === 0) {
+          setTitulo('Error: No se pudo leer ningún dato del comprobante ingresado')
+          setDetalle('Cargá los campos a mano o volvé a intentar.')
+        } else {
+          /* El escenario leyó algo, pero de OTRO documento: ninguno de sus campos pertenece a este
+             medio. Se dice como lo que es —el archivo no es el que se pidió— y no como una lectura
+             floja: reintentar con el mismo daría idéntico. */
+          setTitulo(`Error: El documento ingresado NO es un comprobante ${formaPago}`)
+          setDetalle('Cargá el comprobante que corresponde al medio de cobro elegido.')
+          setReintentable(false)
+        }
         return
       }
       /* Lectura completa PERO con un reparo del escenario: el certificado resultó ser de otro
@@ -278,12 +302,23 @@ export function LectorComprobante({
       setEstado('listo')
     } catch (e) {
       if (ctrl.signal.aborted) return
-      setEstado('error')
-      setFatal(e instanceof ErrorFatalMake)
+      /* DÓNDE está el problema decide cómo se ve. Un `ErrorFatalMake` —y su especialización
+         `DocumentoRechazado`— habla del ARCHIVO: no es el que se pidió, no es de este cliente, o no
+         se pudo convertir. Eso es una advertencia y lo que resuelve es cargar otro documento.
+         El ROJO queda para lo único que no es del archivo: que el escenario no conteste. */
+      const delDocumento = e instanceof ErrorFatalMake
+      setEstado(delDocumento ? 'sin-datos' : 'error')
+      setReintentable(!delDocumento)
+      const mensaje = e instanceof Error ? e.message : 'No se pudo procesar el documento.'
+      if (delDocumento) {
+        setTitulo(`Error: ${mensaje}`)
+        setDetalle('Cargá el comprobante que corresponde a esta operación.')
+      } else {
+        setDetalle(mensaje)
+      }
       /* El documento es de otra operación: con él adjunto, el movimiento no se registra. Un fallo
          al LEERLO no cuenta —ahí el comprobante puede ser el correcto—, y por eso se distingue. */
       if (e instanceof DocumentoRechazado) onRechazo?.(true)
-      setDetalle(e instanceof Error ? e.message : 'No se pudo procesar el documento.')
     } finally {
       if (enVuelo.current === ctrl) enVuelo.current = null
     }
@@ -364,7 +399,7 @@ export function LectorComprobante({
     >
       {/* Botón transparente que cubre el recuadro entero: es el que abre el buscador y el que
           recibe el foco del teclado. Va como HERMANO del contenido y no envolviéndolo, porque un
-          botón no puede anidar los botones del documento cargado —"Reemplazar", "Quitar"—, que
+          botón no puede anidar los botones del documento cargado —"Reintentar", "Eliminar"—, que
           quedan por encima con su propio z-index. */}
       <button
         type="button"
@@ -465,27 +500,26 @@ export function LectorComprobante({
           </>
         )}
 
-        {/* Advertencia: el documento viajó y volvió, pero no trajo nada. Ni verde ni rojo —el
-            procesamiento no se completó, y tampoco hubo un error de comunicación—. */}
+        {/* ADVERTENCIA. Cubre todo lo que es del DOCUMENTO: no trajo datos, no es el comprobante
+            del medio elegido, o no es del cliente de la operación. Ni verde ni rojo —el
+            procesamiento no se completó, y tampoco hubo un error de comunicación—.
+
+            El título sale del caso cuando lo tiene; el genérico queda para cuando no. */}
         {estado === 'sin-datos' && (
           <>
             <i className="fas fa-triangle-exclamation" aria-hidden="true" />
-            <span className="cobro-lector-titulo">No se obtuvieron los datos</span>
-            <span className="cobro-lector-consigna">{detalle}</span>
+            <span className="cobro-lector-titulo">{titulo || 'No se obtuvieron los datos'}</span>
+            {detalle && <span className="cobro-lector-consigna">{detalle}</span>}
           </>
         )}
 
+        {/* ERROR, en rojo. Queda para UNA sola cosa: que el escenario no conteste. Todo lo demás
+            —el archivo que no se pudo convertir, el que no corresponde— es del documento y se
+            advierte arriba, porque lo que resuelve es cargar otro y no volver a intentar. */}
         {estado === 'error' && (
           <>
-            {/* El error fatal se ve distinto desde el ícono: no es "falló, probá de nuevo" sino
-                "con este archivo no se puede". */}
-            <i
-              className={fatal ? 'fas fa-file-circle-xmark' : 'fas fa-circle-exclamation'}
-              aria-hidden="true"
-            />
-            <span className="cobro-lector-titulo">
-              {fatal ? 'Error fatal: el documento no se pudo convertir' : 'No se pudo procesar'}
-            </span>
+            <i className="fas fa-circle-exclamation" aria-hidden="true" />
+            <span className="cobro-lector-titulo">No se pudo procesar</span>
             <span className="cobro-lector-consigna">{detalle}</span>
           </>
         )}
@@ -516,7 +550,7 @@ export function LectorComprobante({
           {/* Reintentar sirve para las DOS formas de quedarse sin datos: la llamada que falló y la
               que volvió vacía. En las dos el documento sigue cargado y el siguiente intento puede
               salir bien —un escenario recién activado, una IA que esta vez sí leyó—. */}
-          {((estado === 'error' && !fatal) || estado === 'sin-datos') && (
+          {reintentable && (estado === 'error' || estado === 'sin-datos') && (
             <button
               type="button"
               className="cobro-lector-accion"
@@ -525,15 +559,20 @@ export function LectorComprobante({
               Reintentar
             </button>
           )}
-          {/* "Reemplazar" es la única acción sobre el documento cargado: para los medios que lo
-              exigen, quitarlo dejaba el movimiento sin su respaldo y sin forma de agregarse. El que
-              se equivocó de archivo sube el correcto encima.
+          {/* "Eliminar" está SIEMPRE que haya un documento, salga como salga la lectura: procesada
+              sin problemas, con advertencias o con error. Es la única salida del recuadro y la que
+              lo devuelve a cero —descarta el archivo y vacía los campos que esa lectura completó—,
+              así que cargar otro comprobante empieza de nuevo en vez de mezclarse con lo anterior.
 
-              Desaparece cuando la lectura ya completó todo: ahí no queda nada por leer, y ofrecer
-              un reemplazo sólo invita a borrar campos que están bien para volver a llenarlos. */}
-          {!cerrado && (
-            <button type="button" className="cobro-lector-accion" onClick={abrirBuscador}>
-              Reemplazar
+              Reemplaza al viejo "Reemplazar": subir un archivo encima de otro dejaba en pantalla el
+              resultado de una lectura y los datos de la otra hasta que la segunda terminaba. */}
+          {!deshabilitado && (
+            <button
+              type="button"
+              className="cobro-lector-accion cobro-lector-accion--borrar"
+              onClick={() => onArchivo(null)}
+            >
+              Eliminar
             </button>
           )}
         </span>

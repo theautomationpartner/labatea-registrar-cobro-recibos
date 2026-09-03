@@ -777,6 +777,17 @@
   min-width: 0;
   max-width: 100%;
 }
+/* Campo CALCULADO: se ve, se lee y se copia, pero no se edita. Se distingue del editable por el
+   fondo y el cursor —no por estar apagado—: apagarlo lo sacaría del alcance de los lectores de
+   pantalla, y este dato es justamente uno que hay que leer antes de agregar el movimiento. */
+.cobro-v2 .cobro-in--ro,
+.cobro-v2 .cobro-in--ro:focus {
+  background: var(--gris-05, #f4f5f7);
+  color: var(--txt-2, #4b5563);
+  cursor: default;
+  box-shadow: none;
+}
+
 /* Cheque: los campos que no entran en la medida de todos los demás. Cada uno pide lo que su
    contenido necesita —el CUIT son tres tramos más el botón "Validar"—, y con esas bases el renglón
    se parte solo en dos líneas parejas.
@@ -1065,6 +1076,14 @@
 }
 .cobro-v2 .cobro-lector-accion:hover {
   color: var(--c-primary-hover);
+}
+/* ELIMINAR va en rojo: es la única acción del recuadro que descarta trabajo hecho —el documento y
+   los campos que completó—, y tiene que distinguirse de un vistazo del resto, que son reintentos. */
+.cobro-v2 .cobro-lector-accion--borrar {
+  color: var(--c-danger);
+}
+.cobro-v2 .cobro-lector-accion--borrar:hover {
+  color: #c0273c;
 }
 /* Lo que la lectura no pudo completar, al pie del recuadro. Va DEBAJO del archivo y sus acciones,
    que es el orden en que se lee lo que pasó: se procesó, este es el documento, y esto quedó

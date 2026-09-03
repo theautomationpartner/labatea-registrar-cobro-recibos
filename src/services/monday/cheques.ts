@@ -8,7 +8,7 @@
  * LECTURA PURA: este módulo no escribe una sola columna del tablero.
  */
 import { CHEQUES_EN_CARTERA } from '@/data/mock'
-import { formatearCuit } from '@/lib/pagos'
+import { formatearCuit, mismoCuit } from '@/lib/pagos'
 import type { ChequeEnCartera } from '@/types'
 import { BOARDS, CHEQUE_CARTERA_ESTADO_INDEX, COL } from './columns'
 import { byId, num, valor, type MondayItem } from './parse'
@@ -47,6 +47,7 @@ function mapCheque(item: MondayItem): ChequeEnCartera {
     importe: num(valor(c[COL.chequeCartera.importe])),
     vencimiento: c[COL.chequeCartera.vencimiento]?.text?.trim() ?? '',
     emision: c[COL.chequeCartera.emision]?.text?.trim() ?? '',
+    fechaPago: c[COL.chequeCartera.fechaPago]?.text?.trim() ?? '',
     banco: c[COL.chequeCartera.banco]?.text?.trim() ?? '',
     /* El tablero lo guarda como once dígitos corridos. Se formatea ACÁ, en el borde de entrada, con
        el mismo criterio que el CUIT del cliente: de ahí en más viaja con sus guiones. */
@@ -79,4 +80,76 @@ export async function getChequesEnCartera(): Promise<ChequeEnCartera[]> {
   )
 
   return (data.boards?.[0]?.items_page.items ?? []).map(mapCheque).sort(porVencimiento)
+}
+
+/* ===== Control de DUPLICADOS ===== */
+
+/** Qué identifica a un cheque dentro de la cuenta de una persona. */
+export interface ChequeABuscar {
+  /** Ítem de Personas del cliente de la operación: acota la búsqueda a SUS cheques. */
+  clienteId: string
+  /** Número tal como figura en el papel. Se compara sin espacios y sin distinguir mayúsculas. */
+  numero: string | undefined
+  /** CUIT del librador, con guiones o sin ellos: se compara por dígitos. */
+  cuitEmisor: string | undefined
+}
+
+/**
+ * ¿Este cheque YA está registrado para este cliente?
+ *
+ * Lo que identifica a un cheque es el par EMISOR + NÚMERO, y sólo dentro de la cuenta de la persona
+ * que lo entregó: el mismo número existe en tantas chequeras como bancos hay, así que buscarlo
+ * suelto daría por duplicado un cheque que no lo es.
+ *
+ * Por eso la consulta filtra por la relación a Personas —server-side, con el mismo criterio que las
+ * facturas pendientes— y la comparación de los dos datos se hace acá: son campos de TEXTO del
+ * tablero, donde el CUIT vive sin guiones y el número puede traer espacios, y esas diferencias de
+ * formato no pueden decidir si un cheque entra o no.
+ *
+ * Sin número o sin CUIT devuelve `false`: no hay con qué comparar, y dar por duplicado un cheque a
+ * medio cargar frenaría un alta que el formulario ya está reclamando por otro lado.
+ *
+ * En modo local (sin token) devuelve `false`: el prototipo tiene que poder recorrerse entero, y no
+ * hay tablero contra el cual verificar nada.
+ */
+export async function chequeYaRegistrado({
+  clienteId,
+  numero,
+  cuitEmisor,
+}: ChequeABuscar): Promise<boolean> {
+  const nro = (numero ?? '').trim()
+  if (!nro || !cuitEmisor?.trim() || !clienteId) return false
+  if (!mondayHabilitado()) return false
+
+  const data = await mondayApi<{ boards: { items_page: { items: MondayItem[] } }[] }>(
+    `query {
+      boards(ids: [${BOARDS.chequesCartera}]) {
+        items_page(
+          limit: ${TOPE_CHEQUES},
+          query_params: {rules: [
+            {column_id: "${COL.chequeCartera.persona}", compare_value: [${Number(clienteId)}], operator: any_of}
+          ]}
+        ) {
+          items {
+            id
+            column_values(ids: ["${COL.chequeCartera.numero}", "${COL.chequeCartera.cuitEmisor}"]) {
+              id text
+            }
+          }
+        }
+      }
+    }`,
+  )
+
+  /* Los dos datos tienen que coincidir en el MISMO cheque: un número que ya existe con otro emisor
+     no es un duplicado, y tomarlo como tal rechazaría un cheque legítimo. */
+  const mismoNumero = (a: string) => a.trim().localeCompare(nro, undefined, { sensitivity: 'base' }) === 0
+
+  return (data.boards?.[0]?.items_page.items ?? []).some((item) => {
+    const c = byId(item)
+    return (
+      mismoNumero(c[COL.chequeCartera.numero]?.text ?? '') &&
+      mismoCuit(c[COL.chequeCartera.cuitEmisor]?.text ?? undefined, cuitEmisor)
+    )
+  })
 }

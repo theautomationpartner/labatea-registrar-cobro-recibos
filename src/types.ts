@@ -265,10 +265,15 @@ export interface MovimientoPago {
   formaPago: FormaPago
   importe: number
   /**
-   * Cheque y eCheq: no puede vencer ANTES de hoy (ver `chequeInvalido`). Hacia adelante no hay
-   * tope —un vencimiento lejano es un cheque diferido, no un error—.
+   * Cheque y eCheq · FECHA DE PAGO: el día a partir del cual el banco paga el cheque. No puede ser
+   * ANTERIOR a hoy (ver `chequeInvalido`); hacia adelante no hay tope, que una fecha de pago lejana
+   * es un cheque diferido y no un error.
+   *
+   * El VENCIMIENTO —treinta días después— no se guarda: se deriva de ésta con `vencimientoDeCheque`
+   * cada vez que hace falta. Guardarlo abriría la posibilidad de que las dos fechas dejen de
+   * corresponderse, que es exactamente lo que no puede pasar con un dato calculado.
    */
-  chequeVencimiento: string
+  fechaPagoCheque: string
   /** Cheque: número, fecha de emisión (dd/mm/aaaa) y banco emisor. */
   numeroCheque?: string
   fechaEmisionCheque?: string
@@ -593,6 +598,8 @@ export interface ChequeEnCartera {
   /** "🤖Fecha de Vencimiento" y "🤖Fecha de Emisión" (date), en ISO (yyyy-MM-dd). */
   vencimiento: string
   emision: string
+  /** "🤖Fecha de Pago" (date_mm6vr6g5), en ISO: desde cuándo el banco lo paga. */
+  fechaPago: string
   /** "🤖Banco Emisor" (dropdown_mm5zgtbe). */
   banco: string
   /** "🤖CUIT Emisor" (text_mm5ye31b), con sus guiones. */
@@ -647,6 +654,15 @@ export interface MovimientoCaja {
    * un formato que nadie declaró.
    */
   formatoCheque?: FormatoCheque
+  /**
+   * "Fecha de Pago" del cheque: el día a partir del cual el banco lo paga. Es la que el usuario
+   * carga —en un diferido, la del diferimiento—, y de ella se DERIVA el vencimiento sumándole 30
+   * días (ver `vencimientoDeCajaCheque`).
+   *
+   * Sólo la lleva el cheque NUEVO, que es el único que se declara con el formulario. El de CARTERA
+   * viene del tablero con su vencimiento ya cargado (`chequeVencimiento`).
+   */
+  fechaPagoCheque?: string
   /* --- Transferencia --- */
   /** Banco de ORIGEN: la cuenta propia desde la que sale la transferencia. Obligatorio. */
   bancoOrigen?: string | null

@@ -60,6 +60,20 @@ export function manana(): string {
 }
 
 /**
+ * La misma fecha corrida `dias` hacia adelante, en dd/MM/yyyy. Vacío si no entra una fecha completa:
+ * de una fecha a medio cargar no se puede derivar otra, y devolver algo igual sería inventarla.
+ *
+ * Se suma sobre un `Date` local a medianoche, así que los cambios de mes, de año y de horario de
+ * verano los resuelve el propio calendario en vez de una cuenta de milisegundos.
+ */
+export function sumarDias(value: string, dias: number): string {
+  const fecha = parseDate(value)
+  if (!fecha) return ''
+  fecha.setDate(fecha.getDate() + dias)
+  return `${pad(fecha.getDate())}/${pad(fecha.getMonth() + 1)}/${fecha.getFullYear()}`
+}
+
+/**
  * Días que FALTAN hasta esa fecha, contados por día y nunca por hora. Negativo si ya pasó, 0 si es
  * hoy. Sin fecha devuelve `null`: no es lo mismo "vence hoy" que "no se sabe cuándo vence".
  *

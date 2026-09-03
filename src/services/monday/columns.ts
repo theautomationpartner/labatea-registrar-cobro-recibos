@@ -550,9 +550,18 @@ export const COL = {
        (`nroComprobante`). La columna "🤖Numero Cupon" (text_mm5zs69e) del tablero queda sin usar. */
     tipoTarjeta: 'dropdown_mm5rx800',
     /**
+     * "🤖Fecha Pago" (date): el día desde el que el banco paga el cheque. SÓLO la lleva el cheque
+     * —de papel o eCheq—: es el dato que trae el documento y del que sale el vencimiento.
+     */
+    fechaPago: 'date_mm6v7nvg',
+    /**
      * "🤖Fecha Venc" (date). Es UNA sola columna para tres líneas distintas: el vencimiento del
      * cheque, el del plástico y el del anticipo. Nunca conviven en el mismo subítem, así que no se
      * pisan.
+     *
+     * En el CHEQUE es una fecha DERIVADA —la de pago más 30 días, ver `vencimientoDeCheque`— y no
+     * la que el usuario cargó: hasta que se separó de la fecha de pago, esta columna venía
+     * recibiendo esa otra fecha.
      */
     vencimiento: 'date_mm5y4zxa',
     /* --- Comprobantes adjuntos (columnas `file`) ---
@@ -667,7 +676,18 @@ export const COL = {
     nroComprobante: 'text_mm6kvwmn',
     /** "🤖Fecha de Emision Comp" (date): la del documento. */
     fechaEmision: 'date_mm6kkqn0',
-    /** "🤖Fecha Venc" (date): el vencimiento del cheque o del plástico. */
+    /**
+     * "🤖Fecha Pago" (date): el día desde el que el banco paga el cheque. SOLO la lleva el
+     * cheque NUEVO —el que se libra en esta operación—, que es de quien la declara el formulario.
+     */
+    fechaPago: 'date_mm6v39m2',
+    /**
+     * "🤖Fecha Venc" (date): el vencimiento del cheque o del plástico.
+     *
+     * En el cheque NUEVO es una fecha DERIVADA —la de pago más 30 días, ver
+     * `vencimientoDeCajaCheque`— y no una que el usuario haya cargado. En el de CARTERA es la que
+     * ya trae su item del tablero.
+     */
     vencimiento: 'date_mm6kv044',
     /** "🧾Cheque/Echeq Utilizado" (board_relation → cartera): el cheque que se endosa. */
     chequeUtilizado: 'board_relation_mm6kpcpz',
@@ -815,6 +835,12 @@ export const COL = {
     /** "🤖Fecha de Vencimiento" y "🤖Fecha de Emisión" (date, ISO). */
     vencimiento: 'date_mm5y67wr',
     emision: 'date_mm5yzd17',
+    /**
+     * "🤖Fecha de Pago" (date, ISO): el día desde el que el banco paga el cheque. Es la
+     * fecha que decide cuándo se puede depositar, así que se lista junto a las otras dos para poder
+     * elegir con qué papel se paga.
+     */
+    fechaPago: 'date_mm6vr6g5',
     /** "🤖Banco Emisor" (dropdown). */
     banco: 'dropdown_mm5zgtbe',
     /** "🤖CUIT Emisor" (text). */
@@ -823,6 +849,13 @@ export const COL = {
     tipo: 'dropdown_mm5ye3k3',
     /** "🤖Estado del Cheque": ver `CHEQUE_CARTERA_ESTADO_INDEX`. Es por donde se filtra. */
     estado: 'color_mm5y74q2',
+    /**
+     * "Personas" (board_relation → Personas): de QUIÉN se recibió el cheque. Es por donde se busca
+     * si un cheque ya entró: el control de duplicados es POR CLIENTE (ver `chequeYaRegistrado`),
+     * porque el mismo número de cheque puede existir en dos chequeras de bancos distintos y lo que
+     * lo vuelve único es el par emisor + número dentro de la cuenta de esa persona.
+     */
+    persona: 'board_relation_mm643x5f',
   },
 } as const
 

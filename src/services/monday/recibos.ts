@@ -49,6 +49,7 @@ import {
   esRetencion,
   esPagoConTarjeta,
   formatoDeCheque,
+  vencimientoDeCheque,
 } from '@/lib/pagos'
 import type { MovimientoPago } from '@/types'
 import {
@@ -252,8 +253,13 @@ function columnasPago(m: MovimientoPago): Record<string, unknown> {
     if (cuitCompleto(m.cuitEmisor)) cv[COL.cobroSub.cuit] = m.cuitEmisor
     const emision = fechaCol(m.fechaEmisionCheque)
     if (emision) cv[COL.cobroSub.fechaEmision] = emision
+    /* Las DOS fechas del cheque, cada una en su columna. El VENCIMIENTO no sale del formulario: se
+       deriva de la de pago (+30 días), así que se calcula acá con la misma función que lo muestra
+       en pantalla —no hay una copia guardada que pueda haber quedado desactualizada—. */
+    const fechaPago = fechaCol(m.fechaPagoCheque)
+    if (fechaPago) cv[COL.cobroSub.fechaPago] = fechaPago
     // "🤖Fecha Venc" es la MISMA columna que usa el vencimiento de la tarjeta.
-    const vencimiento = fechaCol(m.chequeVencimiento)
+    const vencimiento = fechaCol(vencimientoDeCheque(m.fechaPagoCheque))
     if (vencimiento) cv[COL.cobroSub.vencimiento] = vencimiento
     /* "🤖Origen Cheque" (dropdown_mm5yveka) dice CUÁL de los dos documentos es. Sale del propio
        medio elegido —no de un campo aparte—, así que va SIEMPRE: un cheque registrado sin origen

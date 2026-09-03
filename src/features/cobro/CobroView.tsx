@@ -4,6 +4,7 @@ import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
 import { totalACancelar } from '@/lib/cobros'
 import { money } from '@/lib/format'
 import {
+  ANTICIPO_COBRO_EXIGE_DETALLE_Y_VENC,
   bloqueoAnticipo,
   bloqueoCobro,
   faltantesDeAnticipo,
@@ -62,10 +63,15 @@ export function CobroView() {
     ? bloqueoAnticipo(datosAnticipo, cobro.movimientos, resumen)
     : bloqueoCobro(cobro.movimientos, resumen)
 
-  /* Sin los datos del anticipo no se puede cargar cómo lo entrega el cliente: el importe es el
-     total que esos pagos tienen que igualar, así que registrarlos antes sería cargar contra un
-     total que todavía no existe. El formulario queda cerrado hasta que estén los tres. */
-  const faltaAnticipo = esAnticipo ? faltantesDeAnticipo(datosAnticipo) : []
+  /* Sin el IMPORTE del anticipo no se puede cargar cómo lo entrega el cliente: es el total que esos
+     pagos tienen que igualar, así que registrarlos antes sería cargar contra un total que todavía
+     no existe. El formulario queda cerrado hasta que esté.
+
+     El detalle y el vencimiento NO cierran nada: describen al anticipo, no lo definen, y su falta
+     no impide ni registrarlo ni emitir el recibo. */
+  const faltaAnticipo = esAnticipo
+    ? faltantesDeAnticipo(datosAnticipo, ANTICIPO_COBRO_EXIGE_DETALLE_Y_VENC)
+    : []
 
   /* Con el cobro ya cubierto el formulario se cierra: otro movimiento sólo podría pasarse del total
      (ver `cobroCubierto`). La tabla NO se toca —sus importes siguen editables y sus filas se pueden
@@ -157,7 +163,14 @@ export function CobroView() {
             {/* Los datos del anticipo ABREN el panel: son la premisa de todo lo que sigue —de su
                 importe sale el total a cancelar—, así que se declaran antes de que las métricas
                 muestren contra qué se está comparando lo recibido. */}
-            {esAnticipo && <DatosAnticipo />}
+            {esAnticipo && (
+              <DatosAnticipo
+                exigeDetalleYVencimiento={ANTICIPO_COBRO_EXIGE_DETALLE_Y_VENC}
+                /* El anticipo del CLIENTE no vence: queda a su favor hasta que se aplique contra
+                   una factura, así que el campo no se muestra. */
+                sinVencimiento
+              />
+            )}
 
             <CabeceraCobro
               cliente={cliente}

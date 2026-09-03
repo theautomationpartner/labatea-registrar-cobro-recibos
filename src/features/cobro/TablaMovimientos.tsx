@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { esChequeDeCobro, esPagoConTarjeta, esRetencion } from '@/lib/pagos'
+import { esChequeDeCobro, esPagoConTarjeta, esRetencion, vencimientoDeCheque } from '@/lib/pagos'
 import { money } from '@/lib/format'
 import { useDispatch } from '@/state/hooks'
 import type { MovimientoPago } from '@/types'
@@ -61,7 +61,10 @@ function detalleDe(m: MovimientoPago): Dato[] {
     return [
       { label: 'Número de cheque', valor: m.numeroCheque || '—' },
       { label: 'Fecha de emisión', valor: m.fechaEmisionCheque || '—' },
-      { label: 'Fecha de vencimiento', valor: m.chequeVencimiento || '—' },
+      { label: 'Fecha de pago', valor: m.fechaPagoCheque || '—' },
+      /* El vencimiento se DERIVA de la de pago (+30 días), igual que en el formulario: no se guarda
+         en el movimiento, así que acá se vuelve a calcular en vez de arrastrar una copia. */
+      { label: 'Fecha de venc.', valor: vencimientoDeCheque(m.fechaPagoCheque) || '—' },
       { label: 'Banco emisor', valor: m.bancoEmisor || '—' },
       { label: 'CUIT del emisor', valor: m.cuitEmisor || '—' },
     ]

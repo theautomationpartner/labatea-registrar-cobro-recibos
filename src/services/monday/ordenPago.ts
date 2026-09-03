@@ -29,6 +29,7 @@ import {
   esCajaCheque,
   esCajaTransferencia,
   esRetencionGAN,
+  vencimientoDeCajaCheque,
 } from '@/lib/pagosProveedor'
 import type { MedioEnvio, MovimientoCaja } from '@/types'
 import {
@@ -206,7 +207,13 @@ export function columnasCaja(m: MovimientoCaja, nroRetencion?: string | null): R
     if (nro) columnas[COL.ordenPagoSub.nroComprobante] = nro
     const emision = fechaCol(m.fechaEmisionCheque)
     if (emision) columnas[COL.ordenPagoSub.fechaEmision] = emision
-    const venc = fechaCol(m.chequeVencimiento)
+    /* Las dos fechas del cheque van a DOS columnas distintas: la de PAGO tal como se cargó y el
+       VENCIMIENTO derivado de ella (+30 días). Un cheque de cartera no declara fecha de pago —viene
+       del tablero con su vencimiento ya puesto—, así que ahí la primera se omite y la segunda lleva
+       la del ítem. Las dos ramas viven en `vencimientoDeCajaCheque`. */
+    const pago = fechaCol(m.fechaPagoCheque)
+    if (pago) columnas[COL.ordenPagoSub.fechaPago] = pago
+    const venc = fechaCol(vencimientoDeCajaCheque(m))
     if (venc) columnas[COL.ordenPagoSub.vencimiento] = venc
     /* De qué banco sale el cheque, y son DOS columnas distintas según de dónde venga:
          · CARTERA · lo libró un TERCERO contra su propio banco. Ese nombre es texto y va al

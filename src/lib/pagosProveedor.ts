@@ -11,7 +11,13 @@
  */
 import { desdeIso, diasHasta } from '@/lib/dates'
 import { money, round2 } from '@/lib/format'
-import { faltantesDeAnticipo, type DatosAnticipo } from '@/lib/pagos'
+import {
+  chequeVencido,
+  faltantesDeAnticipo,
+  fechaPagoChequeInvalida,
+  vencimientoDeCheque,
+  type DatosAnticipo,
+} from '@/lib/pagos'
 import { esProveedor } from '@/lib/personas'
 import type { ComprobanteCancelado, PagoRecibido, Recibo } from '@/lib/recibo'
 import type { CajaPago, FacturaCompraPendiente, MovimientoCaja, Proveedor } from '@/types'
@@ -396,6 +402,7 @@ export function chequeCompleto(
     | 'chequeVencimiento'
     | 'fechaEmisionCheque'
     | 'bancoEmisor'
+    | 'fechaPagoCheque'
   >,
 ): boolean {
   /* Sin modalidad elegida no hay cheque que validar: todavía no se dijo de dónde sale. */
@@ -403,11 +410,51 @@ export function chequeCompleto(
   if (m.modalidadCheque === 'cartera') return !!m.chequeId
   return (
     !!m.numeroCheque?.trim() &&
-    !!m.chequeVencimiento?.trim() &&
     !!m.fechaEmisionCheque?.trim() &&
-    !!m.bancoEmisor?.trim()
+    !!m.bancoEmisor?.trim() &&
+    /* Las DOS reglas de fecha, las mismas que el cheque de un cobro: la de pago no puede haber
+       quedado atrás, y el vencimiento que sale de ella tampoco. Un cheque que se libra hoy con
+       fecha de pago pasada es un cheque que no se va a poder depositar. */
+    !fechaPagoChequeInvalida(m.fechaPagoCheque) &&
+    !chequeVencido(m.fechaPagoCheque)
   )
 }
+
+/**
+ * En el PAGO, ¿el detalle y el vencimiento del anticipo son obligatorios? NO: son opcionales.
+ *
+ * Describen la entrega pero no la definen. El único dato que frena es el IMPORTE, y por un motivo
+ * estructural: de él sale el TOTAL A PAGAR que las cajas tienen que igualar, así que sin él no hay
+ * contra qué cargarlas. Los otros dos tienen columna propia en el tablero y se omiten cuando vienen
+ * vacías (ver `columnasAnticipoPago`), así que su falta no rompe nada río abajo.
+ *
+ * Es el espejo de `ANTICIPO_COBRO_EXIGE_DETALLE_Y_VENC`, y vive en una constante por el mismo
+ * motivo: la respuesta la necesitan TRES lugares —el bloqueo del avance, la apertura del formulario
+ * de cajas y el asterisco de los campos— y separarse en cualquiera de ellos dejaría la pantalla
+ * pidiendo algo que la validación ya no exige, o al revés.
+ */
+export const ANTICIPO_PAGO_EXIGE_DETALLE_Y_VENC = false
+
+/**
+ * El VENCIMIENTO de un movimiento de cheque, venga de donde venga.
+ *
+ * Son dos orígenes y una sola respuesta:
+ *
+ *   · el cheque NUEVO lo declara con su FECHA DE PAGO, y el vencimiento se deriva sumándole 30
+ *     días —el plazo para presentarlo al cobro—, así que no puede quedar en desacuerdo con ella ni
+ *     depender de que alguien lo calcule a mano;
+ *   · el de CARTERA ya existe en el tablero con su propio vencimiento cargado, y ése es el que vale.
+ *
+ * Se define UNA vez y la usan el formulario, la fila de la tabla y el subelemento que se escribe:
+ * si cada uno lo resolviera por su cuenta, la pantalla podría mostrar una fecha y el tablero recibir
+ * otra.
+ */
+export const vencimientoDeCajaCheque = (
+  m: Pick<MovimientoCaja, 'fechaPagoCheque' | 'chequeVencimiento'>,
+): string =>
+  m.fechaPagoCheque?.trim()
+    ? vencimientoDeCheque(m.fechaPagoCheque)
+    : (m.chequeVencimiento?.trim() ?? '')
 
 /**
  * Qué impide registrar un ANTICIPO al proveedor. Es el mismo bloqueo del pago con UNA regla antes:
@@ -416,21 +463,20 @@ export function chequeCompleto(
  * A partir de ahí las reglas son idénticas —las cajas y la diferencia en cero se validan igual—,
  * porque lo que cambia entre los dos recorridos es de dónde sale el TOTAL A PAGAR (la imputación a
  * facturas o este importe), no cómo se controla que lo entregado lo iguale.
- *
- * Es el espejo exacto de `bloqueoAnticipo` del lado de los cobros, y reusa su `faltantesDeAnticipo`:
- * un anticipo se declara con los mismos tres datos se cobre o se pague.
  */
 export function bloqueoAnticipoPago(
   datos: DatosAnticipo,
   movimientos: readonly MovimientoCaja[],
   resumen: ResumenPago,
 ): BloqueoPago | null {
-  const faltantes = faltantesDeAnticipo(datos)
+  /* Acá el detalle y el vencimiento NO se exigen: son opcionales del pago (ver
+     `ANTICIPO_PAGO_EXIGE_DETALLE_Y_VENC`). Lo único que frena es el importe. */
+  const faltantes = faltantesDeAnticipo(datos, ANTICIPO_PAGO_EXIGE_DETALLE_Y_VENC)
   if (faltantes.length > 0) {
     return {
-      titulo: 'Faltan datos del anticipo',
+      titulo: 'Falta el importe del anticipo',
       mensaje:
-        'Completá arriba los datos del anticipo: el importe que se le entrega al proveedor a cuenta —que es el total que la orden va a declarar—, el detalle de por qué se registra y su fecha de vencimiento.',
+        'Cargá arriba el importe que se le entrega al proveedor a cuenta: es el total que la orden va a declarar y el que las cajas tienen que igualar. El detalle y la fecha de vencimiento son opcionales.',
       faltantes,
     }
   }

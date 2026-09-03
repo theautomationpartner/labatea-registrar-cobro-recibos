@@ -6,7 +6,8 @@ import {
   retencionDeTipo,
   TIPOS_RETENCION,
   MSG_CHEQUE_CLIENTE_NO,
-  MSG_CHEQUE_VENC_CORTO,
+  MSG_CHEQUE_PAGO_CORTO,
+  MSG_CHEQUE_VENCIDO_CORTO,
   MSG_ECHEQ_SIN_ENDOSO,
   MSG_TARJETA_VENC_CORTO,
   validarCuitEmisor,
@@ -16,16 +17,22 @@ import {
   endosadoALaBatea,
   esChequeDeCobro,
   esPagoConTarjeta,
+  movimientoRepetido,
+  numeroDeMovimiento,
   esRetencion,
   partesCuit,
   soloDigitos,
   tramoCuitIncompleto,
-  vencimientoChequeInvalido,
+  chequeVencido,
+  fechaPagoChequeInvalida,
+  vencimientoDeCheque,
   vencimientoTarjetaInvalido,
 } from '@/lib/pagos'
 import { aIso, desdeIso, manana } from '@/lib/dates'
 import { formatearImporteAR, importeATexto, money } from '@/lib/format'
+import { AvisoModal } from '@/components/ui/AvisoModal'
 import type { DatosComprobante } from '@/services/make'
+import { chequeYaRegistrado } from '@/services/monday'
 import { useApp, useDispatch } from '@/state/hooks'
 import type { CuentaPropia, FormaPago, MovimientoPago } from '@/types'
 import { BancoEmisorSelect } from './BancoEmisorSelect'
@@ -44,7 +51,7 @@ type Borrador = Omit<MovimientoPago, 'id'>
 const BORRADOR_VACIO: Borrador = {
   formaPago: 'Efectivo',
   importe: 0,
-  chequeVencimiento: '',
+  fechaPagoCheque: '',
   numeroCheque: '',
   fechaEmisionCheque: '',
   bancoEmisor: '',
@@ -143,7 +150,15 @@ const VALIDAR_CUIT_EMISOR = true
  * la mitad invitaría a completar el resto a mano sobre un comprobante que no corresponde.
  */
 const MSG_OTRO_CLIENTE =
-  'El comprobante asignado NO fue emitido por el cliente seleccionado en la operación. Cargá el comprobante emitido que corresponde al cliente seleccionado.'
+  'El comprobante asignado NO fue emitido por el cliente seleccionado en la operación'
+
+/**
+ * Qué hacer al respecto. Va SEPARADO del motivo porque el recuadro los muestra en dos renglones
+ * distintos —el título dice qué pasó, la bajada qué hacer—, y de un solo texto largo el usuario
+ * lee la primera línea y se pierde la salida.
+ */
+const MSG_OTRO_CLIENTE_AYUDA =
+  'Cargá el comprobante emitido que corresponde al cliente seleccionado.'
 
 /**
  * El documento se leyó pero de él no salió el CUIT del emisor. Sin ese dato no se puede decidir si
@@ -151,7 +166,11 @@ const MSG_OTRO_CLIENTE =
  * cobranza y no cargar nada, no cargar nada es lo único correcto.
  */
 const MSG_SIN_EMISOR =
-  'No se pudo identificar el CUIT del emisor en el comprobante compartido y el documento no se procesó porque no se puede determinar si pertenece al cliente seleccionado. Cargá otro comprobante o ingresá los datos manualmente.'
+  'No se pudo identificar el CUIT del emisor en el comprobante compartido'
+
+/** Su bajada, con el mismo criterio que la de `MSG_OTRO_CLIENTE`. */
+const MSG_SIN_EMISOR_AYUDA =
+  'Sin ese dato no se puede determinar si el comprobante pertenece al cliente seleccionado. Cargá otro comprobante o ingresá los datos a mano.'
 
 /**
  * Nombre en pantalla de cada campo obligatorio que puede salir del documento. Con esto el recuadro
@@ -165,7 +184,7 @@ const ROTULO_CAMPO: Record<string, string> = {
   // CHEQUE
   numeroCheque: 'Nro. de Cheque',
   fechaEmision: 'Fecha de Emisión',
-  vencimiento: 'Fecha de Vencimiento',
+  fechaPago: 'Fecha de Pago',
   cuit: 'CUIT del emisor',
   bancoEmisor: 'Banco Emisor',
   // TRANSFERENCIA
@@ -383,6 +402,25 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
      adjunto, el movimiento no se agrega —aunque los campos se completen a mano—, porque el recibo
      terminaría llevando el comprobante de una operación ajena. Se limpia al cargar otro. */
   const [comprobanteAjeno, setComprobanteAjeno] = useState(false)
+  /* La consulta de duplicados está en vuelo. Mientras tanto el "+ Agregar" se apaga: es una lectura
+     contra Monday y un doble click dispararía dos altas del mismo cheque. */
+  const [validando, setValidando] = useState(false)
+  /* El cheque que se intentó agregar YA está registrado para este cliente. Guarda los tres datos
+     que la ventana necesita nombrar —el medio, el CUIT y el número—: son los que permiten ir a
+     buscar el recibo anterior en el tablero, y no es lo mismo avisar por un cheque que por un
+     eCheq. */
+  const [duplicado, setDuplicado] = useState<{
+    medio: FormaPago
+    cuit: string
+    numero: string
+  } | null>(null)
+  /* Cómo se nombra el documento en la ventana. En VERSALES porque es lo que la distingue de un
+     aviso cualquiera: lo primero que hay que leer es cuál de los dos se está rechazando. */
+  const rotuloDuplicado = duplicado?.medio === 'Echeq' ? 'ECHEQ' : 'CHEQUE'
+  /* El movimiento que se intentó agregar ya estaba EN LA TABLA. Es otro problema que el duplicado
+     de Monday —acá no hay recibo anterior, está dos veces en este mismo cobro— y por eso tiene su
+     propio aviso. Guarda el medio y el número para poder nombrarlo. */
+  const [repetido, setRepetido] = useState<{ medio: string; numero: string } | null>(null)
 
   /* Ramal que se está RETIRANDO: el medio ya cambió, pero sus campos siguen montados hasta que
      termina la animación de salida. Sin esto, elegir otro medio los borra de un corte y la card se
@@ -513,11 +551,19 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
     setEstadoCuit(validarCuitEmisor(cliente, borrador.cuitEmisor) === 'ok' ? 'ok' : 'error')
   }, [esCheque, borrador.cuitEmisor, cliente])
 
-  /* El vencimiento tiene que ser el día de hoy, el del recibo (ver `MSG_CHEQUE_VENC_CORTO`). Avisa
-     apenas se carga una fecha que incumple la regla; vacío, recién al intentar agregar —o cuando la
-     lectura del cheque no lo trajo—, que es cuando pasa de "falta cargarlo" a error. */
-  const vencMal = esCheque && vencimientoChequeInvalido(borrador.chequeVencimiento)
-  const mostrarErrorVenc = vencMal && (!!borrador.chequeVencimiento || intento || revisarLectura)
+  /* La FECHA DE PAGO no puede ser anterior a hoy, el día del recibo (ver `MSG_CHEQUE_PAGO_CORTO`).
+     Avisa apenas se carga una fecha que incumple la regla; vacía, recién al intentar agregar —o
+     cuando la lectura del cheque no la trajo—, que es cuando pasa de "falta cargarla" a error. */
+  const pagoMal = esCheque && fechaPagoChequeInvalida(borrador.fechaPagoCheque)
+  const mostrarErrorPago = pagoMal && (!!borrador.fechaPagoCheque || intento || revisarLectura)
+
+  /* El VENCIMIENTO se deriva: fecha de pago + 30 días. No se guarda ni se edita, así que se calcula
+     en el render y de ahí salen tanto lo que muestra el campo como su propia validación. */
+  const vencimientoCheque = vencimientoDeCheque(borrador.fechaPagoCheque)
+  /* Vencido: pasaron más de 30 días desde la fecha de pago. Con el campo vacío NO se marca —sin
+     fecha de pago no hay vencimiento que juzgar, y lo que falta ya lo reclama el campo de arriba—,
+     y de eso se ocupa la propia regla. */
+  const vencido = esCheque && chequeVencido(borrador.fechaPagoCheque)
   /* La tarjeta tiene que seguir VIGENTE: vence después de hoy, nunca hoy mismo ni antes. Avisa con
      el mismo criterio que el cheque —apenas hay una fecha cargada que incumple, o al intentar
      agregar—, para no retar por un campo que todavía está vacío. */
@@ -538,7 +584,10 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
     /* La emisión del cheque se pide cargada y nada más: es la fecha en que lo libró su emisor, y
        puede ser de cualquier día anterior. */
     fechaEmision: esCheque && !borrador.fechaEmisionCheque?.trim(),
-    vencimiento: esCheque && vencMal,
+    fechaPago: esCheque && pagoMal,
+    /* El cheque vencido frena el alta aparte de la fecha de pago: es el caso sin arreglo, y su
+       campo es otro. */
+    vencido,
     // TRANSFERENCIA
     cuenta: esTransferencia && !borrador.cuentaPropiaId,
     nroCompTransf: esTransferencia && !borrador.nroComprobanteTransferencia?.trim(),
@@ -589,7 +638,7 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
    * fecha de vencimiento" sobre una fecha que está a la vista sería mentir.
    */
   const leidoPeroInvalido = (campo: string): boolean =>
-    (campo === 'vencimiento' && !!borrador.chequeVencimiento) ||
+    (campo === 'fechaPago' && !!borrador.fechaPagoCheque) ||
     (campo === 'anioRet' && !!borrador.anioRetencion)
 
   /* Campos que la lectura NO completó, con el nombre que tienen en pantalla. Es lo que el recuadro
@@ -600,10 +649,12 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
         .map(([, rotulo]) => rotulo)
     : []
 
-  const agregar = () => {
-    setIntento(true)
-    if (!completo || bloqueado) return
-    dispatch({ type: 'agregarMovimientoPago', movimiento: borrador })
+  /**
+   * Registra el movimiento y deja el formulario listo para el siguiente. Es la segunda mitad de
+   * `agregar`: lo que corre UNA VEZ que el movimiento pasó todos los controles.
+   */
+  const registrar = (movimiento: Borrador) => {
+    dispatch({ type: 'agregarMovimientoPago', movimiento })
     /* El formulario queda limpio para el próximo movimiento pero SIGUE en el mismo medio de cobro:
        quien está cargando tres retenciones no eligió "Retencion IVA" para que el selector le vuelva
        solo a Efectivo después de cada una. Lo que se descarta son los DATOS del movimiento ya
@@ -620,6 +671,61 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
     setComprobanteAjeno(false)
     // El próximo cheque trae su propio CUIT: el visto bueno no se hereda.
     setEstadoCuit('pendiente')
+  }
+
+  /**
+   * El cheque no puede estar YA registrado para este cliente. Se controla contra Monday al
+   * agregar —y no mientras se tipea— por dos motivos: recién acá están los dos datos que lo
+   * identifican (número y CUIT del emisor), y es el último momento en que todavía se puede impedir
+   * que entre a la tabla.
+   *
+   * Corre igual venga el dato de la lectura del comprobante o tipeado a mano: lo que se controla es
+   * el cheque, no cómo se cargó.
+   *
+   * Un FALLO de la consulta NO deja pasar: se avisa y no se agrega. Es una decisión deliberada
+   * —registrar dos veces el mismo cheque descuadra la cuenta corriente del cliente, y eso pesa más
+   * que la molestia de reintentar—, pero significa que sin Monday el cheque no se puede cargar.
+   */
+  const agregar = async () => {
+    setIntento(true)
+    if (!completo || bloqueado || validando) return
+
+    /* Primero lo que se resuelve SIN salir a la red: el mismo movimiento ya cargado en esta tabla.
+       Va antes del control contra Monday porque es más barato y más frecuente —el caso típico es un
+       doble alta del mismo comprobante— y porque no tiene sentido preguntarle al tablero por un
+       cheque que ya está a la vista dos renglones más arriba. */
+    const yaCargado = movimientoRepetido(cobro.movimientos, borrador)
+    if (yaCargado) {
+      setRepetido({ medio: borrador.formaPago, numero: numeroDeMovimiento(borrador) })
+      return
+    }
+
+    if (!esCheque || !cliente) {
+      registrar(borrador)
+      return
+    }
+
+    setValidando(true)
+    try {
+      const repetido = await chequeYaRegistrado({
+        clienteId: cliente.id,
+        numero: borrador.numeroCheque,
+        cuitEmisor: borrador.cuitEmisor,
+      })
+      if (repetido) {
+        setDuplicado({
+          medio: borrador.formaPago,
+          cuit: borrador.cuitEmisor?.trim() ?? '',
+          numero: borrador.numeroCheque?.trim() ?? '',
+        })
+        return
+      }
+      registrar(borrador)
+    } catch {
+      dispatch({ type: 'errorMonday', accion: 'verificar si el cheque ya estaba registrado' })
+    } finally {
+      setValidando(false)
+    }
   }
 
   /** Cambiar de forma de pago descarta lo que sólo valía para la anterior. */
@@ -668,22 +774,20 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
   }
 
   /**
-   * Toma el comprobante. Se guarda el archivo además del nombre: el nombre es lo que se muestra,
-   * pero la columna `file` del recibo sólo se completa subiendo el binario.
+   * Toma el comprobante, o lo QUITA cuando llega `null` desde "Eliminar". Se guarda el archivo
+   * además del nombre: el nombre es lo que se muestra, pero la columna `file` del recibo sólo se
+   * completa subiendo el binario.
    *
-   * Un documento NUEVO empieza de cero: se borran todos los campos del medio antes de que corra su
-   * lectura. Si no, lo que el documento anterior había traído quedaría mezclado con lo que traiga
-   * este —el año de un certificado con el número de otro—, y encima daría por completo un campo que
-   * nadie leyó del papel que finalmente se adjunta.
+   * Los dos casos hacen lo MISMO con los campos del medio: los vacían.
    *
-   * QUITAR el comprobante no borra nada: ahí no viene ninguna lectura a rellenar los campos, y
-   * llevarse puesto lo que el usuario venía cargando a mano sería una sorpresa desagradable.
+   *   · un documento NUEVO empieza de cero, para que lo que trajo el anterior no quede mezclado con
+   *     lo que traiga este —el año de un certificado con el número de otro—, dando por completo un
+   *     campo que nadie leyó del papel que finalmente se adjunta;
+   *   · ELIMINAR devuelve el bloque al estado en que estaba antes de cargar nada. Se descartan
+   *     también los datos que la lectura había volcado: quedaron ahí PORQUE existía ese documento,
+   *     y sostenerlos sin él dejaría un movimiento respaldado por un comprobante que ya no está.
    */
   const tomarArchivo = (f: File | null) => {
-    if (!f) {
-      setBorrador((b) => ({ ...b, comprobanteNombre: '', comprobanteArchivo: null }))
-      return
-    }
     /* Con qué importe queda el formulario limpio: cero, salvo en la TARJETA, donde el importe no
        sale del cupón sino de cuánto falta para cerrar el cobro. Ahí la sugerencia se vuelve a
        calcular en lugar de perderse. */
@@ -692,8 +796,8 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
       ...BORRADOR_VACIO,
       formaPago: b.formaPago,
       importe,
-      comprobanteNombre: f.name,
-      comprobanteArchivo: f,
+      comprobanteNombre: f?.name ?? '',
+      comprobanteArchivo: f ?? null,
     }))
     setImporteTexto(importe > 0 ? importeATexto(importe) : '')
     // Se apagan las marcas de la lectura anterior: volverán —o no— cuando esta termine.
@@ -748,7 +852,7 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
         'importe',
         'numeroCheque',
         'fechaEmisionCheque',
-        'chequeVencimiento',
+        'fechaPagoCheque',
         'bancoEmisor',
         'cuitEmisor',
         /* El FORMATO no entra: papel o electrónico es la decisión que el usuario ya tomó al elegir
@@ -821,12 +925,19 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
         { cuit: datos.cuitEmisor, razonSocial: datos.razonSocialOrigen },
         cliente,
       )
-      if (veredicto === 'no-identificado') return { cargados: 0, rechazo: MSG_SIN_EMISOR }
+      if (veredicto === 'no-identificado') {
+        return { cargados: 0, rechazo: MSG_SIN_EMISOR, ayuda: MSG_SIN_EMISOR_AYUDA }
+      }
       if (veredicto === 'otro') {
         /* En la TRANSFERENCIA es bloqueante: el dinero salió de una cuenta que no es del cliente,
            así que el comprobante no respalda ESTE cobro por más que sus datos estén completos, y
            mientras siga adjunto el movimiento no se puede agregar. */
-        return { cargados: 0, rechazo: MSG_OTRO_CLIENTE, bloqueante: esTransferencia }
+        return {
+          cargados: 0,
+          rechazo: MSG_OTRO_CLIENTE,
+          ayuda: MSG_OTRO_CLIENTE_AYUDA,
+          bloqueante: esTransferencia,
+        }
       }
     }
 
@@ -852,7 +963,9 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
       if (d.importe !== undefined) s.importe = d.importe
       if (d.numeroCheque) s.numeroCheque = d.numeroCheque
       if (d.fechaEmisionCheque) s.fechaEmisionCheque = d.fechaEmisionCheque
-      if (d.chequeVencimiento) s.chequeVencimiento = d.chequeVencimiento
+      /* La fecha de pago entra tal cual; el vencimiento NO se vuelca porque no se guarda: se
+         deriva de ella en el render, así que llega solo apenas ésta se carga. */
+      if (d.fechaPagoCheque) s.fechaPagoCheque = d.fechaPagoCheque
       if (d.bancoEmisor) s.bancoEmisor = deCatalogo(d.bancoEmisor, BANCOS_EMISORES_BASE)
       if (d.cuitEmisor) s.cuitEmisor = d.cuitEmisor
       /* El impuesto que reconoció el documento MANDA sobre el que se había declarado: los datos
@@ -992,8 +1105,23 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
      mismo botón entre renders en lugar de recrearlo (y perderle el foco). */
   const botonAgregar = () => (
     <div className="cobro-form-campo cobro-form-campo--val cobro-form-campo--accion">
-      <button type="button" className="cobro-btn cobro-btn--primary" onClick={agregar}>
-        <i className="fas fa-plus" /> Agregar
+      {/* Mientras se consulta a Monday el botón lo dice y se apaga: es una espera de red, y sin
+          señal el usuario vuelve a apretarlo creyendo que no respondió. */}
+      <button
+        type="button"
+        className="cobro-btn cobro-btn--primary"
+        disabled={validando}
+        onClick={() => void agregar()}
+      >
+        {validando ? (
+          <>
+            <i className="fas fa-circle-notch fa-spin" /> Validando…
+          </>
+        ) : (
+          <>
+            <i className="fas fa-plus" /> Agregar
+          </>
+        )}
       </button>
     </div>
   )
@@ -1127,33 +1255,66 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
                 )}
               </div>
 
+              {/* FECHA DE PAGO · el día desde el que el banco paga el cheque. Es la que trae el
+                  documento y la única de las dos que se carga: el vencimiento sale de ella.
+
+                  Regla: no puede ser anterior a hoy. En error, el campo se pinta de rojo y el
+                  mensaje se muestra ABAJO en posición absoluta, dentro del espacio que el campo ya
+                  reserva (`--val`): aparecer o desaparecer no mueve ni redimensiona nada. */}
               <div className="cobro-form-campo cobro-form-campo--val cobro-campo--fecha">
-                <label htmlFor="cobro-cheque-venc">
-                  Fecha de Vencimiento
+                <label htmlFor="cobro-cheque-pago">
+                  Fecha de Pago
                   <Req />
                 </label>
-                {/* Regla: el vencimiento no puede ser posterior a hoy. En error, el campo se pinta de
-                  rojo y el mensaje se muestra ABAJO en posición absoluta, dentro del espacio que el
-                  campo ya reserva (`--val`): aparecer o desaparecer no mueve ni redimensiona nada. */}
                 <input
-                  id="cobro-cheque-venc"
+                  id="cobro-cheque-pago"
                   type="date"
-                  className={`cobro-in ${mostrarErrorVenc ? 'cobro-in--error' : ''}`}
-                  aria-invalid={mostrarErrorVenc || undefined}
-                  aria-describedby={mostrarErrorVenc ? 'cobro-cheque-venc-err' : undefined}
-                  value={aIso(borrador.chequeVencimiento)}
+                  className={`cobro-in ${mostrarErrorPago ? 'cobro-in--error' : ''}`}
+                  aria-invalid={mostrarErrorPago || undefined}
+                  aria-describedby={mostrarErrorPago ? 'cobro-cheque-pago-err' : undefined}
+                  value={aIso(borrador.fechaPagoCheque)}
                   onChange={(e) =>
                     setBorrador({
                       ...borrador,
-                      chequeVencimiento: desdeIso(e.target.value),
+                      fechaPagoCheque: desdeIso(e.target.value),
                     })
                   }
                 />
-                {mostrarErrorVenc && (
-                  <span className="cobro-in-err" id="cobro-cheque-venc-err" role="alert">
-                    {borrador.chequeVencimiento
-                      ? MSG_CHEQUE_VENC_CORTO
+                {mostrarErrorPago && (
+                  <span className="cobro-in-err" id="cobro-cheque-pago-err" role="alert">
+                    {borrador.fechaPagoCheque
+                      ? MSG_CHEQUE_PAGO_CORTO
                       : textoFalta('Ingresá la fecha')}
+                  </span>
+                )}
+              </div>
+
+              {/* FECHA DE VENC. · derivada, nunca editable: es la de pago más 30 días, que es el
+                  plazo que tiene el cheque para presentarse al cobro. Se muestra igual —y no se
+                  esconde— porque es lo que decide si el cheque sirve, y el usuario tiene que poder
+                  verla antes de agregarlo.
+
+                  Va `readOnly` y no `disabled`: apagado no lo leerían los lectores de pantalla ni
+                  se podría copiar, y lo que se busca es que se vea, no que se ignore. */}
+              <div className="cobro-form-campo cobro-form-campo--val cobro-campo--fecha">
+                <label htmlFor="cobro-cheque-venc">Fecha de Venc.</label>
+                <input
+                  id="cobro-cheque-venc"
+                  type="date"
+                  readOnly
+                  tabIndex={-1}
+                  className={`cobro-in cobro-in--ro ${vencido ? 'cobro-in--error' : ''}`}
+                  aria-invalid={vencido || undefined}
+                  aria-describedby={vencido ? 'cobro-cheque-venc-err' : undefined}
+                  title="Se calcula sola: 30 días después de la fecha de pago"
+                  value={aIso(vencimientoCheque)}
+                  /* Sin `onChange` React la trataría como no controlada; el campo es de sólo
+                     lectura, así que no hay nada que hacer con el evento. */
+                  onChange={() => {}}
+                />
+                {vencido && (
+                  <span className="cobro-in-err" id="cobro-cheque-venc-err" role="alert">
+                    {MSG_CHEQUE_VENCIDO_CORTO}
                   </span>
                 )}
               </div>
@@ -1424,6 +1585,39 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
             </p>
           )}
         </div>
+      )}
+
+      {/* El cheque ya estaba registrado para este cliente: se avisa y NO se agrega. El texto nombra
+          el documento —cheque o eCheq— y al cliente, que son los dos datos con los que se puede ir
+          a buscar el recibo anterior en el tablero. */}
+      {/* El mismo comprobante ya está en la tabla de este cobro. Se nombra su número: es lo que
+          permite ir a buscar el renglón que ya lo tiene, en vez de recorrerla entera. */}
+      {repetido && (
+        <AvisoModal titulo="Ese movimiento ya está cargado" onClose={() => setRepetido(null)}>
+          Ya cargaste un movimiento de <strong>{repetido.medio}</strong>
+          {repetido.numero ? (
+            <>
+              {' '}
+              con el número <strong>{repetido.numero}</strong>
+            </>
+          ) : null}{' '}
+          en este cobro. Revisá la tabla de <strong>Cobros registrados</strong>: si querés
+          corregirlo, editá o quitá el que ya está en vez de cargarlo de nuevo.
+        </AvisoModal>
+      )}
+
+      {duplicado && cliente && (
+        <AvisoModal titulo={`${rotuloDuplicado} duplicado`} onClose={() => setDuplicado(null)}>
+          {/* Todo el motivo en UN párrafo: el cuerpo de la ventana es una columna flex, así que un
+              `<strong>` suelto entre textos se iría a su propio renglón y el mensaje quedaría
+              partido en pedazos. La salida va aparte, en su renglón, que es lo que la destaca. */}
+          <p>
+            Detectamos que ya existe un recibo registrado para el cliente{' '}
+            <strong>{cliente.name}</strong> con el CUIT <strong>{duplicado.cuit}</strong> y número
+            de cheque <strong>{duplicado.numero}</strong>.
+          </p>
+          <p>Ingresá otro cheque.</p>
+        </AvisoModal>
       )}
     </fieldset>
   )

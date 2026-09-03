@@ -466,6 +466,8 @@ export const CHEQUES_EN_CARTERA: ChequeEnCartera[] = [
     numero: '00123456',
     importe: 350_000,
     vencimiento: '2026-09-05',
+    /* 30 días antes del vencimiento, que es la relación entre las dos fechas. */
+    fechaPago: '2026-08-06',
     emision: '2026-07-05',
     banco: 'Banco Galicia',
     cuitEmisor: '30-70011122-3',
@@ -478,6 +480,8 @@ export const CHEQUES_EN_CARTERA: ChequeEnCartera[] = [
     numero: '00987654',
     importe: 543_200.5,
     vencimiento: '2026-09-28',
+    /* 30 días antes del vencimiento, que es la relación entre las dos fechas. */
+    fechaPago: '2026-08-29',
     emision: '2026-07-28',
     banco: 'Banco Credicoop',
     cuitEmisor: '27-25488991-0',
@@ -490,6 +494,8 @@ export const CHEQUES_EN_CARTERA: ChequeEnCartera[] = [
     numero: '00456789',
     importe: 120_000,
     vencimiento: '2026-10-15',
+    /* 30 días antes del vencimiento, que es la relación entre las dos fechas. */
+    fechaPago: '2026-09-15',
     emision: '2026-08-15',
     banco: 'Banco Nación',
     cuitEmisor: '30-58884422-7',

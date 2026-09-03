@@ -55,6 +55,10 @@ export function TablaChequesCartera({
             <th className="ant-col-check" />
             <th>Cheques</th>
             <th className="ant-col-cen">Banco</th>
+            {/* Las TRES fechas del cheque, en el orden en que se lee: cuándo se libró, desde
+                cuándo se cobra y hasta cuándo. */}
+            <th className="ant-col-cen">Fecha Emisión</th>
+            <th className="ant-col-cen">Fecha Pago</th>
             <th className="ant-col-cen">Fecha Vencimiento</th>
             <th className="ant-col-cen">Importe</th>
           </tr>
@@ -88,6 +92,14 @@ export function TablaChequesCartera({
                   <span className="ant-detalle">{c.codigo}</span>
                 </td>
                 <td className="ant-col-cen">{c.banco || <span className="ant-sd">—</span>}</td>
+                {/* Emisión y pago van en negro: la que puede alarmar es la de vencimiento, que es
+                    la que decide hasta cuándo sirve el papel. */}
+                <td className="ant-col-cen">
+                  {desdeIso(c.emision) || <span className="ant-sd">—</span>}
+                </td>
+                <td className="ant-col-cen">
+                  {desdeIso(c.fechaPago) || <span className="ant-sd">—</span>}
+                </td>
                 <td className={`ant-col-cen ${porVencer ? 'pago-venc--proximo' : ''}`}>
                   {desdeIso(c.vencimiento) || <span className="ant-sd">—</span>}
                 </td>

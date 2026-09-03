@@ -13,7 +13,7 @@
  * igualar al "TOTAL A CANCELAR" hasta el peso: lo único que se le perdona son los centavos (ver
  * `TOLERANCIA_DIFERENCIA`).
  */
-import { parseDate } from '@/lib/dates'
+import { parseDate, sumarDias } from '@/lib/dates'
 import { money, round2 } from '@/lib/format'
 import type { Cliente, FormaPago, FormatoCheque, MovimientoPago } from '@/types'
 
@@ -290,48 +290,94 @@ export const MSG_ECHEQ_SIN_ENDOSO =
   `El eCheq no figura a nombre de La Batea (CUIT ${CUIT_LA_BATEA}), así que no se va a poder depositar. Pedí que se endose a La Batea y volvé a cargar el comprobante, o registrá el cobro con otro medio.`
 
 /**
- * REGLA DEL CHEQUE: el VENCIMIENTO no puede ser ANTERIOR al día en que se emite el recibo, que es
- * hoy. Un cheque ya vencido no lo paga el banco, así que darlo por cobrado dejaría asentado un
- * ingreso de dinero que no va a ocurrir.
+ * Las DOS fechas de un cheque, que no son la misma:
  *
- * De hoy en adelante entra todo: un cheque al día vence hoy mismo y uno de pago diferido vence
- * después, y los dos son cobrables. No hay tope por arriba —un vencimiento lejano es un cheque
- * diferido, no un error—, así que lo único que se controla es que no haya quedado atrás.
+ *   · FECHA DE PAGO   · el día a partir del cual el banco lo paga. Es la que trae el documento y la
+ *                       que el usuario carga; en un cheque de pago diferido es la del diferimiento.
+ *   · VENCIMIENTO     · el último día para presentarlo al cobro, treinta días después de la de
+ *                       pago. NO se carga: se DERIVA, así que no puede quedar en desacuerdo con la
+ *                       de pago ni depender de que alguien la calcule bien a mano.
  *
- * Vale IGUAL para el papel y para el eCheq: los dos se cobran por su vencimiento (ver
- * `esChequeDeCobro`).
- *
- * La fecha de EMISIÓN del cheque no entra en la regla: es un dato del documento —cuándo lo libró su
- * emisor— y puede ser de cualquier día anterior. Se pide cargada, nada más.
- *
- * Se compara por DÍA —hoy a la medianoche—, nunca por hora, para que un cheque que vence hoy sea
- * válido a cualquier hora de la jornada.
+ * Antes había una sola fecha —llamada "vencimiento" pero cargada con la de pago—, y esa mezcla es
+ * la que este par deshace.
  */
-export const MSG_CHEQUE_VENCIMIENTO =
-  'El cheque no puede vencer antes de la fecha del recibo: un cheque ya vencido no se cobra'
+export const DIAS_VENCIMIENTO_CHEQUE = 30
+
+/**
+ * El vencimiento que le corresponde a esa fecha de pago. Vacío si la fecha de pago todavía no está
+ * completa: de una fecha a medio cargar no se deriva otra.
+ */
+export const vencimientoDeCheque = (fechaPago: string | undefined): string =>
+  sumarDias(fechaPago ?? '', DIAS_VENCIMIENTO_CHEQUE)
+
+/** Es anterior a HOY, comparando por día y nunca por hora. Vacía cuenta como inválida. */
+function anteriorAHoy(fecha: string | undefined): boolean {
+  const f = parseDate(fecha ?? '')
+  if (!f) return true
+  const hoy = new Date()
+  hoy.setHours(0, 0, 0, 0)
+  return f.getTime() < hoy.getTime()
+}
+
+/**
+ * REGLA 1 · la FECHA DE PAGO no puede ser anterior al día en que se emite el recibo, que es hoy.
+ * Un cheque cuya fecha de pago ya pasó es un cheque que se debió depositar antes, así que tomarlo
+ * como cobro de hoy asienta un ingreso que no va a ocurrir en esta operación.
+ *
+ * De hoy en adelante entra todo: un cheque al día se paga hoy mismo y uno diferido más adelante, y
+ * los dos son cobrables. No hay tope por arriba —una fecha de pago lejana es un cheque diferido, no
+ * un error—, así que lo único que se controla es que no haya quedado atrás.
+ *
+ * Vale IGUAL para el papel y para el eCheq (ver `esChequeDeCobro`). La fecha de EMISIÓN no entra en
+ * ninguna de las dos reglas: es un dato del documento —cuándo lo libró su emisor— y puede ser de
+ * cualquier día anterior; se pide cargada, nada más.
+ */
+export const MSG_CHEQUE_PAGO_ANTERIOR =
+  'La fecha de pago del cheque no puede ser anterior a la fecha del recibo: un cheque con fecha de pago vencida no corresponde a este cobro'
 
 /**
  * La misma regla, dicha en el ancho de un campo. Debajo de un input hay lugar para un renglón, no
  * para la explicación entera: ahí se dice QUÉ tiene que pasar, y el porqué queda para el aviso del
  * pie del paso, que sí tiene el ancho de la pantalla.
  */
-export const MSG_CHEQUE_VENC_CORTO = 'No puede vencer antes de hoy'
+export const MSG_CHEQUE_PAGO_CORTO = 'La fecha de pago no puede ser anterior a hoy'
 
-/** El vencimiento del cheque quedó antes de hoy (o no está cargado). */
-export function vencimientoChequeInvalido(vencimiento: string | undefined): boolean {
-  const venc = parseDate(vencimiento ?? '')
-  if (!venc) return true
-  const hoy = new Date()
-  hoy.setHours(0, 0, 0, 0)
-  return venc.getTime() < hoy.getTime()
-}
+/** La fecha de pago quedó antes de hoy (o no está cargada). */
+export const fechaPagoChequeInvalida = (fechaPago: string | undefined): boolean =>
+  anteriorAHoy(fechaPago)
 
-/** El cheque tiene un vencimiento que incumple la regla (o no lo tiene cargado). */
+/**
+ * REGLA 2 · el VENCIMIENTO —la fecha de pago más treinta días— tampoco puede haber quedado atrás:
+ * pasado ese día el banco ya no lo paga y el cheque no se puede depositar.
+ *
+ * Es consecuencia de la regla 1 y no una condición independiente: con una fecha de pago válida el
+ * vencimiento cae siempre treinta días más adelante, así que esta regla sólo puede saltar cuando la
+ * de pago ya quedó atrás por más de un mes. Se evalúa igual, y por separado, porque lo que hay que
+ * decirle al usuario en ese caso es otra cosa: el cheque no está "mal cargado", está VENCIDO y no
+ * sirve ninguna corrección sobre él.
+ */
+export const MSG_CHEQUE_VENCIDO =
+  'El cheque está vencido: pasaron más de 30 días desde su fecha de pago y el banco ya no lo paga'
+
+/** La misma, en el ancho del campo. Nombra la salida: con este cheque no hay nada que corregir. */
+export const MSG_CHEQUE_VENCIDO_CORTO = 'Cheque VENCIDO. Ingresá otro cheque'
+
+/**
+ * El vencimiento derivado de esa fecha de pago ya pasó.
+ *
+ * SIN fecha de pago devuelve `false`: no saber cuándo se paga no es lo mismo que estar vencido, y
+ * decir "cheque VENCIDO" sobre un campo todavía vacío mandaría a descartar un cheque que puede
+ * estar perfecto. Ese caso lo reclama `fechaPagoChequeInvalida`, que es de quien es.
+ */
+export const chequeVencido = (fechaPago: string | undefined): boolean =>
+  !!parseDate(fechaPago ?? '') && anteriorAHoy(vencimientoDeCheque(fechaPago))
+
+/** El cheque incumple alguna de las dos reglas de fecha (o no tiene fecha de pago cargada). */
 export function chequeInvalido(
-  m: Pick<MovimientoPago, 'formaPago' | 'chequeVencimiento'>,
+  m: Pick<MovimientoPago, 'formaPago' | 'fechaPagoCheque'>,
 ): boolean {
   if (!esChequeDeCobro(m.formaPago)) return false
-  return vencimientoChequeInvalido(m.chequeVencimiento)
+  return fechaPagoChequeInvalida(m.fechaPagoCheque) || chequeVencido(m.fechaPagoCheque)
 }
 
 /**
@@ -565,14 +611,28 @@ export function bloqueoCobro(
     }
   }
 
+  /* Se nombra el MEDIO y no "Cheque" a secas: en la lista pueden convivir un cheque de papel y un
+     eCheq, y decirle "Cheque" a los dos obligaría a buscar cuál es cuál en la tabla. */
+  const nombrar = (m: MovimientoPago) => `${m.formaPago} ${m.numeroCheque?.trim() || 's/nro'}`
+
+  /* El VENCIDO se reclama primero y con su propio aviso: es el caso sin arreglo —el banco ya no lo
+     paga—, mientras que una fecha de pago pasada por pocos días puede ser un tipeo. Meterlos en un
+     solo mensaje obligaría a un texto genérico que no diría cuál de los dos problemas es. */
+  const vencidos = movimientos.filter((m) => esChequeDeCobro(m.formaPago) && chequeVencido(m.fechaPagoCheque))
+  if (vencidos.length > 0) {
+    return {
+      titulo: 'Hay un cheque vencido',
+      mensaje: `${MSG_CHEQUE_VENCIDO}.`,
+      faltantes: vencidos.map(nombrar),
+    }
+  }
+
   const fueraDeFecha = movimientos.filter(chequeInvalido)
   if (fueraDeFecha.length > 0) {
     return {
-      titulo: 'Hay un cheque vencido',
-      mensaje: `${MSG_CHEQUE_VENCIMIENTO}.`,
-      /* Se nombra el MEDIO y no "Cheque" a secas: en la lista pueden convivir un cheque de papel y
-         un eCheq, y decirle "Cheque" a los dos obligaría a buscar cuál es cuál en la tabla. */
-      faltantes: fueraDeFecha.map((m) => `${m.formaPago} ${m.numeroCheque?.trim() || 's/nro'}`),
+      titulo: 'Hay un cheque con la fecha de pago vencida',
+      mensaje: `${MSG_CHEQUE_PAGO_ANTERIOR}.`,
+      faltantes: fueraDeFecha.map(nombrar),
     }
   }
 
@@ -612,19 +672,103 @@ export function bloqueoCobro(
   return null
 }
 
+/* ===== Un movimiento no se carga dos veces ===== */
+
 /**
- * Qué le falta al anticipo para poder registrarse. Los tres datos se reclaman JUNTOS: son un solo
- * bloque de la pantalla, así que nombrarlos de a uno obligaría a intentar avanzar tres veces para
- * enterarse de todo lo que falta.
+ * QUÉ identifica a un movimiento de forma única, o `''` cuando ese medio no tiene con qué
+ * identificarse. Es la clave contra la que se compara si ya está cargado en la tabla.
+ *
+ * Cada medio tiene su número, y cada uno con su matiz:
+ *
+ *   · CHEQUE y ECHEQ · CUIT del emisor + número, por DÍGITOS del CUIT. NO entra el medio: un mismo
+ *     papel no puede estar dos veces, se lo haya cargado como cheque o como eCheq —es la misma
+ *     chequera y el mismo número—.
+ *   · TRANSFERENCIA  · el número de la operación bancaria.
+ *   · TARJETAS       · el número de cupón, compartido entre débito y crédito: sale del mismo posnet,
+ *     así que dos movimientos con el mismo cupón son el mismo cobro cargado dos veces.
+ *   · RETENCIONES    · el impuesto MÁS el número del certificado. El impuesto entra porque cada
+ *     organismo numera por su cuenta: un certificado de IVA y uno de IIBB pueden compartir número
+ *     sin ser el mismo papel, y tratarlos como uno rechazaría una retención legítima.
+ *
+ * EFECTIVO y ANTICIPO devuelven `''` a propósito: no tienen número que los distinga, y dos entregas
+ * de efectivo en el mismo cobro son dos movimientos válidos.
+ */
+export function identidadDeMovimiento(m: MovimientoPago | Omit<MovimientoPago, 'id'>): string {
+  if (esChequeDeCobro(m.formaPago)) {
+    const nro = (m.numeroCheque ?? '').trim().toLowerCase()
+    const cuit = digitosCuit(m.cuitEmisor)
+    return nro && cuit ? `cheque|${cuit}|${nro}` : ''
+  }
+  if (m.formaPago === 'Transferencia') {
+    const nro = (m.nroComprobanteTransferencia ?? '').trim().toLowerCase()
+    return nro ? `transferencia|${nro}` : ''
+  }
+  if (esPagoConTarjeta(m.formaPago)) {
+    const nro = (m.numeroCupon ?? '').trim().toLowerCase()
+    return nro ? `tarjeta|${nro}` : ''
+  }
+  if (esRetencion(m.formaPago)) {
+    const nro = (m.nroComprobanteRetencion ?? '').trim().toLowerCase()
+    return nro ? `retencion|${tipoDeRetencion(m.formaPago).toLowerCase()}|${nro}` : ''
+  }
+  return ''
+}
+
+/**
+ * El movimiento que se quiere agregar YA está en la tabla, o `null` si es nuevo. Devuelve el
+ * movimiento REPETIDO —y no un booleano— para que el aviso pueda nombrarlo.
+ *
+ * Sin identidad no hay repetición posible: un medio sin número propio (efectivo, anticipo) o con su
+ * número todavía sin cargar no se compara con nada. Lo que falte por cargar ya lo reclama el
+ * formulario por su lado.
+ */
+export function movimientoRepetido(
+  movimientos: readonly MovimientoPago[],
+  candidato: MovimientoPago | Omit<MovimientoPago, 'id'>,
+): MovimientoPago | null {
+  const identidad = identidadDeMovimiento(candidato)
+  if (!identidad) return null
+  return movimientos.find((m) => identidadDeMovimiento(m) === identidad) ?? null
+}
+
+/** Cómo se nombra el número que identifica al movimiento, para poder decir cuál está repetido. */
+export function numeroDeMovimiento(m: MovimientoPago | Omit<MovimientoPago, 'id'>): string {
+  if (esChequeDeCobro(m.formaPago)) return m.numeroCheque?.trim() ?? ''
+  if (m.formaPago === 'Transferencia') return m.nroComprobanteTransferencia?.trim() ?? ''
+  if (esPagoConTarjeta(m.formaPago)) return m.numeroCupon?.trim() ?? ''
+  if (esRetencion(m.formaPago)) return m.nroComprobanteRetencion?.trim() ?? ''
+  return ''
+}
+
+/**
+ * Qué le falta al anticipo para poder registrarse. Lo que falte se reclama JUNTO: es un solo bloque
+ * de la pantalla, así que nombrarlo de a un dato obligaría a intentar avanzar varias veces para
+ * enterarse de todo.
  *
  * Es la ÚNICA definición de "el anticipo está completo": la usan el bloqueo del paso y el
  * formulario de carga, así no pueden discrepar sobre cuándo se puede empezar a cargar pagos.
  */
-export function faltantesDeAnticipo(datos: DatosAnticipo): string[] {
+export function faltantesDeAnticipo(
+  datos: DatosAnticipo,
+  /**
+   * ¿El DETALLE y la FECHA DE VENCIMIENTO son obligatorios?
+   *
+   * Hoy NINGUNO de los dos circuitos los exige (ver `ANTICIPO_COBRO_EXIGE_DETALLE_Y_VENC` y
+   * `ANTICIPO_PAGO_EXIGE_DETALLE_Y_VENC`): son datos descriptivos del anticipo y su falta no impide
+   * registrarlo ni emitir el documento —las columnas del tablero se omiten cuando vienen vacías—.
+   * El ÚNICO dato que se sigue exigiendo es el importe, y por un motivo estructural: de él sale el
+   * TOTAL A CANCELAR que las formas de pago tienen que igualar, así que sin él no hay contra qué
+   * cargarlas.
+   *
+   * El parámetro se queda igual, con el default en `true`: que las dos respuestas coincidan hoy no
+   * las hace la misma decisión, y son de dos circuitos que pueden volver a separarse.
+   */
+  exigeDetalleYVencimiento = true,
+): string[] {
   return [
     !(datos.importe > 0) && 'Importe del anticipo',
-    !datos.detalle.trim() && 'Detalle',
-    !datos.vencimiento.trim() && 'Fecha Vto',
+    exigeDetalleYVencimiento && !datos.detalle.trim() && 'Detalle',
+    exigeDetalleYVencimiento && !datos.vencimiento.trim() && 'Fecha Vto',
   ].filter((x): x is string => typeof x === 'string')
 }
 
@@ -641,19 +785,30 @@ export function bloqueoAnticipo(
   movimientos: readonly MovimientoPago[],
   resumen: ResumenCobro,
 ): BloqueoCobro | null {
-  const faltantes = faltantesDeAnticipo(datos)
+  /* Acá el detalle y el vencimiento NO se exigen: son opcionales del cobro (ver
+     `ANTICIPO_COBRO_EXIGE_DETALLE_Y_VENC`). Lo único que frena es el importe. */
+  const faltantes = faltantesDeAnticipo(datos, ANTICIPO_COBRO_EXIGE_DETALLE_Y_VENC)
   if (faltantes.length > 0) {
     return {
-      titulo: 'Faltan datos del anticipo',
+      titulo: 'Falta el importe del anticipo',
       mensaje:
-        'Completá arriba los datos del anticipo: el importe que entrega el cliente a cuenta —que es el total que el recibo va a declarar—, el detalle de por qué se registra y su fecha de vencimiento.',
+        'Completá arriba el importe del anticipo que entrega el cliente a cuenta: es el total que el recibo va a declarar, y el que las formas de pago tienen que igualar.',
       faltantes,
     }
   }
   return bloqueoCobro(movimientos, resumen, false)
 }
 
-/** Los tres datos que declaran un anticipo. Sin ellos el recorrido no avanza. */
+/**
+ * En el COBRO, ¿el detalle y el vencimiento del anticipo son obligatorios? NO: son opcionales.
+ *
+ * Vive acá, en una constante, porque la respuesta la necesitan TRES lugares —el bloqueo del avance,
+ * la apertura del formulario de cobros y el asterisco de los campos— y separarse en cualquiera de
+ * ellos dejaría la pantalla pidiendo algo que la validación ya no exige, o al revés.
+ */
+export const ANTICIPO_COBRO_EXIGE_DETALLE_Y_VENC = false
+
+/** Los datos que declaran un anticipo. Cuál de ellos frena el recorrido depende del módulo. */
 export interface DatosAnticipo {
   importe: number
   detalle: string

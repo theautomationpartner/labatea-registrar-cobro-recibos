@@ -12,7 +12,6 @@ import {
 import { DatosAnticipo } from '@/features/cobro/DatosAnticipo'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
 import { totalACancelar } from '@/lib/cobros'
-import { faltantesDeAnticipo } from '@/lib/pagos'
 import { money } from '@/lib/format'
 import {
   bloqueoAnticipoPago,
@@ -20,13 +19,16 @@ import {
   diferenciaSaldadaPago,
   esCajaCheque,
   esCajaTransferencia,
+  ANTICIPO_PAGO_EXIGE_DETALLE_Y_VENC,
   esRetencionGAN,
+  vencimientoDeCajaCheque,
   MSG_EXCESO_PAGO,
   MSG_PAGO_CUBIERTO,
   pagoCubierto,
   resumenPago,
   type BloqueoPago,
 } from '@/lib/pagosProveedor'
+import { faltantesDeAnticipo } from '@/lib/pagos'
 import {
   descripcionDePasoPago,
   etiquetaDePasoPago,
@@ -54,7 +56,10 @@ function detalleDeCaja(m: MovimientoCaja): Dato[] {
       },
       { label: 'Número de cheque', valor: m.numeroCheque?.trim() || '—' },
       { label: 'Fecha de emisión', valor: m.fechaEmisionCheque || '—' },
-      { label: 'Fecha de vencimiento', valor: m.chequeVencimiento || '—' },
+      { label: 'Fecha de pago', valor: m.fechaPagoCheque || '—' },
+      /* El vencimiento se DERIVA de la de pago (+30 días) en el cheque nuevo, y sale del tablero en
+         el de cartera. Las dos ramas viven en `vencimientoDeCajaCheque`: acá no se recalcula. */
+      { label: 'Fecha de venc.', valor: vencimientoDeCajaCheque(m) || '—' },
       { label: 'Banco emisor', valor: m.bancoEmisor || '—' },
       { label: 'CUIT del emisor', valor: m.cuitEmisor || '—' },
     ]
@@ -148,10 +153,13 @@ export function RegistrarPagoView() {
     ? bloqueoAnticipoPago(datosAnticipo, pago.movimientos, resumen)
     : bloqueoPago(pago.movimientos, resumen, ofreceAnticipo)
 
-  /* Sin los datos del anticipo no se puede cargar cómo se lo entrega: el importe es el total que
-     esas cajas tienen que igualar, así que registrarlas antes sería cargar contra un total que
-     todavía no existe. El formulario queda cerrado hasta que estén los tres. */
-  const faltaAnticipo = esAnticipo ? faltantesDeAnticipo(datosAnticipo) : []
+  /* Sin el IMPORTE del anticipo no se puede cargar cómo se lo entrega: es el total que esas cajas
+     tienen que igualar, así que registrarlas antes sería cargar contra un total que todavía no
+     existe. El detalle y el vencimiento no frenan nada: son opcionales (ver
+     `ANTICIPO_PAGO_EXIGE_DETALLE_Y_VENC`). */
+  const faltaAnticipo = esAnticipo
+    ? faltantesDeAnticipo(datosAnticipo, ANTICIPO_PAGO_EXIGE_DETALLE_Y_VENC)
+    : []
 
   /* El pago ya cierra. NO cierra el formulario: con el total cubierto todavía queda una caja que
      tiene sentido cargar —la RETENCIÓN, que no suma dinero sino que se descuenta de lo ya
@@ -245,7 +253,16 @@ export function RegistrarPagoView() {
                 son los mismos y el estado sobre el que escriben también, porque un anticipo se
                 declara igual se cobre o se pague. */}
             {esAnticipo && (
-              <DatosAnticipo rotuloImporte="Importe del anticipo que se le entrega al proveedor" />
+              <DatosAnticipo
+                rotuloImporte="Importe del anticipo que se le entrega al proveedor"
+                /* La MISMA constante que usa la validación: el asterisco y el bloqueo no pueden
+                   discrepar sobre qué es obligatorio. */
+                exigeDetalleYVencimiento={ANTICIPO_PAGO_EXIGE_DETALLE_Y_VENC}
+                /* SIN Fecha Vto: el anticipo que se le entrega a un proveedor no vence. Queda como
+                   saldo a favor nuestro hasta que se aplique contra una factura de compra, así que
+                   pedir una fecha ahí era ofrecer un dato que después nadie mira. */
+                sinVencimiento
+              />
             )}
 
             {/* Panel superior: de quién es el pago, cuántas facturas cubre y los tres números que

@@ -76,7 +76,12 @@ export interface DatosComprobante {
   // Cheque
   numeroCheque?: string
   fechaEmisionCheque?: string
-  chequeVencimiento?: string
+  /**
+   * FECHA DE PAGO del cheque. El documento la rotula "fecha de vencimiento" —y así la devuelve el
+   * escenario—, pero es el día desde el que el banco lo paga, no el último para presentarlo: ese
+   * vencimiento son treinta días más y la app lo deriva (ver `vencimientoDeCheque`).
+   */
+  fechaPagoCheque?: string
   bancoEmisor?: string
   cuitEmisor?: string
   /**
@@ -277,10 +282,14 @@ export async function procesarComprobante(
      significa que ninguna era bloqueante. Un `documento_valido: false` acompañado sólo de
      advertencias describe un documento con reparos, no uno que haya que descartar. */
   if (rechazado && incidencias.length === 0 && codigoAviso !== COD_TIPO_NO_COINCIDE) {
-    const detectado = aTexto(buscar(indice, ALIAS_TIPO))
-    throw new Error(
-      `El documento no corresponde a ${formaPago}${detectado ? `: se reconoció "${detectado}"` : ''}.`,
-    )
+    /* Es un problema del DOCUMENTO, no del servicio: la lectura anduvo y lo que trajo no es lo que
+       se esperaba. Va como `DocumentoRechazado` para que la pantalla lo trate como advertencia
+       —cargá el que corresponde— y no como una falla en rojo que invite a reintentar con el mismo
+       archivo, que daría idéntico.
+
+       El tipo que la IA sí reconoció NO se agrega al mensaje: nombra un documento que el usuario no
+       eligió, y lo único accionable es cambiar el archivo o cambiar el medio de cobro. */
+    throw new DocumentoRechazado(`El documento ingresado NO es un comprobante ${formaPago}`)
   }
 
   const datos = normalizar(indice)
@@ -311,7 +320,9 @@ const ALIAS: Record<keyof DatosComprobante, string[]> = {
   importe: ['importe', 'importeRetencion', 'montoRetenido', 'monto', 'total', 'amount'],
   numeroCheque: ['numeroCheque', 'nroCheque', 'chequeNumero', 'checkNumber'],
   fechaEmisionCheque: ['fechaEmisionCheque', 'fechaEmision', 'emision', 'issueDate'],
-  chequeVencimiento: [
+  fechaPagoCheque: [
+    'fechaPago',
+    'fechaDePago',
     'chequeVencimiento',
     'fechaVencimientoCheque',
     'fechaVencimiento',
@@ -431,9 +442,6 @@ const ALIAS_PROHIBIDOS: Partial<Record<keyof DatosComprobante, string[]>> = {
  */
 const CLAVES_ROTULO = ['rotulo', 'label', 'etiqueta']
 
-/** Qué tipo de documento reconoció la IA. Sólo se usa para explicar un rechazo. */
-const ALIAS_TIPO = ['tipoDetectado', 'tipoDocumento', 'tipo']
-
 /**
  * Los reparos que trae la respuesta, ya tipados. Se descartan los que no traen mensaje: sin texto
  * para mostrar, una incidencia no es nada que el usuario pueda leer ni accionar.
@@ -481,7 +489,7 @@ function normalizar(fuente: Record<string, unknown>): DatosComprobante {
   poner('importe', aNumero(leer('importe')))
   poner('numeroCheque', aTexto(leer('numeroCheque')))
   poner('fechaEmisionCheque', aFecha(leer('fechaEmisionCheque')))
-  poner('chequeVencimiento', aFecha(leer('chequeVencimiento')))
+  poner('fechaPagoCheque', aFecha(leer('fechaPagoCheque')))
   poner('bancoEmisor', aTexto(leer('bancoEmisor')))
   poner('cuitEmisor', aCuit(leer('cuitEmisor')))
   poner('cuitDestinatario', aCuit(leer('cuitDestinatario')))

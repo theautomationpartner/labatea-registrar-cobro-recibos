@@ -635,6 +635,12 @@
   color: var(--text-dark);
   font-weight: 600;
 }
+/* El cuerpo es una columna flex, así que cada hijo directo es un renglón: un mensaje con partes
+   destacadas tiene que venir envuelto en UN párrafo para que el `<strong>` fluya en línea en vez de
+   partirse a un renglón propio. La separación entre párrafos la pone el `gap`, no el margen. */
+.modal-body p {
+  margin: 0;
+}
 .modal-actions {
   display: flex;
   justify-content: center;

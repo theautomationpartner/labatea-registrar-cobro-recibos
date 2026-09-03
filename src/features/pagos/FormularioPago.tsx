@@ -20,6 +20,13 @@ import {
   type ResultadoRetencion,
 } from '@/lib/pagosProveedor'
 import { getFacturasCompraPendientes } from '@/services/monday'
+import {
+  chequeVencido,
+  fechaPagoChequeInvalida,
+  MSG_CHEQUE_PAGO_CORTO,
+  MSG_CHEQUE_VENCIDO_CORTO,
+  vencimientoDeCheque,
+} from '@/lib/pagos'
 import { useApp, useDispatch } from '@/state/hooks'
 import type {
   CajaPago,
@@ -46,6 +53,7 @@ const BORRADOR_VACIO: Borrador = {
   chequeId: '',
   numeroCheque: '',
   chequeVencimiento: '',
+  fechaPagoCheque: '',
   fechaEmisionCheque: '',
   bancoEmisor: '',
   bancoEmisorId: null,
@@ -382,6 +390,21 @@ export function FormularioPago({ bloqueado = false, diferencia = 0 }: Formulario
 
   /* Campos obligatorios del movimiento, por caja. Cada clave enciende el borde rojo y el mensaje de
      su campo cuando se intenta agregar. */
+  /* El error de la fecha de pago NO espera al "+ Agregar": el importe lo tipea el usuario y hay que
+     dejarlo terminar, pero una fecha se elige de un calendario y ya está completa cuando llega. */
+  const mostrarErrorPago =
+    esNuevo &&
+    fechaPagoChequeInvalida(borrador.fechaPagoCheque) &&
+    (!!borrador.fechaPagoCheque?.trim() || intento)
+
+  /* El VENCIMIENTO que le corresponde a la fecha de pago cargada: 30 días después. Se deriva acá y
+     no se guarda —el movimiento lo vuelve a derivar cuando hace falta (ver `vencimientoDeCajaCheque`)—,
+     así la pantalla y el tablero no pueden mostrar fechas distintas. */
+  const vencimientoCheque = vencimientoDeCheque(borrador.fechaPagoCheque)
+  /* El cheque quedó VENCIDO: su fecha de pago está a más de 30 días atrás. No es un dato mal
+     cargado sino un cheque que ya no sirve, y por eso se dice aparte. */
+  const chequeEstaVencido = esNuevo && chequeVencido(borrador.fechaPagoCheque)
+
   const faltantes: Record<string, boolean> = {
     /* El importe se declara a mano en TODAS las cajas menos en un cheque de cartera, donde sale del
        propio papel y no hay nada que tipear. */
@@ -395,7 +418,10 @@ export function FormularioPago({ bloqueado = false, diferencia = 0 }: Formulario
     // CHEQUE nuevo: se libra ahora, así que sus datos se cargan a mano.
     numeroCheque: esNuevo && !borrador.numeroCheque?.trim(),
     fechaEmision: esNuevo && !borrador.fechaEmisionCheque?.trim(),
-    vencimiento: esNuevo && !borrador.chequeVencimiento?.trim(),
+    /* La FECHA DE PAGO reemplazó al vencimiento como el dato que se carga: el vencimiento ahora se
+       deriva de ella. Falta tanto si está vacía como si quedó antes de hoy —las dos cosas impiden
+       agregar el cheque—, y cuál de las dos es lo dice el mensaje del campo. */
+    fechaPago: esNuevo && fechaPagoChequeInvalida(borrador.fechaPagoCheque),
     bancoEmisorId: esNuevo && !borrador.bancoEmisorId,
     /* TRANSFERENCIA: de qué banco sale el dinero. Es obligatorio.
 
@@ -904,27 +930,61 @@ export function FormularioPago({ bloqueado = false, diferencia = 0 }: Formulario
                 )}
               </div>
 
+              {/* FECHA DE PAGO · el día desde el que el banco paga el cheque. Es la que se carga;
+                  en un diferido, la del diferimiento.
+
+                  Regla: no puede quedar antes de hoy. Librar hoy un cheque con fecha de pago pasada
+                  es librar uno que no se va a poder depositar. El error se muestra apenas hay una
+                  fecha cargada —no hace falta esperar al "+ Agregar" para saber que esa no sirve—. */}
               <div className="cobro-form-campo cobro-form-campo--val cobro-campo--fecha">
-                <label htmlFor="pago-cheque-venc">
-                  Fecha de Vencimiento
+                <label htmlFor="pago-cheque-pago">
+                  Fecha de Pago
                   <Req />
                 </label>
-                {/* Sin la regla del cheque recibido: acá el cheque lo LIBRA La Batea, así que su
-                    vencimiento es una decisión de pago —un diferido es lo normal— y no un dato a
-                    controlar contra la fecha del comprobante. */}
+                <input
+                  id="pago-cheque-pago"
+                  type="date"
+                  className={`cobro-in ${mostrarErrorPago ? 'cobro-in--error' : ''}`}
+                  aria-invalid={mostrarErrorPago || undefined}
+                  aria-describedby={mostrarErrorPago ? 'pago-cheque-pago-err' : undefined}
+                  value={aIso(borrador.fechaPagoCheque ?? '')}
+                  onChange={(e) =>
+                    setBorrador({ ...borrador, fechaPagoCheque: desdeIso(e.target.value) })
+                  }
+                />
+                {mostrarErrorPago && (
+                  <span className="cobro-in-err" id="pago-cheque-pago-err" role="alert">
+                    {borrador.fechaPagoCheque ? MSG_CHEQUE_PAGO_CORTO : 'Ingresá la fecha'}
+                  </span>
+                )}
+              </div>
+
+              {/* FECHA DE VENC. · derivada, nunca editable: es la de pago más 30 días, que es el
+                  plazo que tiene el cheque para presentarse al cobro. Se muestra igual —y no se
+                  esconde— porque es lo que decide si el cheque sirve, y el usuario tiene que poder
+                  verla antes de agregarlo.
+
+                  Va `readOnly` y no `disabled`: apagado no lo leerían los lectores de pantalla ni se
+                  podría copiar, y lo que se busca es que se vea, no que se ignore. */}
+              <div className="cobro-form-campo cobro-form-campo--val cobro-campo--fecha">
+                <label htmlFor="pago-cheque-venc">Fecha de Venc.</label>
                 <input
                   id="pago-cheque-venc"
                   type="date"
-                  className={`cobro-in ${mal('vencimiento') ? 'cobro-in--error' : ''}`}
-                  aria-invalid={mal('vencimiento') || undefined}
-                  value={aIso(borrador.chequeVencimiento ?? '')}
-                  onChange={(e) =>
-                    setBorrador({ ...borrador, chequeVencimiento: desdeIso(e.target.value) })
-                  }
+                  readOnly
+                  tabIndex={-1}
+                  className={`cobro-in cobro-in--ro ${chequeEstaVencido ? 'cobro-in--error' : ''}`}
+                  aria-invalid={chequeEstaVencido || undefined}
+                  aria-describedby={chequeEstaVencido ? 'pago-cheque-venc-err' : undefined}
+                  title="Se calcula sola: 30 días después de la fecha de pago"
+                  value={aIso(vencimientoCheque)}
+                  /* Sin `onChange` React la trataría como no controlada; el campo es de sólo
+                     lectura, así que no hay nada que hacer con el evento. */
+                  onChange={() => undefined}
                 />
-                {mal('vencimiento') && (
-                  <span className="cobro-in-err" role="alert">
-                    Ingresá la fecha
+                {chequeEstaVencido && (
+                  <span className="cobro-in-err" id="pago-cheque-venc-err" role="alert">
+                    {MSG_CHEQUE_VENCIDO_CORTO}
                   </span>
                 )}
               </div>

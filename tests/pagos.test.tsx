@@ -385,6 +385,13 @@ const anticipoBase = aplicar({ ...initialState, operacionApp: 'PAGOS' }, [
 ])
 
 casos.push({
+  nombre: 'modo anticipo · sin Fecha Vto: el anticipo al proveedor no vence',
+  estado: anticipoBase,
+  contiene: ['Detalle'],
+  noContiene: ['Fecha Vto', 'anticipo-venc'],
+})
+
+casos.push({
   nombre: 'modo anticipo · etapa 3 declara el importe y cierra la caja',
   estado: anticipoBase,
   contiene: [
@@ -923,6 +930,8 @@ const cheque = (parche: Partial<ChequeEnCartera>): ChequeEnCartera => ({
   importe: 100_000,
   vencimiento: enDias(60),
   emision: enDias(-30),
+  /* 30 días antes del vencimiento: es la relación entre las dos fechas del papel. */
+  fechaPago: enDias(30),
   banco: 'Banco Galicia',
   cuitEmisor: '30-70011122-3',
   tipo: 'Cheque',
@@ -946,7 +955,48 @@ const carteraHtml = (error: boolean, elegidos: string[] = []) =>
 const tabla = carteraHtml(false)
 const revisiones: { nombre: string; ok: boolean }[] = [
   { nombre: 'usa la MISMA tabla que los anticipos', ok: tabla.includes('ant-tabla') && tabla.includes('ant-row') },
-  { nombre: 'columnas Cheques · Banco · Fecha Vencimiento · Importe', ok: ['>Cheques<', '>Banco<', '>Fecha Vencimiento<', '>Importe<'].every((t) => tabla.includes(t)) },
+  {
+    /* Las TRES fechas del cheque, en el orden en que se lee el papel: cuándo se libró, desde cuándo
+       se cobra y hasta cuándo. */
+    nombre: 'columnas Cheques · Banco · las tres fechas · Importe',
+    ok: ['>Cheques<', '>Banco<', '>Fecha Emisión<', '>Fecha Pago<', '>Fecha Vencimiento<', '>Importe<'].every((t) => tabla.includes(t)),
+  },
+  {
+    nombre: 'la emisión y el pago se muestran con sus valores',
+    ok: (() => {
+      const html = renderToString(
+        createElement(TablaChequesCartera, {
+          cheques: [
+            cheque({ id: 'f', emision: '2026-07-05', fechaPago: '2026-08-29', vencimiento: '2026-09-28' }),
+          ],
+          elegidos: [],
+          onAlternar: () => undefined,
+          error: false,
+        }),
+      )
+      return html.includes('05/07/2026') && html.includes('29/08/2026') && html.includes('28/09/2026')
+    })(),
+  },
+  {
+    /* Un cheque sin esas fechas cargadas las marca, no las deja en blanco. */
+    nombre: 'sin fechas cargadas, se marcan como ausentes',
+    ok: (() => {
+      const html = renderToString(
+        createElement(TablaChequesCartera, {
+          cheques: [cheque({ id: 'g', emision: '', fechaPago: '' })],
+          elegidos: [],
+          onAlternar: () => undefined,
+          error: false,
+        }),
+      )
+      return (html.match(/ant-sd/g) ?? []).length >= 2
+    })(),
+  },
+  {
+    /* La que puede alarmar es la de VENCIMIENTO: es la que decide hasta cuándo sirve el papel. */
+    nombre: 'sólo el vencimiento se pinta por proximidad',
+    ok: (carteraHtml(false).match(/pago-venc--proximo/g) ?? []).length === 1,
+  },
   { nombre: 'el número va con su tipo, separados por guion', ok: tabla.includes('00123456 - Cheque') && tabla.includes('00987654 - Echeq') },
   { nombre: 'el vencimiento próximo se marca', ok: tabla.includes('pago-venc--proximo') },
   { nombre: 'el importe va en negro (ant-num) y NO en verde (ant-pend)', ok: tabla.includes('ant-num') && !tabla.includes('ant-pend') },
@@ -974,6 +1024,8 @@ for (const r of revisiones) {
 import { columnasCaja, columnasFacturaCompra, columnasOrdenPago } from '@/services/monday/ordenPago'
 import { BOARDS, COL, OP_REGISTRO_INDEX } from '@/services/monday/columns'
 import { REGISTRO_COBROS, REGISTRO_PAGOS } from '@/services/monday/registro'
+import { vencimientoDeCajaCheque } from '@/lib/pagosProveedor'
+import { chequeVencido, fechaPagoChequeInvalida } from '@/lib/pagos'
 import { siguienteNroSerie } from '@/services/monday/retencionGanancias'
 import { descripcionAnticipo } from '@/lib/recibo'
 
@@ -1155,8 +1207,8 @@ const conAnticipo = resumenPago(
 /* La MISMA operación del lado del cobro, para contrastar número por número. */
 const cobroEquivalente = resumenCobro(
   [
-    { id: 'c1', formaPago: 'Cheque', importe: 600_000, chequeVencimiento: '' },
-    { id: 'a1', formaPago: 'Anticipo', importe: 100_000, chequeVencimiento: '' },
+    { id: 'c1', formaPago: 'Cheque', importe: 600_000, fechaPagoCheque: '' },
+    { id: 'a1', formaPago: 'Anticipo', importe: 100_000, fechaPagoCheque: '' },
   ],
   TOTAL_FACTURAS,
 )
@@ -1218,7 +1270,13 @@ for (const a of anticipos) {
    Es el espejo del modo anticipo de Cobros: se saltea la etapa de facturas, el importe lo declara
    el usuario y la orden lo ilustra como una sola línea. Se prueba el recorrido entero. */
 
-import { bloqueoAnticipoPago, bloqueoPago, resumenPago as resumenPagoFn } from '@/lib/pagosProveedor'
+import {
+  ANTICIPO_PAGO_EXIGE_DETALLE_Y_VENC,
+  bloqueoAnticipoPago,
+  bloqueoPago,
+  resumenPago as resumenPagoFn,
+} from '@/lib/pagosProveedor'
+import { ANTICIPO_COBRO_EXIGE_DETALLE_Y_VENC, faltantesDeAnticipo } from '@/lib/pagos'
 import { pasosDePago, etiquetaDePasoPago, numeroDePasoPago } from '@/lib/pasosPago'
 import { nombreAnticipoPago } from '@/services/monday/ordenPago'
 
@@ -1267,8 +1325,41 @@ const resumenOk = resumenPagoFn(
 
 const reglasAnticipo: { nombre: string; ok: boolean }[] = [
   {
-    nombre: 'sin los tres datos, el paso se frena antes de mirar las cajas',
-    ok: bloqueoAnticipoPago(sinDatos, [], resumenOk)?.titulo === 'Faltan datos del anticipo',
+    nombre: 'sin importe, el paso se frena antes de mirar las cajas',
+    ok: bloqueoAnticipoPago(sinDatos, [], resumenOk)?.titulo === 'Falta el importe del anticipo',
+  },
+  {
+    /* El detalle y el vencimiento son OPCIONALES en este circuito: con el importe cargado el paso
+       avanza igual. Es lo que lo separa del anticipo de un cobro, donde los tres son obligatorios. */
+    nombre: 'sin detalle ni vencimiento, con importe, NO frena',
+    ok:
+      bloqueoAnticipoPago(
+        { importe: 250_000, detalle: '', vencimiento: '' },
+        [{ id: 'x', formaPago: 'Transferencia', importe: 250_000, bancoOrigenId: '1' }],
+        resumenOk,
+      ) === null,
+  },
+  {
+    nombre: 'y el formulario de cajas se abre con el importe solo',
+    ok:
+      faltantesDeAnticipo(
+        { importe: 250_000, detalle: '', vencimiento: '' },
+        ANTICIPO_PAGO_EXIGE_DETALLE_Y_VENC,
+      ).length === 0 &&
+      faltantesDeAnticipo(
+        { importe: 0, detalle: 'x', vencimiento: '30/09/2026' },
+        ANTICIPO_PAGO_EXIGE_DETALLE_Y_VENC,
+      ).length === 1,
+  },
+  {
+    /* Las dos constantes son decisiones SEPARADAS de dos circuitos, aunque hoy coincidan. Lo que
+       este caso ata es que el parámetro siga sabiendo exigir: si alguien cambiara el default o la
+       rama del `if`, el asterisco de la pantalla quedaría mintiendo. */
+    nombre: 'el parámetro sigue pudiendo exigir los tres',
+    ok:
+      faltantesDeAnticipo({ importe: 250_000, detalle: '', vencimiento: '' }, true).length === 2 &&
+      ANTICIPO_PAGO_EXIGE_DETALLE_Y_VENC === false &&
+      ANTICIPO_COBRO_EXIGE_DETALLE_Y_VENC === false,
   },
   {
     nombre: 'con los tres y la diferencia en cero, no frena nada',
@@ -2221,6 +2312,105 @@ for (const l of lineaRet) {
     console.log(`FALLA  línea retención · ${l.nombre}`)
   } else {
     console.log(`OK     línea retención · ${l.nombre}`)
+  }
+}
+
+/* ===== Las DOS fechas del CHEQUE =====
+   El cheque nuevo declara su FECHA DE PAGO —el día desde el que el banco lo paga— y de ahí sale el
+   vencimiento: 30 días después. El de cartera no declara pago: ya viene del tablero con su
+   vencimiento cargado. */
+
+const enDiasAR = (dias: number): string => {
+  const f = new Date()
+  f.setHours(0, 0, 0, 0)
+  f.setDate(f.getDate() + dias)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(f.getDate())}/${pad(f.getMonth() + 1)}/${f.getFullYear()}`
+}
+
+const fechasCheque: { nombre: string; ok: boolean }[] = [
+  {
+    nombre: 'el vencimiento es la fecha de pago + 30 días',
+    ok: vencimientoDeCajaCheque({ fechaPagoCheque: '01/10/2026' }) === '31/10/2026',
+  },
+  {
+    /* El de CARTERA no declara fecha de pago: su vencimiento es el que ya trae el ítem. */
+    nombre: 'sin fecha de pago, vale la del tablero',
+    ok: vencimientoDeCajaCheque({ chequeVencimiento: '05/09/2026' }) === '05/09/2026',
+  },
+  {
+    nombre: 'la de pago GANA sobre la del tablero',
+    ok:
+      vencimientoDeCajaCheque({ fechaPagoCheque: '01/10/2026', chequeVencimiento: '05/09/2026' }) ===
+      '31/10/2026',
+  },
+  { nombre: 'sin ninguna de las dos, vacío', ok: vencimientoDeCajaCheque({}) === '' },
+  /* --- Las dos reglas de fecha, las mismas que en un cobro --- */
+  { nombre: 'una fecha de pago de ayer no sirve', ok: fechaPagoChequeInvalida(enDiasAR(-1)) },
+  { nombre: 'la de HOY sí: un cheque al día se paga hoy', ok: !fechaPagoChequeInvalida(enDiasAR(0)) },
+  { nombre: 'y una diferida también', ok: !fechaPagoChequeInvalida(enDiasAR(60)) },
+  { nombre: 'sin fecha cargada, tampoco sirve', ok: fechaPagoChequeInvalida('') },
+  {
+    /* Más de 30 días atrás: el vencimiento derivado ya pasó y el banco no lo paga. */
+    nombre: 'a más de 30 días atrás, el cheque está VENCIDO',
+    ok: chequeVencido(enDiasAR(-31)),
+  },
+  {
+    /* Justo 30 días atrás vence HOY, y vencer hoy es estar al día: todavía se puede depositar. */
+    nombre: 'a 30 días exactos vence hoy, y hoy todavía sirve',
+    ok: !chequeVencido(enDiasAR(-30)),
+  },
+  {
+    /* Sin fecha de pago no es "vencido": es un campo vacío, y eso lo reclama la otra regla. */
+    nombre: 'sin fecha de pago no se lo declara vencido',
+    ok: !chequeVencido(''),
+  },
+  /* --- El subelemento escribe las DOS --- */
+  {
+    nombre: 'el subelemento lleva la fecha de pago y el vencimiento derivado',
+    ok: (() => {
+      const f = columnasCaja({
+        id: 'n9',
+        formaPago: 'Cheque',
+        importe: 1,
+        modalidadCheque: 'nuevo',
+        fechaPagoCheque: '01/10/2026',
+      })
+      return (
+        JSON.stringify(f['date_mm6v39m2']) === '{"date":"2026-10-01"}' &&
+        JSON.stringify(f['date_mm6kv044']) === '{"date":"2026-10-31"}'
+      )
+    })(),
+  },
+  {
+    /* El de cartera no tiene fecha de pago que escribir: esa columna se omite. */
+    nombre: 'el de cartera omite la fecha de pago y conserva su vencimiento',
+    ok: (() => {
+      const f = columnasCaja({
+        id: 'c8',
+        formaPago: 'Cheque',
+        importe: 1,
+        modalidadCheque: 'cartera',
+        chequeId: '1',
+        chequeVencimiento: '05/09/2026',
+      })
+      return (
+        !('date_mm6v39m2' in f) && JSON.stringify(f['date_mm6kv044']) === '{"date":"2026-09-05"}'
+      )
+    })(),
+  },
+  {
+    nombre: 'ninguna otra caja escribe la fecha de pago',
+    ok: !('date_mm6v39m2' in columnasCaja({ id: 't8', formaPago: 'Transferencia', importe: 1 })),
+  },
+]
+
+for (const c of fechasCheque) {
+  if (!c.ok) {
+    fallas++
+    console.log(`FALLA  fechas cheque · ${c.nombre}`)
+  } else {
+    console.log(`OK     fechas cheque · ${c.nombre}`)
   }
 }
 
