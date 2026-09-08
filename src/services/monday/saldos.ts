@@ -40,20 +40,26 @@ const importe = (cols: ReturnType<typeof byId>, columna: string): number =>
   round2(num(valor(cols[columna])))
 
 /**
- * Los dos saldos del cliente. Sin cliente devuelve ceros: no hay cuenta que mirar. Sin token (modo
- * local) devuelve el mock.
+ * Los dos saldos de la cuenta corriente de una persona, del lado del mostrador que se le indique.
+ *
+ * Los dos tableros son ESPEJOS —"💵Cta Cte Cliente" y "💵Cta Cte Proveedores"— con los mismos ids
+ * de columna, así que la consulta es una sola y lo único que cambia es contra qué board se corre.
+ * Es exactamente lo mismo que hace la búsqueda de personas, que sale del mismo tablero para los dos
+ * lados y sólo cambia la categoría.
+ *
+ * Sin persona devuelve ceros: no hay cuenta que mirar. Sin token (modo local) devuelve el mock.
  */
-export async function getSaldosCliente(clienteId: string): Promise<SaldosCliente> {
-  if (!clienteId) return SALDOS_EN_CERO
+async function getSaldosDeCuenta(personaId: string, board: number): Promise<SaldosCliente> {
+  if (!personaId) return SALDOS_EN_CERO
   if (!mondayHabilitado()) return SALDOS_CLIENTE
 
   const data = await mondayApi<{ boards: { items_page: { items: MondayItem[] } }[] }>(
     `query {
-      boards(ids: [${BOARDS.ctaCte}]) {
+      boards(ids: [${board}]) {
         items_page(
           limit: 1,
           query_params: {rules: [
-            {column_id: "${COL.ctaCte.cliente}", compare_value: [${Number(clienteId)}], operator: any_of}
+            {column_id: "${COL.ctaCte.cliente}", compare_value: [${Number(personaId)}], operator: any_of}
           ]}
         ) {
           items {
@@ -67,7 +73,7 @@ export async function getSaldosCliente(clienteId: string): Promise<SaldosCliente
     }`,
   )
 
-  /* Sin cuenta para ese cliente no hay error que reportar: todavía no operó, así que sus saldos
+  /* Sin cuenta para esa persona no hay error que reportar: todavía no operó, así que sus saldos
      son cero. */
   const cuenta = data.boards?.[0]?.items_page.items?.[0]
   if (!cuenta) return SALDOS_EN_CERO
@@ -78,3 +84,18 @@ export async function getSaldosCliente(clienteId: string): Promise<SaldosCliente
     anticipos: importe(cols, COL.ctaCte.anticiposPendAplicar),
   }
 }
+
+/** Los dos saldos del CLIENTE, de su cuenta en "💵Cta Cte Cliente". */
+export const getSaldosCliente = (clienteId: string): Promise<SaldosCliente> =>
+  getSaldosDeCuenta(clienteId, BOARDS.ctaCte)
+
+/**
+ * Los dos saldos del PROVEEDOR, de su cuenta en "💵Cta Cte Proveedores" (18428672366).
+ *
+ * Va contra OTRO tablero y no contra el de clientes: son dos cuentas distintas de la misma persona
+ * —alguien que es cliente y proveedor tiene una de cada lado—, así que buscar la de un proveedor en
+ * el board de clientes no falla, simplemente no la encuentra y devuelve ceros. Ese cero se lee en
+ * la ficha como "no debe nada", que es lo contrario de lo que puede estar pasando.
+ */
+export const getSaldosProveedor = (proveedorId: string): Promise<SaldosCliente> =>
+  getSaldosDeCuenta(proveedorId, BOARDS.ctaCteProveedores)

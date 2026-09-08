@@ -7,6 +7,7 @@ import type { RolPersona } from '@/lib/personas'
 import { indiceDePasoPago } from '@/lib/pasosPago'
 import type {
   AnticipoPendiente,
+  ChequeEnCartera,
   Cliente,
   OperacionApp,
   CobroState,
@@ -177,6 +178,35 @@ export interface AppState {
    */
   errorMonday: string | null
 
+  /* ===== MÓDULO DE RECHAZO DE CHEQUE =====
+     Igual que los demás circuitos: claves propias, sin compartir una sola con Cobros ni con Pagos.
+     Cambiar de módulo vuelve todo a `initialState` (ver `setOperacionApp`), así que no se pisan. */
+
+  /** Cheques en cartera del cliente deudor, leídos al entrar a la etapa 2. */
+  chequesRechazo: ChequeEnCartera[]
+  /**
+   * De QUÉ cliente son esos cheques. Misma clave de caché que `facturasClienteId`, con el mismo
+   * `null` ante un fallo: un error NO se cachea, así el próximo ingreso reintenta en vez de mostrar
+   * una cartera vacía para siempre.
+   */
+  chequesRechazoClienteId: string | null
+  /**
+   * El cheque que el banco rechazó. Es UNO solo —un rechazo es de un papel— y por eso se guarda su
+   * id y no un mapa como en las otras tablas de selección múltiple. null = todavía no se eligió.
+   */
+  chequeRechazadoId: string | null
+  /**
+   * Proveedor al que ese cheque se le había endosado: es quien vuelve a ser acreedor cuando el
+   * papel rebota. Va en su PROPIA clave y no en `clienteDestino` —la segunda persona del pase—
+   * porque no es el mismo dato: aquella es una cuenta del mismo lado del mostrador que el origen, y
+   * ésta es siempre del OTRO lado. Compartir la clave habría hecho que `setClienteDestino`, que
+   * descarta las facturas del pase, se llevara puesto algo que no le pertenece.
+   */
+  proveedorAcreedor: Cliente | null
+  /** Saldos de Cta Cte del acreedor, para su ficha. Misma forma y misma caché que los del cliente. */
+  saldosAcreedor: SaldosCliente | null
+  saldosAcreedorId: string | null
+
   /* ===== MÓDULO DE PAGOS =====
      Estado propio del otro circuito. Vive en el MISMO objeto que el de Cobros pero sin compartir
      un solo campo con él: los dos módulos son operaciones independientes, y cambiar de módulo
@@ -266,6 +296,13 @@ export const initialState: AppState = {
   usuariosCargando: true,
   usuarioActual: null,
   errorMonday: null,
+  /* RECHAZO DE CHEQUE. La cartera se lee recién en la etapa 2, con el deudor ya elegido. */
+  chequesRechazo: [],
+  chequesRechazoClienteId: null,
+  chequeRechazadoId: null,
+  proveedorAcreedor: null,
+  saldosAcreedor: null,
+  saldosAcreedorId: null,
   /* PAGOS. Igual que Cobros: nada viene preseleccionado, y la etapa 1 es la que lo reclama. */
   pasoPago: 'proveedor',
   pasoPagoMaxIdx: 0,
@@ -330,6 +367,12 @@ export type Action =
   | { type: 'toggleAnticipoPase'; anticipo: AnticipoPendiente }
   | { type: 'setImportePase'; id: string; importe: number }
   | { type: 'setClienteDestino'; cliente: Cliente | null }
+  /* RECHAZO DE CHEQUE. Traer la cartera del deudor y marcar cuál de sus cheques rebotó. */
+  | { type: 'setChequesRechazo'; cheques: ChequeEnCartera[]; clienteId: string | null }
+  | { type: 'toggleChequeRechazado'; cheque: ChequeEnCartera }
+  | { type: 'setProveedorAcreedor'; proveedor: Cliente | null }
+  /** `clienteId`: misma clave de caché que en `setSaldos`, con el mismo `null` ante un fallo. */
+  | { type: 'setSaldosAcreedor'; saldos: SaldosCliente | null; clienteId: string | null }
   | { type: 'setSaldosDestino'; saldos: SaldosCliente | null; clienteId: string | null }
   | { type: 'setImporteAnticipoAplicado'; id: string; importe: number }
   | { type: 'agregarMovimientoPago'; movimiento: Omit<MovimientoPago, 'id'> }
@@ -379,6 +422,7 @@ export type Action =
  * como funcion en vez de repetirse donde hace falta.
  *
  *   · PASES tiene un recorrido ÚNICO —no pregunta que se cobra—, asi que el modulo lo fija.
+ *   · RECHAZOS, lo mismo: sus tres etapas son siempre las mismas, asi que el modulo las fija.
  *   · COBROS lo deja SIN elegir: es lo que hace que el paso 1 lo reclame.
  *
  * Lo consultan los dos lugares que dejan la app a foja cero: cambiar de modulo y cerrar una
@@ -387,7 +431,7 @@ export type Action =
  * etapas de Cobros dentro del modulo de Pases—.
  */
 const recorridoDe = (operacion: OperacionApp): TipoOperacion | null =>
-  operacion === 'PASES' ? 'pases' : null
+  operacion === 'PASES' ? 'pases' : operacion === 'RECHAZOS' ? 'rechazos' : null
 
 /**
  * Responsable por defecto: el usuario de la lista que coincide con el logueado (mismo id de
@@ -452,6 +496,12 @@ export function reducer(state: AppState, action: Action): AppState {
         clienteDestino: null,
         saldosDestino: null,
         saldosDestinoId: null,
+        chequesRechazo: [],
+        chequesRechazoClienteId: null,
+        chequeRechazadoId: null,
+        proveedorAcreedor: null,
+        saldosAcreedor: null,
+        saldosAcreedorId: null,
               cobro: cobroVacio(),
         reciboId: null,
         emision: EMISION_INICIAL,
@@ -556,6 +606,15 @@ export function reducer(state: AppState, action: Action): AppState {
         clienteDestino: null,
         saldosDestino: null,
         saldosDestinoId: null,
+        /* La cartera es de ESE deudor y el cheque rechazado es uno de sus papeles: cambiarlo deja
+           las dos cosas sin sentido. La lista se descarta CON su clave de caché, igual que el
+           resto, o el paso 2 la daría por ya leída. */
+        chequesRechazo: [],
+        chequesRechazoClienteId: null,
+        chequeRechazadoId: null,
+        /* El acreedor NO se descarta acá: a quién se le endosó el cheque es una decisión propia del
+           paso 3 y no depende de quién sea el deudor. Se descarta al elegir OTRO proveedor, al
+           cambiar de operación o al cerrar la operación, igual que el destino del pase. */
               /* El cobro es de ESE cliente: sus cheques, sus retenciones y sus tarjetas no tienen
            sentido para otro, así que se descarta entero junto con la imputación. */
         cobro: cobroVacio(),
@@ -742,6 +801,51 @@ export function reducer(state: AppState, action: Action): AppState {
     /* Saldos de Cta Cte del destino. Llegan solos, después del cliente: sólo rellenan sus cajas. */
     case 'setSaldosDestino':
       return { ...state, saldosDestino: action.saldos, saldosDestinoId: action.clienteId }
+
+    /* ===== RECHAZO DE CHEQUE ===== */
+
+    /* Llegó la cartera del deudor. El cheque ya marcado se conserva SÓLO si sigue estando —mismo
+       criterio que las imputaciones en `setFacturas`—: entre una lectura y otra pudo haberse usado
+       o rechazado desde otro lado, y dejar marcado un papel que ya no figura haría registrar un
+       rechazo contra un ítem que la pantalla no muestra. */
+    case 'setChequesRechazo': {
+      const vigentes = new Set(action.cheques.map((c) => c.id))
+      return {
+        ...state,
+        chequesRechazo: action.cheques,
+        chequesRechazoClienteId: action.clienteId,
+        chequeRechazadoId:
+          state.chequeRechazadoId && vigentes.has(state.chequeRechazadoId)
+            ? state.chequeRechazadoId
+            : null,
+      }
+    }
+
+    /* Marcar/desmarcar el cheque rechazado. Es EXCLUYENTE: un rechazo es de UN papel, así que
+       marcar otro reemplaza al anterior en vez de sumarse. La tabla es la misma que la de Pagos
+       —casillas y todo—, y es el estado el que decide que sólo una quede en pie: cambiar el
+       control por radios habría significado una tabla distinta para el mismo dato. */
+    case 'toggleChequeRechazado':
+      return {
+        ...state,
+        chequeRechazadoId:
+          state.chequeRechazadoId === action.cheque.id ? null : action.cheque.id,
+      }
+
+    /* El proveedor al que se le había endosado el cheque. Cambiarlo descarta SUS saldos con su
+       clave de caché —son del proveedor anterior—, con el mismo criterio que el destino del pase. */
+    case 'setProveedorAcreedor':
+      if (state.proveedorAcreedor?.id === action.proveedor?.id) return state
+      return {
+        ...state,
+        proveedorAcreedor: action.proveedor,
+        saldosAcreedor: null,
+        saldosAcreedorId: null,
+      }
+
+    /* Saldos de Cta Cte del acreedor. Llegan solos, después del proveedor: sólo rellenan sus cajas. */
+    case 'setSaldosAcreedor':
+      return { ...state, saldosAcreedor: action.saldos, saldosAcreedorId: action.clienteId }
 
 
     case 'agregarMovimientoPago':

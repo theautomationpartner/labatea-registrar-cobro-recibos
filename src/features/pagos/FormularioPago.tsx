@@ -569,7 +569,11 @@ export function FormularioPago({ bloqueado = false, diferencia = 0 }: Formulario
             modalidadCheque: 'cartera',
             chequeId: c.id,
             numeroCheque: c.numero,
+            /* Las TRES fechas del papel salen del tablero, no se derivan: el cheque ya existe y
+               son las suyas. La de PAGO se estaba perdiendo, y con ella la línea del subelemento
+               quedaba sin decir desde cuándo se puede depositar. */
             chequeVencimiento: desdeIso(c.vencimiento),
+            fechaPagoCheque: desdeIso(c.fechaPago),
             fechaEmisionCheque: desdeIso(c.emision),
             bancoEmisor: c.banco,
             cuitEmisor: c.cuitEmisor,

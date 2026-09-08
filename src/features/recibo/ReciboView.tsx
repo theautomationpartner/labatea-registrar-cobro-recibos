@@ -213,23 +213,16 @@ export function ReciboView() {
             {/* Sin rótulo de estado al lado del botón: en qué anda la emisión ya lo dicen el propio
                 botón "Emitir el recibo" y el semáforo de la card del documento, los dos a la vista.
                 Repetirlo acá era decir tres veces lo mismo. */}
-            {/* Mientras el pedido viaja, el botón lo dice en vez de quedarse mudo: es la última
-                escritura de la operación y la que impacta la cuenta corriente. */}
+            {/* El botón NO cambia mientras el pedido viaja: ni spinner ni otro rótulo. Sólo se
+                apaga, que es lo que impide pedir el registro dos veces con un doble click —esa
+                escritura impacta la cuenta corriente— sin mover nada en pantalla. */}
             <button
               type="button"
               className="btn btn-primary"
               disabled={registrando}
               onClick={finalizar}
             >
-              {registrando ? (
-                <>
-                  <i className="fas fa-circle-notch fa-spin" /> Registrando el cobro…
-                </>
-              ) : (
-                <>
-                  <i className="fas fa-flag-checkered" /> Finalizar Operación
-                </>
-              )}
+              <i className="fas fa-flag-checkered" /> Finalizar Operación
             </button>
           </div>
         </div>

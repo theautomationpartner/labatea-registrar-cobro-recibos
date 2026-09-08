@@ -13,6 +13,15 @@ interface TablaChequesCarteraProps {
    * un campo sino de la decisión que falta, así que lo que se señala es la tabla entera.
    */
   error?: boolean
+  /**
+   * Suma las dos columnas de ORIGEN: con qué recibo entró el cheque y con qué orden de pago salió.
+   *
+   * Van detrás de una bandera y no siempre porque sólo tienen sentido sobre cheques YA USADOS —los
+   * del rechazo—: en la cartera del formulario de pago el cheque todavía no salió, así que la
+   * columna del pago estaría vacía en todas las filas, y una columna que nunca dice nada es ruido.
+   * Los datos tampoco vienen: esa consulta no los pide (ver `getChequesEnCartera`).
+   */
+  conOrigen?: boolean
 }
 
 /**
@@ -22,11 +31,22 @@ interface TablaChequesCarteraProps {
  * hechos son DOS cosas: electrónico o no. Acá se reducen a esas dos, escritas siempre igual, para
  * que la columna no alterne entre "Papel" y "Cheque" según qué etiqueta le tocó a cada ítem.
  *
- * Sin número cargado queda el código del ítem ("CHEQUE-07"): siempre hay algo que mostrar.
+ * El número va precedido por "№", que es como se lo nombra en todo el sistema —los movimientos de
+ * cuenta corriente del rechazo se llaman "Rechazo Cheque - №15935562"—: sin él, un número suelto al
+ * principio de la fila se confunde con un código o un id.
+ *
+ * Sin número cargado queda el código del ítem ("CHEQUE-07"), y ahí el "№" NO se antepone: ese
+ * código no es el número del cheque, y rotularlo como si lo fuera sería afirmar un dato que el
+ * tablero no tiene.
+ *
+ * Se EXPORTA porque el rechazo de cheque nombra el papel elegido fuera de la tabla —en el resumen
+ * del paso—: escrito dos veces, el resumen y la fila podrían terminar llamando distinto al mismo
+ * cheque.
  */
-const etiquetaCheque = (c: ChequeEnCartera): string => {
+export const etiquetaCheque = (c: ChequeEnCartera): string => {
   const tipo = /echeq/i.test(c.tipo) ? 'Echeq' : 'Cheque'
-  return `${c.numero.trim() || c.codigo} - ${tipo}`
+  const numero = c.numero.trim()
+  return `${numero ? `№${numero}` : c.codigo} - ${tipo}`
 }
 
 /**
@@ -46,6 +66,7 @@ export function TablaChequesCartera({
   elegidos,
   onAlternar,
   error = false,
+  conOrigen = false,
 }: TablaChequesCarteraProps) {
   return (
     <div className="ant-tabla-wrap">
@@ -60,6 +81,14 @@ export function TablaChequesCartera({
             <th className="ant-col-cen">Fecha Emisión</th>
             <th className="ant-col-cen">Fecha Pago</th>
             <th className="ant-col-cen">Fecha Vencimiento</th>
+            {/* De dónde viene y a dónde fue el cheque. Van entre las fechas y el importe: cierran
+                la identificación del papel, y el importe es lo último que se lee de la fila. */}
+            {conOrigen && (
+              <>
+                <th className="ant-col-cen">ID Recibo</th>
+                <th className="ant-col-cen">ID Pago</th>
+              </>
+            )}
             <th className="ant-col-cen">Importe</th>
           </tr>
         </thead>
@@ -103,6 +132,14 @@ export function TablaChequesCartera({
                 <td className={`ant-col-cen ${porVencer ? 'pago-venc--proximo' : ''}`}>
                   {desdeIso(c.vencimiento) || <span className="ant-sd">—</span>}
                 </td>
+                {conOrigen && (
+                  <>
+                    {/* Los dos códigos con los que se encuentra la operación en Monday. Sin el dato
+                        va el guion: un cheque puede no haber salido todavía, y eso es un dato. */}
+                    <td className="ant-col-cen">{c.idRecibo || <span className="ant-sd">—</span>}</td>
+                    <td className="ant-col-cen">{c.idPago || <span className="ant-sd">—</span>}</td>
+                  </>
+                )}
                 {/* `ant-num` y NO `ant-pend`: el segundo es el que pinta de verde el saldo a favor
                     de un anticipo, y este importe no es un saldo a decidir. */}
                 <td className="ant-col-cen ant-num">{money(c.importe)}</td>

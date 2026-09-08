@@ -473,6 +473,8 @@ export const CHEQUES_EN_CARTERA: ChequeEnCartera[] = [
     cuitEmisor: '30-70011122-3',
     tipo: 'Cheque',
     estado: 'Pendiente',
+    idRecibo: 'RECIBO-078',
+    idPago: 'IDPAGO-012',
   },
   {
     id: 'ch-2',
@@ -487,6 +489,8 @@ export const CHEQUES_EN_CARTERA: ChequeEnCartera[] = [
     cuitEmisor: '27-25488991-0',
     tipo: 'eCheq',
     estado: 'Pendiente',
+    idRecibo: 'RECIBO-081',
+    idPago: 'IDPAGO-014',
   },
   {
     id: 'ch-3',
@@ -501,6 +505,8 @@ export const CHEQUES_EN_CARTERA: ChequeEnCartera[] = [
     cuitEmisor: '30-58884422-7',
     tipo: 'Cheque',
     estado: 'Pendiente',
+    idRecibo: 'RECIBO-090',
+    idPago: '',
   },
 ]
 

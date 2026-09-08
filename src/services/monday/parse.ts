@@ -11,7 +11,18 @@ export interface CV {
   /** Índice de la etiqueta en una columna status. Es más estable que su texto. */
   index?: number | null
   /** `board` sólo viene si la consulta lo pide: sirve para verificar de qué tablero es el vinculado. */
-  linked_items?: { id: string; name: string; board?: { id: string }; column_values: CV[] }[]
+  linked_items?: {
+    id: string
+    name: string
+    board?: { id: string }
+    column_values: CV[]
+    /**
+     * El ítem PADRE del vinculado, cuando el vinculado es un SUBELEMENTO y la consulta lo pide.
+     * Existe porque hay datos que viven un nivel más arriba: el cheque se conecta a la línea del
+     * recibo, pero el código "RECIBO-078" está en el recibo (ver `getChequesDeCliente`).
+     */
+    parent_item?: { id: string; column_values: CV[] }
+  }[]
 }
 
 export interface MondayItem {

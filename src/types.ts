@@ -12,11 +12,15 @@
  *              proveedor, sus facturas de compra pendientes y las cajas con las que se paga—, con
  *              sus propias claves de navegación (ver `PasoPago`). Sólo lo puede elegir un
  *              administrador (ver `lib/permisos`).
+ *   · RECHAZOS · el banco rechazó un cheque que un cliente había entregado y que ya se le había
+ *              endosado a un proveedor. Circuito propio de tres etapas —el cliente deudor, el
+ *              cheque rechazado de su cartera y el proveedor acreedor—, y toca los DOS lados del
+ *              mostrador: es la única operación de la app que lo hace.
  *
  * Elegir uno cambia la app entera, no una parte: por eso el ruteo de más alto nivel mira ESTE valor
  * antes que el paso (ver `App`), y cambiarlo descarta lo que se venía cargando en el anterior.
  */
-export type OperacionApp = 'COBROS' | 'PASES' | 'PAGOS'
+export type OperacionApp = 'COBROS' | 'PASES' | 'PAGOS' | 'RECHAZOS'
 
 /**
  * Etapas del módulo de COBROS. Son suyas y de nadie más: PAGOS es una operación independiente y
@@ -32,6 +36,12 @@ export type Paso =
      ningún otro—, y por eso tienen su clave en vez de reusar la de otro paso con otro significado. */
   | 'anticipoOrigen'
   | 'destino'
+  /* Sólo RECHAZO DE CHEQUE: elegir el cheque de la cartera del cliente que el banco rechazó y
+     después el proveedor al que ese cheque se le había endosado, que es donde además se cierra la
+     operación. Mismo criterio que las dos de arriba: son etapas de UN recorrido y por eso tienen
+     clave propia. */
+  | 'chequeRechazado'
+  | 'proveedorAcreedor'
 
 /**
  * Qué se está registrando DENTRO del módulo de COBROS. Es lo primero que se elige —antes incluso
@@ -45,13 +55,14 @@ export type Paso =
  *                  pendientes. Recorre las mismas cuatro etapas que el cobro; lo que cambia es el
  *                  paso 3, donde el dinero sale de los anticipos y no de una forma de pago.
  */
-export type TipoOperacion = 'cobro' | 'anticipo' | 'aplicacion' | 'pases'
+export type TipoOperacion = 'cobro' | 'anticipo' | 'aplicacion' | 'pases' | 'rechazos'
 
 /*
- * `pases` NO se elige en ese selector: es el recorrido del MÓDULO "Pases de Saldo", y lo pone el
- * propio cambio de módulo (ver `setOperacionApp`). Vive en esta unión porque el recorrido, las
- * etiquetas y el stepper se resuelven todos por `TipoOperacion`: darle una vía aparte habría
- * significado dos formas distintas de contestar "¿en qué etapa estoy?".
+ * `pases` y `rechazos` NO se eligen en ese selector: son los recorridos de los MÓDULOS "Pases de
+ * Saldo" y "Rechazo de Cheque", y los pone el propio cambio de módulo (ver `setOperacionApp`).
+ * Viven en esta unión porque el recorrido, las etiquetas y el stepper se resuelven todos por
+ * `TipoOperacion`: darles una vía aparte habría significado dos formas distintas de contestar
+ * "¿en qué etapa estoy?".
  */
 
 
@@ -606,8 +617,25 @@ export interface ChequeEnCartera {
   cuitEmisor: string
   /** "🤖Tipo de Cheque" (dropdown_mm5ye3k3): papel o electrónico. */
   tipo: string
-  /** Etiqueta de "🤖Estado del Cheque" (color_mm5y74q2). Siempre "Pendiente": el resto no se lista. */
+  /**
+   * Etiqueta de "🤖Estado del Cheque" (color_mm5y74q2). Qué valor trae depende de qué lista lo
+   * cargó: "Pendiente" en la cartera del formulario de pago, "100% Usado" en la del rechazo.
+   */
   estado: string
+  /**
+   * "🤖ID Recibo" del recibo con el que el cheque ENTRÓ ("RECIBO-078"), y "🤖ID Orden de Pago" de
+   * la orden con la que SALIÓ ("IDPAGO-012").
+   *
+   * Ninguno de los dos está en el ítem del cheque: el cheque conoce los SUBELEMENTOS —una línea del
+   * recibo y una de la orden— y el código vive en el ítem PADRE de cada uno (ver
+   * `getChequesDeCliente`). Se traen resueltos para que la tabla no tenga que saber nada de esa
+   * cadena.
+   *
+   * Vacío cuando el cheque todavía no pasó por ese lado, o cuando la consulta no los pidió: la
+   * cartera del formulario de pago no los usa, así que ahí llegan en `''` y no se muestran.
+   */
+  idRecibo: string
+  idPago: string
 }
 
 /**

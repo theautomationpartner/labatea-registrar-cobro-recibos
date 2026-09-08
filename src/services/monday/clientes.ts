@@ -209,6 +209,32 @@ async function buscarPersonas(porColumna: readonly CriterioPersona[], reglas: st
 }
 
 /**
+ * La fila de UNA persona, por su id de ítem. Devuelve el ítem CRUDO y no el modelo mapeado porque
+ * cada módulo le agrega lo suyo: el de Pagos le suma si tiene la cuenta corriente conectada (ver
+ * `mapProveedor`), y ése es un dato que sale de las mismas columnas anidadas.
+ *
+ * Trae exactamente los MISMOS campos que la búsqueda (`CAMPOS_CLIENTE`), así que la persona que
+ * llega por id es idéntica —campo por campo— a la que llega por el buscador. Es lo que permite que
+ * el rechazo de cheque resuelva solo al proveedor y la ficha se vea igual que si lo hubieran
+ * buscado a mano.
+ *
+ * NO aplica las reglas de categoría ni de estado activo: acá el ítem ya está identificado por su
+ * id, y quien lo pide es quien sabe qué tiene que ser. La validación de categoría sigue corriendo
+ * donde corresponde, al cargarlo en pantalla (ver `lib/personas`).
+ *
+ * Sin id —o si el ítem no existe— devuelve `null`.
+ */
+export async function getPersonaItemPorId(id: string): Promise<MondayItem | null> {
+  const n = Number(id)
+  if (!Number.isFinite(n) || n <= 0) return null
+
+  const data = await mondayApi<{ items: MondayItem[] }>(
+    `query { items(ids: [${n}]) { ${CAMPOS_CLIENTE} } }`,
+  )
+  return data.items?.[0] ?? null
+}
+
+/**
  * Una fila del board de Personas → el modelo de la app. Se llama `mapPersona` y no `mapCliente`
  * porque el board no distingue: la MISMA fila es un cliente o un proveedor según su "✋Categoria",
  * y el módulo de PAGOS la lee campo por campo igual que éste (ver `services/monday/proveedores`).

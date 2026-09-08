@@ -38,6 +38,13 @@ export const BOARDS = {
    * De ahí salen los dos saldos que muestra la ficha (pendiente de cancelar y anticipos).
    */
   ctaCte: 18421858736,
+  /**
+   * "💵Cta Cte Proveedores" (18428672366): el ESPEJO de `ctaCte` del otro lado del mostrador, con la
+   * misma forma —un ítem por persona y un subítem por movimiento— y los MISMOS ids de columna. Lo
+   * único que no coincide entre los dos son los índices de las etiquetas de "🤖Movimiento" y la
+   * columna que linkea el origen del movimiento (ver `CTA_CTE_DE_ROL`).
+   */
+  ctaCteProveedores: 18428672366,
   config: 18421035530,
   /* ===== PAGOS =====
      Los tres tableros del módulo de pagos. Se leen y NADA más: el circuito de esta etapa no
@@ -48,6 +55,18 @@ export const BOARDS = {
   factCompras: 18425512689,
   /** "🧾Cheques/eCheq en Cartera": los cheques de terceros disponibles para endosar. */
   chequesCartera: 18425237398,
+  /**
+   * "🧾Cheques/eCheq en Cartera USADOS" (18426604104): a donde van los cheques que ya se usaron
+   * —endosados a un proveedor o depositados—, con su "🤖Estado del Cheque" en "100% Usado".
+   *
+   * Es el tablero del RECHAZO DE CHEQUE, y no el de cartera: el banco devuelve un cheque que YA se
+   * usó, así que el papel que rebota no está entre los disponibles sino entre los gastados. La
+   * cartera no interviene en ese circuito.
+   *
+   * Es casi un ESPEJO del de cartera: sus columnas tienen los mismos ids una por una SALVO la
+   * fecha de pago (ver `COL_CHEQUE_USADO`). Los índices de "🤖Estado del Cheque" sí coinciden.
+   */
+  chequesUsados: 18426604104,
   /**
    * "⬅️ Pagos - PENDIENTES": la ORDEN DE PAGO. Es el espejo de "➡️Recibos y Cobros" del otro lado
    * del mostrador, y el ÚNICO tablero del módulo en el que la app escribe.
@@ -172,8 +191,38 @@ export const FACT_COMPRA_ESTADOS_PAGABLES: readonly number[] = [
  * Sólo se listan los PENDIENTES: un cheque ya usado no se puede volver a endosar.
  */
 export const CHEQUE_CARTERA_ESTADO_INDEX = {
+  /**
+   * "100% Usado". Es el MISMO índice en los dos tableros —el de cartera y el de USADOS—, y es por
+   * donde el RECHAZO DE CHEQUE filtra su lista: el papel que el banco devuelve es uno que ya se
+   * había usado.
+   */
   usado: 1,
   pendiente: 17,
+  /**
+   * "Rechazado": el banco devolvió el papel. Es el índice que escribe el cierre del RECHAZO DE
+   * CHEQUE sobre el tablero de USADOS (ver `services/monday/rechazoCheque`).
+   *
+   * Vale para los DOS tableros —cartera y usados— porque en los dos la etiqueta tiene el mismo id.
+   * Verificado contra ambos: que coincida es un hecho del tablero, no algo que se pueda asumir por
+   * ser espejos (los índices de "🤖Movimiento" de las dos cuentas corrientes, por ejemplo, NO
+   * coinciden).
+   */
+  rechazado: 0,
+} as const
+
+/**
+ * Índice de la etiqueta "Rechazo de Cheque" en "🤖Movimiento" (`color_mm5z46ht`) de los
+ * subelementos de la cuenta corriente, uno por tablero.
+ *
+ * NO son el mismo número de los dos lados —7 en la cuenta de clientes, 6 en la de proveedores—, y
+ * ése es exactamente el motivo por el que están escritos acá y verificados contra cada tablero:
+ * los dos boards son espejos y la etiqueta se llama igual, así que asumir un índice común es el
+ * error que nadie mira dos veces. Escribir el 7 en la cuenta del proveedor no falla: deja el
+ * movimiento con OTRA etiqueta.
+ */
+export const MOVIMIENTO_CTA_CTE_INDEX = {
+  rechazoChequeCliente: 7,
+  rechazoChequeProveedor: 6,
 } as const
 
 /**
@@ -424,6 +473,14 @@ export const COL = {
     cliente: 'board_relation_mkwb7fmp',
     /** "🤖Tipo de Cobro" (status): siempre "Posterior". Ver `TIPO_COBRO_INDEX`. */
     tipoCobro: 'color_mm5yh0gs',
+    /**
+     * "🤖ID Recibo" (item_id con clave propia): el código que ve el usuario, "RECIBO-078".
+     *
+     * Como el de la retención —y a diferencia de los `item_id` sin contador, que devuelven el id
+     * crudo—, éste tiene un CONTADOR configurado en el tablero, así que su `text` trae el código
+     * con prefijo. Verificado contra el board.
+     */
+    nro: 'pulse_id_mkwb9111',
     /**
      * "🤖 TOTAL $ Vta" (numbers): el TOTAL CANCELADO, o sea la suma de lo imputado a las facturas.
      * El rótulo del tablero habla de "Vta" porque el mismo board recibe los recibos de la app de
@@ -724,6 +781,33 @@ export const COL = {
     /** "Anticipo pend de Aplicar" (numbers): ANTICIPOS PENDS DE APLICAR, el saldo a favor sin usar. */
     anticiposPendAplicar: 'numeric_mm67j0rv',
   },
+  /**
+   * SUBELEMENTOS de la cuenta corriente: un ítem por MOVIMIENTO de la cuenta. Los ids son los MISMOS
+   * en los dos tableros —el de clientes (18421858762) y el de proveedores (18428672375)—, así que
+   * se declaran una sola vez; lo que sí cambia de un lado al otro son los índices de "🤖Movimiento"
+   * y la columna que linkea el origen (ver `CTA_CTE_DE_ROL`).
+   *
+   * Las columnas se llaman distinto en cada tablero porque nombran el mismo hecho desde los dos
+   * lados —"Ventas"/"Compras", "Cobros"/"Pagos"—, pero hacen exactamente lo mismo: una SUMA al
+   * saldo de la cuenta y la otra lo RESTA. Acá se nombran por lo que hacen, que es lo único que la
+   * app necesita saber para escribir un movimiento de cualquiera de los dos lados.
+   */
+  ctaCteSub: {
+    /** "🤖Movimiento" (status): qué clase de movimiento es. Ver `MOVIMIENTO_CTA_CTE_INDEX`. */
+    movimiento: 'color_mm5z46ht',
+    /** "🤖Saldo Inicial" (numbers): con cuánto venía la cuenta ANTES de este movimiento. */
+    saldoInicial: 'numeric_mm58aacc',
+    /** "🤖Ventas" / "🤖Compras" (numbers): lo que este movimiento SUMA al saldo de la cuenta. */
+    suma: 'numeric_mm5gdhkt',
+    /** "🤖Cobros" / "🤖Pagos" (numbers): lo que este movimiento RESTA del saldo de la cuenta. */
+    resta: 'numeric_mm5gtxav',
+    /**
+     * "🤖Saldo Final" (fórmula): `saldoInicial + suma - resta`. Es el saldo con el que la cuenta
+     * queda DESPUÉS del movimiento, y por eso es el que el movimiento SIGUIENTE arrastra como su
+     * saldo inicial.
+     */
+    saldoFinal: 'formula_mm5zgrq9',
+  },
   /* ===== PAGOS =====
      "❓ Facturas Compra Pend de Pago" (18425512701): una fila por factura de compra que quedó
      debiendo. Es de donde salen las facturas que se eligen en la etapa 2. Los ids se verificaron
@@ -759,6 +843,12 @@ export const COL = {
   factCompraDoc: {
     /** "🤖Nro. Fact." (text): el número impreso en la factura del proveedor. */
     nro: 'text_mm5zvc12',
+    /**
+     * "🤖 Proveedor" (board_relation → Personas): a quién se le compró. Es el último tramo de la
+     * cadena con la que el rechazo de cheque resuelve solo al acreedor: del cheque a sus facturas,
+     * y de la factura a la persona (ver `getProveedorDelCheque`).
+     */
+    proveedor: 'board_relation_mm6kpn8',
     /**
      * "🤖Importe Neto" (numbers): el neto de la factura, sin impuestos. Es la base con la que se
      * calcula la retención de Ganancias y NO se muestra en ninguna pantalla: viaja con la factura
@@ -857,6 +947,44 @@ export const COL = {
      */
     persona: 'board_relation_mm643x5f',
   },
+} as const
+
+/**
+ * Columnas del tablero de cheques USADOS (18426604104).
+ *
+ * Es el espejo del de cartera y comparte TODOS los ids salvo uno, así que se deriva de él en vez de
+ * volver a escribirlos: duplicar once ids habría dejado dos listas que se corrigen por separado, y
+ * la que quedara vieja no fallaría —devolvería columnas vacías, en silencio—.
+ *
+ * La excepción es "🤖Fecha de Pago": en cartera es `date_mm6vr6g5` y acá `date_mm702xrb`. Las dos
+ * columnas se llaman igual y guardan lo mismo, pero son columnas distintas de tableros distintos, y
+ * pedirle a este tablero el id del otro devuelve la fila sin esa fecha sin que nada lo avise.
+ */
+export const COL_CHEQUE_USADO = {
+  ...COL.chequeCartera,
+  fechaPago: 'date_mm702xrb',
+  /**
+   * "🗒️ Facturas Compras" (board_relation → 18425512689): las facturas de compra que ese cheque
+   * pagó. Es por donde el RECHAZO DE CHEQUE averigua SOLO a qué proveedor se le había endosado, en
+   * vez de hacérselo buscar al operador (ver `getProveedorDelCheque`).
+   *
+   * Puede tener VARIAS conectadas —un cheque puede haber cancelado más de una factura—, y todas son
+   * del mismo proveedor: a un tercero no se le endosa el mismo papel. Por eso alcanza con la
+   * primera.
+   */
+  facturasCompra: 'board_relation_mm7098sj',
+  /**
+   * Las dos puntas por las que el cheque pasó, cada una a un SUBELEMENTO y no al documento:
+   *
+   *   · `subRecibo` → "🤖 Sub. ➡️Recibos y Cobros" (18421035599): la línea del recibo con la que el
+   *     cheque ENTRÓ;
+   *   · `subPago` → "🤖Sub.⬅️ Pagos" (18421035618): la línea de la orden con la que SALIÓ.
+   *
+   * El código que ve el usuario —"RECIBO-078", "IDPAGO-012"— NO está en esos subelementos sino en
+   * su ítem PADRE, así que la consulta tiene que subir un nivel más (ver `CAMPOS_CHEQUE_USADO`).
+   */
+  subRecibo: 'board_relation_mm5ysy5w',
+  subPago: 'board_relation_mm6krvp4',
 } as const
 
 /* ===== Etiquetas del recibo =====

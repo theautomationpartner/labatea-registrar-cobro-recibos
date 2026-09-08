@@ -2448,10 +2448,31 @@ const fechasCheque: { nombre: string; ok: boolean }[] = [
     ok: vencimientoDeCajaCheque({ chequeVencimiento: '05/09/2026' }) === '05/09/2026',
   },
   {
-    nombre: 'la de pago GANA sobre la del tablero',
+    /* El de CARTERA trae las TRES fechas del tablero. Su vencimiento gana sobre el derivado: el
+       papel es el que es, y sumarle 30 días a su fecha de pago le inventaría otro. */
+    nombre: 'el vencimiento CARGADO gana sobre el derivado',
     ok:
       vencimientoDeCajaCheque({ fechaPagoCheque: '01/10/2026', chequeVencimiento: '05/09/2026' }) ===
-      '31/10/2026',
+      '05/09/2026',
+  },
+  {
+    /* Y un cheque de cartera escribe SUS dos fechas, cada una en su columna. */
+    nombre: 'el de cartera manda su fecha de pago y su propio vencimiento',
+    ok: (() => {
+      const f = columnasCaja({
+        id: 'c7',
+        formaPago: 'Cheque',
+        importe: 1,
+        modalidadCheque: 'cartera',
+        chequeId: '1',
+        fechaPagoCheque: '15/09/2026',
+        chequeVencimiento: '15/10/2026',
+      })
+      return (
+        JSON.stringify(f['date_mm6v39m2']) === '{"date":"2026-09-15"}' &&
+        JSON.stringify(f['date_mm6kv044']) === '{"date":"2026-10-15"}'
+      )
+    })(),
   },
   { nombre: 'sin ninguna de las dos, vacío', ok: vencimientoDeCajaCheque({}) === '' },
   /* --- Las dos reglas de fecha, las mismas que en un cobro --- */
@@ -2493,7 +2514,7 @@ const fechasCheque: { nombre: string; ok: boolean }[] = [
   },
   {
     /* El de cartera no tiene fecha de pago que escribir: esa columna se omite. */
-    nombre: 'el de cartera omite la fecha de pago y conserva su vencimiento',
+    nombre: 'un cartera SIN fecha de pago cargada omite esa columna',
     ok: (() => {
       const f = columnasCaja({
         id: 'c8',

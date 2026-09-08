@@ -51,13 +51,18 @@ export const CATEGORIA_DE_ROL: Record<RolPersona, string> = {
 /**
  * El rol que exige el módulo en curso, o `null` si todavía no se sabe.
  *
- * COBROS y PAGOS lo tienen FIJO —a un cliente se le cobra, a un proveedor se le paga—, y el PASE DE
- * SALDO no: sus dos cuentas pueden ser de clientes o de proveedores, y eso lo declara el usuario en
- * el paso 1 antes de buscar a nadie (`paseCuentasDe` en el estado). Mientras no lo haya declarado
- * devuelve `null`, que es lo que hace que el paso lo reclame en vez de asumir un lado del mostrador.
+ * COBROS, PAGOS y RECHAZO DE CHEQUE lo tienen FIJO —a un cliente se le cobra, a un proveedor se le
+ * paga, y el cheque rechazado lo entregó un cliente—, y el PASE DE SALDO no: sus dos cuentas pueden
+ * ser de clientes o de proveedores, y eso lo declara el usuario en el paso 1 antes de buscar a nadie
+ * (`paseCuentasDe` en el estado). Mientras no lo haya declarado devuelve `null`, que es lo que hace
+ * que el paso lo reclame en vez de asumir un lado del mostrador.
  *
  * Es la ÚNICA fuente de esa relación: las tres pantallas del pase —origen, anticipos y destino— la
  * consultan acá, así que no pueden terminar validando contra categorías distintas entre sí.
+ *
+ * RECHAZOS cae en el `'cliente'` del final y no tiene rama propia a propósito: es exactamente la
+ * misma regla que COBROS —se opera sobre un cliente—, y escribirla dos veces sería tener dos
+ * lugares donde decir lo mismo.
  */
 export const rolDeOperacion = (
   operacion: OperacionApp,
@@ -111,4 +116,5 @@ export const ROTULO_OPERACION: Record<OperacionApp, string> = {
   COBROS: 'COBROS',
   PASES: 'PASE DE SALDO',
   PAGOS: 'PAGOS',
+  RECHAZOS: 'RECHAZO DE CHEQUE',
 }

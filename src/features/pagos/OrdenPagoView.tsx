@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { AvisoModal } from '@/components/ui/AvisoModal'
 import { ReciboAGenerar, ROTULOS_DOC_OP } from '@/features/recibo/ReciboAGenerar'
 import { ResumenRecibo, ROTULOS_RESUMEN_OP } from '@/features/recibo/ResumenRecibo'
@@ -93,10 +93,13 @@ export function OrdenPagoView() {
   const dispatch = useDispatch()
   // Aviso al intentar cerrar la operación sin haber emitido la orden.
   const [aviso, setAviso] = useState(false)
-  /* El pedido de registro está en vuelo. Mientras tanto el botón de cierre se apaga: es una
-     escritura que impacta la cuenta corriente del proveedor, y repetirla por un doble click la
-     pediría dos veces. */
-  const [registrando, setRegistrando] = useState(false)
+  /* El pedido de registro está en vuelo. NO se muestra —el botón de cierre queda igual que
+     siempre—: sólo frena un segundo click, porque es una escritura que impacta la cuenta corriente
+     del proveedor y repetirla la pediría dos veces.
+
+     Es una ref y no estado: nada de la pantalla depende de esto, así que provocar un re-render
+     sería pedirle a React que redibuje para no cambiar nada. */
+  const registrando = useRef(false)
   /* Todo el ciclo de la emisión —escritura, pedido al tablero y seguimiento del estado— vive en el
      hook, con el adaptador de la orden. Su estado lo guarda en el estado GLOBAL, así que volver un
      paso y regresar reencuentra la orden emitida en vez de reofrecer la emisión. */
@@ -169,18 +172,18 @@ export function OrdenPagoView() {
       setAviso(true)
       return
     }
-    if (registrando) return
+    if (registrando.current) return
     /* Sin id no hay a quién pedirle el registro. No debería pasar —la orden emitida siempre dejó su
        ítem—, pero de darse, cerrar igual es mejor que dejar al usuario encerrado en la etapa. */
     if (!ordenPagoId) {
       dispatch({ type: 'reset' })
       return
     }
-    setRegistrando(true)
+    registrando.current = true
     pedirRegistroOP(ordenPagoId)
       .then(() => dispatch({ type: 'reset' }))
       .catch(() => {
-        setRegistrando(false)
+        registrando.current = false
         dispatch({ type: 'errorMonday', accion: 'pedir el registro del pago' })
       })
   }
@@ -268,23 +271,8 @@ export function OrdenPagoView() {
           </button>
 
           <div className="actions-footer-fin">
-            {/* Mientras el pedido viaja, el botón lo dice en vez de quedarse mudo: es la última
-                escritura de la operación y la que impacta la cuenta corriente. */}
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={registrando}
-              onClick={finalizar}
-            >
-              {registrando ? (
-                <>
-                  <i className="fas fa-circle-notch fa-spin" /> Registrando el pago…
-                </>
-              ) : (
-                <>
-                  <i className="fas fa-flag-checkered" /> Finalizar Operación
-                </>
-              )}
+            <button type="button" className="btn btn-primary" onClick={finalizar}>
+              <i className="fas fa-flag-checkered" /> Finalizar Operación
             </button>
           </div>
         </div>

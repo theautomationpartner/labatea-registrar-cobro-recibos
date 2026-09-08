@@ -9,7 +9,7 @@ import { useApp, useDispatch } from '@/state/hooks'
 import type { OperacionApp, Usuario } from '@/types'
 
 /** Módulos que ofrece el encabezado. "Pagos" queda reservado a los administradores. */
-const OPERACIONES: readonly OperacionApp[] = ['COBROS', 'PASES', 'PAGOS']
+const OPERACIONES: readonly OperacionApp[] = ['COBROS', 'PASES', 'PAGOS', 'RECHAZOS']
 
 /**
  * Cómo se nombra cada módulo en el selector. La CLAVE es corta porque viaja por todo el estado;
@@ -19,6 +19,7 @@ const ROTULO: Record<OperacionApp, string> = {
   COBROS: 'COBROS',
   PASES: 'PASES DE SALDO',
   PAGOS: 'PAGOS',
+  RECHAZOS: 'RECHAZO DE CHEQUE',
 }
 
 /**

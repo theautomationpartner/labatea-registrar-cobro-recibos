@@ -13,6 +13,8 @@ export const ETAPA = {
   recibo: 'Emitir y Enviar Recibo',
   anticipoOrigen: 'Seleccionar Anticipo',
   destino: 'Seleccionar Cuenta Destino',
+  chequeRechazado: 'Seleccionar Cheque Rechazado',
+  proveedorAcreedor: 'Seleccionar Proveedor Acreedor',
 } as const
 
 /** Etiquetas que PISAN a las de `ETAPA` en el recorrido del anticipo. */
@@ -39,6 +41,18 @@ const ETAPA_APLICACION: Partial<Record<Paso, string>> = {
 }
 
 /**
+ * Etiquetas que PISAN a las de `ETAPA` en un RECHAZO DE CHEQUE.
+ *
+ * El paso 1 es el mismo buscador de siempre, pero acá la persona no es "el cliente de la operación"
+ * sino el DEUDOR: el que entregó el cheque que el banco devolvió y por eso vuelve a deber la plata.
+ * Nombrarlo así es lo que hace que el operador sepa a quién tiene que buscar.
+ */
+const ETAPA_RECHAZOS: Partial<Record<Paso, string>> = {
+  cliente: 'Seleccionar Cliente Deudor',
+}
+
+
+/**
  * Etapas de cada operación, en orden. El ANTICIPO no pasa por "Seleccionar Vtas Pend de Cobro": no
  * cancela facturas, así que el importe lo declara el propio paso de registro.
  *
@@ -55,6 +69,12 @@ const RECORRIDO: Record<TipoOperacion, readonly Paso[]> = {
      última cierra la operación: el pase se registra ahí mismo, sin una pantalla de resultado que
      sólo repetiría lo que ya está en pantalla. */
   pases: ['cliente', 'anticipoOrigen', 'destino'],
+  /* RECHAZO DE CHEQUE: el banco devolvió un cheque y la deuda que ese cheque había cancelado
+     vuelve a estar viva de los DOS lados. TRES etapas: QUIÉN vuelve a deber (el cliente deudor),
+     CUÁL de sus cheques en cartera rebotó y a QUIÉN se le había endosado (el proveedor acreedor).
+     La última cierra la operación: el rechazo se registra ahí mismo, sin una pantalla de resultado
+     que sólo repetiría lo que ya está en pantalla. */
+  rechazos: ['cliente', 'chequeRechazado', 'proveedorAcreedor'],
 }
 
 /**
@@ -80,7 +100,9 @@ export const etiquetaDePaso = (paso: Paso, tipo: TipoOperacion | null): string =
         ? ETAPA_APLICACION
         : tipo === 'pases'
           ? ETAPA_PASES
-          : undefined
+          : tipo === 'rechazos'
+            ? ETAPA_RECHAZOS
+            : undefined
   return propia?.[paso] ?? ETAPA[paso]
 }
 
@@ -108,12 +130,20 @@ export const DESCRIPCION: Record<Paso, string> = {
   /* Sin importe a la vista —nadie llegó al paso todavía— se describe el paso, no la operación en
      curso. La versión con el número la arma la vista con `descripcionDestino`. */
   destino: 'Buscá la cuenta que va a recibir el saldo seleccionado en el paso anterior.',
+  chequeRechazado: 'Elegí entre los cheques ya usados del cliente el que el banco rechazó.',
+  proveedorAcreedor:
+    'Buscá al proveedor al que se le había endosado el cheque: se le vuelve a deber su importe.',
 }
 
 /** Bajadas que PISAN a las de `DESCRIPCION` en un PASE DE SALDO. Neutras como sus etiquetas: el
     paso habla de la CUENTA a la que se le debita, sea de un cliente o de un proveedor. */
 const DESCRIPCION_PASES: Partial<Record<Paso, string>> = {
   cliente: 'Busca la cuenta a la cual se le debita de la cuenta corriente este movimiento',
+}
+
+/** Bajadas que PISAN a las de `DESCRIPCION` en un RECHAZO DE CHEQUE. */
+const DESCRIPCION_RECHAZOS: Partial<Record<Paso, string>> = {
+  cliente: 'Buscá al cliente que entregó el cheque que el banco rechazó.',
 }
 
 /** Bajadas que PISAN a las de `DESCRIPCION` al aplicar un anticipo contra facturas. */
@@ -137,7 +167,9 @@ export const descripcionDePaso = (paso: Paso, tipo: TipoOperacion | null): strin
         ? DESCRIPCION_APLICACION
         : tipo === 'pases'
           ? DESCRIPCION_PASES
-          : undefined
+          : tipo === 'rechazos'
+            ? DESCRIPCION_RECHAZOS
+            : undefined
   return propia?.[paso] ?? DESCRIPCION[paso]
 }
 

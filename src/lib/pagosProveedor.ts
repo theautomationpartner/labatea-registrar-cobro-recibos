@@ -495,10 +495,14 @@ export function numeroDeCaja(m: Pick<MovimientoCaja, 'formaPago' | 'numeroCheque
  *
  * Son dos orígenes y una sola respuesta:
  *
- *   · el cheque NUEVO lo declara con su FECHA DE PAGO, y el vencimiento se deriva sumándole 30
- *     días —el plazo para presentarlo al cobro—, así que no puede quedar en desacuerdo con ella ni
- *     depender de que alguien lo calcule a mano;
- *   · el de CARTERA ya existe en el tablero con su propio vencimiento cargado, y ése es el que vale.
+ *   · el de CARTERA ya existe en el tablero con su propio vencimiento cargado, y ése es el que
+ *     vale: el papel es el que es, y derivarle una fecha sería inventarle otra;
+ *   · el cheque NUEVO no trae ninguno —el formulario ya no lo pregunta—, así que se deriva de su
+ *     FECHA DE PAGO sumándole 30 días, el plazo para presentarlo al cobro. Así no puede quedar en
+ *     desacuerdo con ella ni depender de que alguien lo calcule a mano.
+ *
+ * El orden importa: el vencimiento CARGADO gana. Al revés, un cheque de cartera con su fecha de
+ * pago a cuestas se llevaba un vencimiento derivado que pisaba al que ya tenía el tablero.
  *
  * Se define UNA vez y la usan el formulario, la fila de la tabla y el subelemento que se escribe:
  * si cada uno lo resolviera por su cuenta, la pantalla podría mostrar una fecha y el tablero recibir
@@ -507,9 +511,7 @@ export function numeroDeCaja(m: Pick<MovimientoCaja, 'formaPago' | 'numeroCheque
 export const vencimientoDeCajaCheque = (
   m: Pick<MovimientoCaja, 'fechaPagoCheque' | 'chequeVencimiento'>,
 ): string =>
-  m.fechaPagoCheque?.trim()
-    ? vencimientoDeCheque(m.fechaPagoCheque)
-    : (m.chequeVencimiento?.trim() ?? '')
+  m.chequeVencimiento?.trim() || vencimientoDeCheque(m.fechaPagoCheque)
 
 /**
  * Qué impide registrar un ANTICIPO al proveedor. Es el mismo bloqueo del pago con UNA regla antes:

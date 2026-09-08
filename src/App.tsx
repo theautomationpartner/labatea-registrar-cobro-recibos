@@ -15,6 +15,8 @@ import { FacturasView } from '@/features/facturas/FacturasView'
 import { PagosView } from '@/features/pagos/PagosView'
 import { PaseAnticipoView } from '@/features/pases/PaseAnticipoView'
 import { PaseDestinoView } from '@/features/pases/PaseDestinoView'
+import { ChequeRechazadoView } from '@/features/rechazos/ChequeRechazadoView'
+import { ProveedorAcreedorView } from '@/features/rechazos/ProveedorAcreedorView'
 import { ReciboView } from '@/features/recibo/ReciboView'
 import { useApp, useDispatch } from '@/state/hooks'
 import type { Paso } from '@/types'
@@ -32,6 +34,10 @@ const VISTAS: Record<Paso, () => JSX.Element | null> = {
      alcanza: el stepper navega por `pasosDe(tipo)` y ahí no figuran. */
   anticipoOrigen: PaseAnticipoView,
   destino: PaseDestinoView,
+  /* Etapas propias del RECHAZO DE CHEQUE. Mismo criterio que las dos de arriba: sólo aparecen en
+     ese recorrido, así que ningún otro las alcanza. */
+  chequeRechazado: ChequeRechazadoView,
+  proveedorAcreedor: ProveedorAcreedorView,
 }
 
 export function App() {
