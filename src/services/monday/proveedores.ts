@@ -13,6 +13,7 @@
 import { PROVEEDORES } from '@/data/mock'
 import type { Proveedor } from '@/types'
 import {
+  type ResultadoBusqueda,
   buscarPersonasPorTermino,
   filtrarPersonasEnMemoria,
   getPersonaItemPorId,
@@ -63,14 +64,17 @@ const mapProveedor = (item: MondayItem): Proveedor => ({
  * La categoría ("Proveedores") y el estado ACTIVO ya vienen aplicados en la consulta: lo que llega
  * es directamente operable, y un proveedor inactivo se comporta como inexistente.
  */
-export async function buscarProveedores(termino: string): Promise<Proveedor[]> {
+export async function buscarProveedores(termino: string): Promise<ResultadoBusqueda<Proveedor>> {
   const t = termino.trim()
-  if (!t) return []
+  if (!t) return { personas: [], truncado: false }
 
   // Modo local: el mock es chico, así que se filtra en memoria con el mismo criterio.
-  if (!mondayHabilitado()) return filtrarPersonasEnMemoria(PROVEEDORES, t)
+  if (!mondayHabilitado()) {
+    return { personas: filtrarPersonasEnMemoria(PROVEEDORES, t), truncado: false }
+  }
 
-  return (await buscarPersonasPorTermino(t, REGLAS_PROVEEDOR_OPERABLE)).map(mapProveedor)
+  const { personas, truncado } = await buscarPersonasPorTermino(t, REGLAS_PROVEEDOR_OPERABLE)
+  return { personas: personas.map(mapProveedor), truncado }
 }
 
 /**

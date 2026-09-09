@@ -227,6 +227,15 @@
   margin-bottom: 0;
 }
 
+/* Stepper del PASO INICIAL: ocupa su lugar pero no se ve ni se toca. Es lo que hace que la barra
+   mida lo mismo antes y después de confirmar la operación, así el logo y los selectores no saltan
+   cuando aparecen las etapas. Reservar con el MISMO DOM y no con un `min-height` adivinado es lo
+   que garantiza que el alto sea idéntico por construcción. */
+.stepper--fantasma {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* ===== Layout de paso: barra de contexto arriba, cuerpo debajo ===== */
 .paso-layout {
   display: flex;
@@ -288,6 +297,19 @@
   flex: 0 1 auto;
   justify-content: flex-end;
   gap: 6px;
+  /* ALTO FIJO de la barra de etapas, y con él el de todo el encabezado.
+   *
+   * Sin esto el alto lo decidía el rótulo más largo de CADA operación, que no es el mismo en todas:
+   * "Seleccionar Anticipo" (Pases) parte en dos líneas y "Seleccionar Proveedor Acreedor"
+   * (Rechazos) en tres, así que cambiar de operación en el selector movía la banda entera —incluso
+   * antes de confirmar, con el stepper todavía en fantasma—.
+   *
+   * El número es la etapa más alta posible: círculo (30px) + su separación (6px) + tres renglones
+   * de rótulo (12px × 1.2 = 14,4px cada uno) = 79,2px. Va como `min-height` y no como `height`
+   * porque el alto tiene que dejar de ENCOGER, no dejar de crecer: un rótulo futuro de cuatro
+   * líneas se vería recortado en vez de empujar la barra, y eso es peor que una banda un poco más
+   * alta. Con el catálogo de hoy —ninguna etapa pasa de tres líneas— el alto es constante. */
+  min-height: 80px;
 }
 /* Conectores cortos: con el nombre de la etapa debajo del círculo, el ancho lo pone el rótulo y un
    conector largo es lo que empujaría la barra a su propio renglón. */

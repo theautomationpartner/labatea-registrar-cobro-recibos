@@ -331,7 +331,7 @@ export function ClienteView() {
       {/* La búsqueda trajo a alguien que NO tiene la categoría que la operación exige. Es el MISMO
           aviso que usan Pagos y el destino del pase, con el rol que corresponda: en un pase "De
           Proveedores", un cliente se rechaza acá y su ficha no llega a dibujarse. */}
-      {personaAjena && rol && (
+      {personaAjena && rol && operacionApp && (
         <AvisoCategoriaAjena
           rol={rol}
           operacion={ROTULO_OPERACION[operacionApp]}

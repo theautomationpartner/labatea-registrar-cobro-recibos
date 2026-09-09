@@ -60,7 +60,15 @@ function OperacionSelector() {
   return (
     <>
       <Dropdown<OperacionApp>
-        label={<span className="selbox-val-txt">{ROTULO[operacionApp]}</span>}
+        /* Sin módulo elegido va el MISMO placeholder que el selector de vendedor: en el paso
+           inicial los dos están vacíos y tienen que leerse igual. */
+        label={
+          operacionApp ? (
+            <span className="selbox-val-txt">{ROTULO[operacionApp]}</span>
+          ) : (
+            <span className="selbox-ph">Seleccionar...</span>
+          )
+        }
         items={OPERACIONES}
         itemKey={(o) => o}
         renderItem={(o) => ROTULO[o]}

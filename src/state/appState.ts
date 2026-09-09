@@ -35,7 +35,20 @@ export interface AppState {
    * Módulo elegido en el encabezado. "Pagos" sólo lo puede elegir un administrador (ver
    * `puedeOperarPagos`) y tiene circuito propio: su etapa vive en `pasoPago`, no acá.
    */
-  operacionApp: OperacionApp
+  /**
+   * Módulo en curso, o `null` mientras no se eligió ninguno. Arranca SIN elegir: la app abre en su
+   * paso inicial y no dentro de Cobros, así que el selector nace vacío y el usuario declara qué va
+   * a hacer antes de que se dibuje una sola etapa.
+   */
+  operacionApp: OperacionApp | null
+  /**
+   * La operación quedó CONFIRMADA y el circuito está abierto. En `false` se dibuja el paso inicial
+   * —los dos selectores y el botón "Confirmar"— y nada más.
+   *
+   * Es un dato aparte del módulo, y no `operacionApp !== null`, porque en el paso inicial el módulo
+   * ya está elegido mientras se mira el botón: lo que falta es el clic que abre el circuito.
+   */
+  operacionConfirmada: boolean
   /** Etapa en pantalla. La app arranca en la selección de cliente: no hay paso previo. */
   paso: Paso
   /**
@@ -258,7 +271,8 @@ const cobroVacio = (): CobroState => ({ fecha: hoy(), movimientos: [], confirmad
 const pagoVacio = (): PagoState => ({ fecha: hoy(), movimientos: [], confirmado: false })
 
 export const initialState: AppState = {
-  operacionApp: 'COBROS',
+  operacionApp: null,
+  operacionConfirmada: false,
   paso: 'cliente',
   /* Nada viene preseleccionado: qué se registra lo decide el usuario en el paso 1. */
   tipoOperacion: null,
@@ -341,6 +355,7 @@ export const hayOperacionEnCurso = (state: AppState): boolean =>
 
 export type Action =
   | { type: 'setOperacionApp'; operacion: OperacionApp }
+  | { type: 'confirmarOperacionApp' }
   | { type: 'goto'; paso: Paso }
   | { type: 'setTipoOperacion'; tipo: TipoOperacion }
   | { type: 'setPaseCuentasDe'; rol: RolPersona }
@@ -430,7 +445,7 @@ export type Action =
  * el modulo seguia siendo PASES pero el recorrido volvia a `null`, asi que la app mostraba las
  * etapas de Cobros dentro del modulo de Pases—.
  */
-const recorridoDe = (operacion: OperacionApp): TipoOperacion | null =>
+const recorridoDe = (operacion: OperacionApp | null): TipoOperacion | null =>
   operacion === 'PASES' ? 'pases' : operacion === 'RECHAZOS' ? 'rechazos' : null
 
 /**
@@ -567,6 +582,10 @@ export function reducer(state: AppState, action: Action): AppState {
       return {
         ...initialState,
         operacionApp: action.operacion,
+        /* Se conserva si el circuito ya estaba abierto: cambiar de módulo DESDE una operación en
+           curso lleva directo a la primera etapa del nuevo, sin pasar de nuevo por "Confirmar".
+           En el paso inicial sigue en `false`, así que elegir un módulo sólo llena el selector. */
+        operacionConfirmada: state.operacionConfirmada,
         tipoOperacion: recorridoDe(action.operacion),
         /* Cobro y pago NUEVOS, no los que quedaron armados al cargar el módulo: si la pestaña quedó
            abierta de un día para el otro, su fecha tiene que ser la de HOY. */
@@ -577,6 +596,12 @@ export function reducer(state: AppState, action: Action): AppState {
         usuarioActual: state.usuarioActual,
         usuario: usuarioPorDefecto(state.usuarios, state.usuarioActual),
       }
+
+    /* El botón "Confirmar" del paso inicial: con el módulo y el vendedor declarados, se abre el
+       circuito. No toca nada más —el módulo ya dejó el estado a foja cero al elegirse—, así que lo
+       único que cambia es que a partir de acá se dibujan las etapas. */
+    case 'confirmarOperacionApp':
+      return state.operacionApp ? { ...state, operacionConfirmada: true } : state
 
     case 'setUsuario':
       return { ...state, usuario: action.usuario }
@@ -947,14 +972,13 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'reset':
       return {
         ...initialState,
-        /* El módulo es del ENCABEZADO, no de la operación: cerrar una cobranza no cambia en qué
-           circuito está parado el usuario. */
-        operacionApp: state.operacionApp,
-        /* Y con el módulo viaja SU recorrido. `initialState` trae el de Cobros, asi que sin esto
-           cerrar un pase dejaba el encabezado en "Pases de Saldo" y el cuerpo con las etapas de
-           Cobros: el stepper de cuatro pasos y el selector de "¿Qué vas a cobrar?" adentro de un
-           modulo que no pregunta eso. */
-        tipoOperacion: recorridoDe(state.operacionApp),
+        /* Vuelve al PASO INICIAL, con los dos selectores vacíos: cerrar una operación no encadena
+           otra del mismo módulo, devuelve la app al punto donde se declara qué se va a hacer. Antes
+           el módulo sobrevivía al cierre —era del encabezado y no de la operación—, y eso dejaba al
+           usuario dentro del circuito anterior sin haberlo pedido. */
+        operacionApp: null,
+        operacionConfirmada: false,
+        tipoOperacion: null,
         /* Cobro y pago NUEVOS, no los que quedaron armados al cargar el módulo: si la pestaña quedó
            abierta de un día para el otro, su fecha tiene que ser la de HOY. */
         cobro: cobroVacio(),

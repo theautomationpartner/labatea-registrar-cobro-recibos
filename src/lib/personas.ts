@@ -65,9 +65,14 @@ export const CATEGORIA_DE_ROL: Record<RolPersona, string> = {
  * lugares donde decir lo mismo.
  */
 export const rolDeOperacion = (
-  operacion: OperacionApp,
+  /* `null` mientras la app está en su paso inicial y todavía no se eligió módulo: ahí no hay rol
+     que exigir porque no hay persona que buscar. */
+  operacion: OperacionApp | null,
   paseCuentasDe: RolPersona | null,
 ): RolPersona | null =>
+  operacion === null
+    ? null
+    :
   operacion === 'PAGOS' ? 'proveedor' : operacion === 'PASES' ? paseCuentasDe : 'cliente'
 
 /**

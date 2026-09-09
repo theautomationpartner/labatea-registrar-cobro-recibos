@@ -12,9 +12,10 @@ interface PasoHeaderProps {
    */
   actual?: number
   /**
-   * Mostrar la barra de etapas. En `false` queda sólo la barra de contexto: es lo que necesita un
-   * MÓDULO sin recorrido definido —Pagos—, donde un stepper con las etapas de Cobros estaría
-   * afirmando un circuito que ahí no existe.
+   * Mostrar la barra de etapas. En `false` sigue montada pero en FANTASMA: invisible, no navegable
+   * y fuera del árbol de accesibilidad. Es lo que necesita el PASO INICIAL, donde todavía no hay
+   * operación confirmada y anunciar etapas afirmaría un recorrido que nadie eligió —pero quitarla
+   * del todo encogería la barra y haría saltar los selectores al confirmar—.
    */
   pasos?: boolean
   /** Se monta dentro de la barra de selectores, a la derecha (acciones del paso). */
@@ -26,9 +27,9 @@ interface PasoHeaderProps {
  * toda la transacción) y a la derecha el avance por pasos. La usa TODA la app, en los cuatro pasos,
  * así el encabezado no se mueve de lugar al avanzar.
  *
- * La barra de etapas SIEMPRE está presente: no hace falta reservar su espacio con una versión
- * fantasma, como sí ocurría en la app de operaciones de venta, donde el paso inicial se dibujaba
- * antes de confirmar la operación.
+ * La barra de etapas está SIEMPRE en el DOM, incluso en el paso inicial —ahí en fantasma—: su alto
+ * es lo que fija el de toda la banda, así que montarla sólo a veces movía el encabezado entero al
+ * confirmar la operación.
  *
  * Las etapas que muestra son las de la operación ELEGIDA (`lib/pasos`): el anticipo no pasa por las
  * ventas pendientes de cobro, así que su stepper tiene tres círculos y no cuatro. Mientras no se
@@ -79,17 +80,15 @@ export function PasoHeader({ actual, pasos = true, children }: PasoHeaderProps) 
           <SelectoresContexto>{children}</SelectoresContexto>
         </div>
 
-        {pasos && (
-          <div className="paso-header-steps">
-            <Stepper
-              steps={etiquetas}
-              current={indice}
-              className="stepper--tight"
-              maxReached={maxAlcanzado}
-              onStep={irAPaso}
-            />
-          </div>
-        )}
+        <div className="paso-header-steps" aria-hidden={!pasos || undefined}>
+          <Stepper
+            steps={etiquetas}
+            current={pasos ? indice : 0}
+            className={`stepper--tight ${pasos ? '' : 'stepper--fantasma'}`}
+            maxReached={pasos ? maxAlcanzado : 0}
+            onStep={pasos ? irAPaso : undefined}
+          />
+        </div>
       </div>
     </header>
   )

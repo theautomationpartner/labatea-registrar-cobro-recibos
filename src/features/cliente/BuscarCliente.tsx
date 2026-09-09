@@ -3,7 +3,7 @@ import { AvisoModal } from '@/components/ui/AvisoModal'
 import { useClickOutside } from '@/hooks/useClickOutside'
 import { esContado } from '@/lib/pases'
 import { ROTULO_ROL, type RolPersona } from '@/lib/personas'
-import { buscarClientes } from '@/services/monday'
+import { buscarClientes, type ResultadoBusqueda } from '@/services/monday'
 import { useApp, useDispatch } from '@/state/hooks'
 import type { Cliente } from '@/types'
 
@@ -36,7 +36,7 @@ interface BuscarClienteProps {
    * qué se muestra, cómo se resuelven varias coincidencias, cuándo se avisa que no existe— es
    * idéntico, así que se parametriza la consulta y no se duplica el componente.
    */
-  buscarPersonas?: (termino: string) => Promise<Cliente[]>
+  buscarPersonas?: (termino: string) => Promise<ResultadoBusqueda<Cliente>>
   /**
    * Cómo se nombra lo que se busca en el mensaje de error de la API ("buscar el cliente"). Va
    * junto con `buscarPersonas`: si cambia contra qué se busca, tiene que cambiar qué se dice
@@ -79,6 +79,9 @@ export function BuscarCliente({
   // El campo arranca (y queda) vacío: no muestra el cliente elegido, para encadenar búsquedas.
   const [termino, setTermino] = useState('')
   const [errorInput, setErrorInput] = useState('')
+  /* La búsqueda trajo tantas coincidencias que se cortó por el tope. Se DICE: quedarse callado es
+     lo que hacía creer que el cliente no existía cuando en realidad no había entrado en la lista. */
+  const [truncada, setTruncada] = useState(false)
   const [resultados, setResultados] = useState<Cliente[]>([])
   const [abierto, setAbierto] = useState(false)
   /* Cliente elegido que se RECHAZÓ por operar al contado. Guarda al cliente, no un booleano,
@@ -102,6 +105,7 @@ export function BuscarCliente({
     setTermino('')
     setResultados([])
     setAbierto(false)
+    setTruncada(false)
     onEstado('idle')
     /* Rechazado: se avisa por ventana y NO se asigna, ni acá ni en el destino de un pase. La
        búsqueda queda lista para el siguiente intento. */
@@ -120,10 +124,12 @@ export function BuscarCliente({
       return
     }
     setErrorInput('')
+    setTruncada(false)
     setAbierto(false)
     onEstado('buscando')
     try {
-      const encontrados = await buscarPersonas(t)
+      const { personas: encontrados, truncado } = await buscarPersonas(t)
+      setTruncada(truncado)
       if (encontrados.length === 0) {
         onEstado('no-encontrado')
         return
@@ -174,6 +180,7 @@ export function BuscarCliente({
             onChange={(e) => {
               setTermino(e.target.value)
               if (errorInput) setErrorInput('')
+              if (truncada) setTruncada(false)
               if (abierto) setAbierto(false)
               // Editar la búsqueda limpia el resultado anterior (aviso / error).
               if (estado !== 'idle') onEstado('idle')
@@ -185,8 +192,14 @@ export function BuscarCliente({
             contenido cuando hay algo que corregir —el campo vacío—, así el error no empuja al
             buscador ni a la ficha de abajo al aparecer. La ayuda fija se fue: el placeholder del
             campo ya dice por dónde se puede buscar. */}
-        <span className="search-helper search-helper--error" role="alert">
-          {errorInput}
+        <span
+          className={`search-helper ${errorInput ? 'search-helper--error' : ''}`}
+          role="alert"
+        >
+          {errorInput ||
+            (truncada
+              ? `Demasiadas coincidencias: se muestran las primeras ${resultados.length}. Afiná el término.`
+              : '')}
         </span>
 
         {/* Varios clientes con el mismo nombre: se elige por código. */}

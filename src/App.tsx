@@ -8,6 +8,7 @@ import { useErrorSeguridad } from '@/hooks/useErrorSeguridad'
 import { bloqueaLaApp, notificarErrorSeguridad } from '@/lib/errorSeguridad'
 import { enMonday, getSessionToken, resumenSessionToken } from '@/lib/mondayAuth'
 import { estadoSegundoFactor } from '@/services/mfa'
+import { InicioView } from '@/features/inicio/InicioView'
 import { ClienteView } from '@/features/cliente/ClienteView'
 import { CobroView } from '@/features/cobro/CobroView'
 import { AnticiposView } from '@/features/anticipos/AnticiposView'
@@ -41,7 +42,7 @@ const VISTAS: Record<Paso, () => JSX.Element | null> = {
 }
 
 export function App() {
-  const { operacionApp, paso, pasoPago, tipoOperacion } = useApp()
+  const { operacionApp, operacionConfirmada, paso, pasoPago, tipoOperacion } = useApp()
   const dispatch = useDispatch()
   const scrollRef = useRef<HTMLDivElement>(null)
   const { error: errorSeguridad, visible: avisoVisible } = useErrorSeguridad()
@@ -153,8 +154,12 @@ export function App() {
        2. dentro de Cobros, la ETAPA. El paso 3 tiene DOS vistas según lo que se registre: con
           dinero (formas de pago) o aplicando el saldo a favor del cliente. Es la única etapa que
           cambia de pantalla según la operación; el resto del recorrido es el mismo. */
-  const Vista =
-    operacionApp === 'PAGOS'
+  const Vista = !operacionConfirmada
+    ? /* PASO 0 · sin operación confirmada no se dibuja ningún circuito: sólo los dos selectores y
+         el botón que los cierra. Se mira ANTES que el módulo porque en el paso inicial todavía
+         puede no haber ninguno elegido. */
+      InicioView
+    : operacionApp === 'PAGOS'
       ? PagosView
       : /* El paso 3 tiene DOS vistas según el recorrido: con dinero (formas de pago) o aplicando el
            saldo a favor del cliente. Es la única etapa que cambia de pantalla; el resto del
