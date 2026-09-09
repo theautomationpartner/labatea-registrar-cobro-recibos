@@ -380,6 +380,19 @@
   gap: 12px;
   flex: 1 1 0;
 }
+/* Con las dos metricas de credito el renglon pasa de tres a CINCO. Sin un ancho minimo, `flex: 1 1 0`
+   las reparte en una sola fila y cada rotulo termina cortado en tres lineas; con la base, se acomodan
+   en dos filas y cada metrica se sigue viendo igual que en el pase. */
+.pases-v2 .cobro-imp-row--ancha .cobro-imp-met {
+  flex: 1 1 210px;
+}
+/* El limite NO rige esta operacion: los dos numeros se muestran igual, en gris. Es el MISMO tono con
+   el que la ficha de arriba apaga su bloque de credito (`credito-grupo--off`), porque dicen lo mismo
+   y tienen que decirlo igual. */
+.pases-v2 .cobro-imp-met--off .cobro-cab-lbl,
+.pases-v2 .cobro-imp-met--off .cobro-imp-num {
+  color: #98a2b3;
+}
 .pases-v2 .cobro-imp-num {
   font-size: 17px;
   font-weight: 700;

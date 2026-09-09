@@ -7,7 +7,8 @@ import { AvisoCategoriaAjena } from '@/features/shared/AvisoCategoriaAjena'
 import { ImpactoAnticipos } from './ImpactoAnticipos'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
 import { anticiposElegidos, totalAplicado } from '@/lib/cobros'
-import { money } from '@/lib/format'
+import { aplicaCredito } from '@/lib/credito'
+import { money, round2 } from '@/lib/format'
 import {
   descripcionDestino,
   etiquetaDePaso,
@@ -120,6 +121,27 @@ export function PaseDestinoView() {
      sino si muestra números o su esqueleto. */
   const destinoListo = !!clienteDestino && estadoBusqueda === 'idle'
   const destinoContado = esContado(clienteDestino?.condicionPago)
+  /**
+   * Cómo queda la LÍNEA DE CRÉDITO de la cuenta destino con el pase ya hecho.
+   *
+   * Acá la línea BAJA, al revés que en el rechazo de cheque: el crédito por pase de saldo entra en
+   * la columna que RESTA de la cuenta corriente —verificado contra el tablero—, así que descuenta
+   * deuda y con ella lo que la línea tiene tomado. Es el mismo panel con el signo dado vuelta,
+   * porque son operaciones opuestas.
+   *
+   * La línea NO se topea en cero: puede quedar negativa si el crédito supera lo adeudado, y eso es
+   * un dato —la cuenta pasa a tener saldo a favor—, no un error. El disponible SÍ, con el mismo
+   * criterio que la fórmula del tablero: un límite excedido no muestra un negativo.
+   *
+   * `atenuado` sale de la MISMA regla que apaga el bloque de crédito en la ficha de arriba
+   * (`aplicaCredito`), para que los mismos números no digan dos cosas distintas en una pantalla.
+   */
+  const lineaResultante = round2((clienteDestino?.lineaUtilizada ?? 0) - importePase)
+  const creditoProyectado = {
+    lineaUtilizada: lineaResultante,
+    disponible: Math.max(round2((clienteDestino?.limit ?? 0) - lineaResultante), 0),
+    atenuado: !aplicaCredito(clienteDestino),
+  }
   /* Sin vendedor no se registra: es el responsable de la operación y va a la cabecera del ítem.
      Antes se omitía la columna cuando faltaba, así que el pase quedaba en el tablero sin dueño. */
   const faltaVendedor = !usuario
@@ -285,6 +307,10 @@ export function PaseDestinoView() {
               actual={saldosDestino?.anticipos ?? 0}
               recibido={importePase}
               vacio={!destinoListo}
+              /* Las dos métricas de crédito, con el pase ya descontado. Van acá y no en la ficha
+                 por lo mismo que el resto del panel: son la CONSECUENCIA de lo que se está por
+                 confirmar, y la ficha muestra la foto de antes. */
+              credito={creditoProyectado}
             />
           </div>
         </div>

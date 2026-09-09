@@ -2,9 +2,12 @@ import { useEffect, useState } from 'react'
 import { AvisoModal } from '@/components/ui/AvisoModal'
 import { ModalCargando } from '@/components/ui/ModalCargando'
 import { ClienteFicha } from '@/features/cliente/ClienteFicha'
+import { ImpactoAnticipos } from '@/features/pases/ImpactoAnticipos'
 import { AvisoCategoriaAjena } from '@/features/shared/AvisoCategoriaAjena'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
 import { descripcionDePaso, etiquetaDePaso, numeroDePaso, pasoAnterior } from '@/lib/pasos'
+import { aplicaCredito } from '@/lib/credito'
+import { round2 } from '@/lib/format'
 import { cumpleRol, ROTULO_OPERACION } from '@/lib/personas'
 import {
   getProveedorDelCheque,
@@ -147,6 +150,26 @@ export function ProveedorAcreedorView() {
   }, [proveedorAcreedor, saldosAcreedorId, dispatch])
 
   const buscando = estado === 'buscando'
+  /**
+   * Cómo queda la LÍNEA DE CRÉDITO del acreedor con el rechazo ya registrado.
+   *
+   * El importe del cheque se suma a la cuenta corriente, y la línea utilizada es justamente la
+   * deuda de esa cuenta más los remitos pendientes de facturar, así que lo que sube la una sube la
+   * otra. El disponible se DERIVA del límite —no se toma el `disponible` que trae la persona, que
+   * es el de antes de la operación— y se topea en cero con el mismo criterio que la fórmula del
+   * tablero: un límite excedido no muestra un disponible negativo.
+   *
+   * `atenuado` sale de la MISMA regla que apaga el bloque de crédito en la ficha de arriba
+   * (`aplicaCredito`): el proveedor "Liberado sin crédito" opera sin tope, y también el que compra
+   * al contado o no tiene condición de pago cargada. Grisarlos en un lado y no en el otro dejaría
+   * los mismos números diciendo dos cosas distintas en la misma pantalla.
+   */
+  const lineaResultante = round2((proveedorAcreedor?.lineaUtilizada ?? 0) + (cheque?.importe ?? 0))
+  const creditoProyectado = {
+    lineaUtilizada: lineaResultante,
+    disponible: Math.max(round2((proveedorAcreedor?.limit ?? 0) - lineaResultante), 0),
+    atenuado: !aplicaCredito(proveedorAcreedor),
+  }
   /* Qué impide cerrar. Se revisan también las dos etapas anteriores —no sólo ésta—: al paso se
      puede volver con el stepper después de haber desmarcado el cheque, y sin este control el botón
      quedaría encendido sobre una operación incompleta. */
@@ -238,6 +261,29 @@ export function ProveedorAcreedorView() {
                 </span>
               )}
             </div>
+
+            {/* CIERRA la card, en el mismo lugar y con el mismo panel que el destino de un PASE DE
+                SALDO: cómo queda la cuenta del acreedor con el rechazo ya registrado. Lo que cambia
+                son los rótulos —acá se suma al SALDO DE CUENTA CORRIENTE y lo que suma es el
+                importe del cheque—, no la caja ni las métricas: es la misma proyección.
+
+                Se monta SIEMPRE, como la ficha: mientras el proveedor se resuelve muestra su
+                esqueleto en vez de desaparecer, así la card no cambia de alto justo cuando el
+                usuario está mirando el resultado.
+
+                El "actual" sale del MISMO número que la ficha muestra arriba (`saldoCtaCte`) y no
+                de otra consulta: dos lecturas del mismo saldo podrían discrepar en pantalla, y el
+                panel existe para explicar ese número, no para competir con él. */}
+            <ImpactoAnticipos
+              actual={proveedorAcreedor?.saldoCtaCte ?? 0}
+              recibido={cheque?.importe ?? 0}
+              vacio={!proveedorAcreedor}
+              titulo="Resumen de la cuenta por rechazo de cheque"
+              rotuloActual="Saldo Cta Cte actual"
+              rotuloRecibido="Credito por cheque rechazado"
+              rotuloResultante="SALDO CTA CTE RESULTANTE"
+              credito={creditoProyectado}
+            />
           </div>
         </div>
 

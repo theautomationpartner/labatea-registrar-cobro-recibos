@@ -191,7 +191,26 @@ const etapas: {
       { type: 'setProveedorAcreedor', proveedor },
     ]),
     Vista: ProveedorAcreedorView,
-    contiene: ['Seleccionar Proveedor Acreedor', 'Finalizar Operación', 'Proveedor acreedor'],
+    contiene: [
+      'Seleccionar Proveedor Acreedor',
+      'Finalizar Operación',
+      'Proveedor acreedor',
+      /* El mismo panel del destino de un pase, con los rótulos de esta operación. */
+      'Resumen de la cuenta por rechazo de cheque',
+      'Saldo Cta Cte actual',
+      'Credito por cheque rechazado',
+      'SALDO CTA CTE RESULTANTE',
+      /* Y las clases del panel: si alguna se cae, deja de verse igual que en el pase. */
+      'cobro-imp-panel',
+      'cobro-imp-num--verde',
+      'cobro-imp-num--total',
+      /* La línea de crédito, proyectada con el importe del cheque ya sumado. */
+      'Línea utilizada resultante',
+      'Crédito disponible resultante',
+      /* PROVEEDORES[0] está "Liberado sin crédito": los dos números van en gris, con la misma regla
+         que apaga el bloque de crédito de la ficha de arriba. */
+      'cobro-imp-met--off',
+    ],
     noContiene: [
       /* El acreedor lo resuelve el sistema a partir del cheque: acá ya no hay buscador. */
       'Buscar proveedor por código',
