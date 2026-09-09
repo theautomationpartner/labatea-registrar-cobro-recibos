@@ -559,14 +559,19 @@ export function LectorComprobante({
               Reintentar
             </button>
           )}
-          {/* "Eliminar" está SIEMPRE que haya un documento, salga como salga la lectura: procesada
-              sin problemas, con advertencias o con error. Es la única salida del recuadro y la que
-              lo devuelve a cero —descarta el archivo y vacía los campos que esa lectura completó—,
-              así que cargar otro comprobante empieza de nuevo en vez de mezclarse con lo anterior.
+          {/* "Eliminar" aparece con la lectura TERMINADA, salga como salga: procesada sin problemas,
+              con advertencias o con error. Es la única salida del recuadro y la que lo devuelve a
+              cero —descarta el archivo y vacía los campos que esa lectura completó—, así que cargar
+              otro comprobante empieza de nuevo en vez de mezclarse con lo anterior.
 
               Reemplaza al viejo "Reemplazar": subir un archivo encima de otro dejaba en pantalla el
-              resultado de una lectura y los datos de la otra hasta que la segunda terminaba. */}
-          {!deshabilitado && (
+              resultado de una lectura y los datos de la otra hasta que la segunda terminaba.
+
+              MIENTRAS SE PROCESA no se ofrece: el escenario ya tiene el documento y está leyéndolo,
+              así que sacarlo a mitad de camino dejaría la llamada en vuelo escribiendo sobre un
+              borrador que el usuario acaba de vaciar. Es el mismo motivo por el que la zona tampoco
+              acepta otro archivo durante la lectura (ver `cerrado`). */}
+          {!deshabilitado && estado !== 'procesando' && (
             <button
               type="button"
               className="cobro-lector-accion cobro-lector-accion--borrar"
