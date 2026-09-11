@@ -3,13 +3,10 @@ import { Avatar } from '@/components/ui/Avatar'
 import { Dropdown } from '@/components/ui/Dropdown'
 import { LogoEmpresa } from '@/components/ui/LogoEmpresa'
 import { Modal } from '@/components/ui/Modal'
-import { puedeElegirUsuario, puedeOperarPagos } from '@/lib/permisos'
+import { operacionesPermitidas, puedeElegirUsuario } from '@/lib/permisos'
 import { hayOperacionEnCurso } from '@/state/appState'
 import { useApp, useDispatch } from '@/state/hooks'
 import type { OperacionApp, Usuario } from '@/types'
-
-/** Módulos que ofrece el encabezado. "Pagos" queda reservado a los administradores. */
-const OPERACIONES: readonly OperacionApp[] = ['COBROS', 'PASES', 'PAGOS', 'RECHAZOS']
 
 /**
  * Cómo se nombra cada módulo en el selector. La CLAVE es corta porque viaja por todo el estado;
@@ -26,15 +23,14 @@ const ROTULO: Record<OperacionApp, string> = {
  * Módulo que se está operando. Mismo control y mismos estilos que el selector de vendedor de al
  * lado: los dos son contexto de TODA la transacción, así que se ven y se comportan igual.
  *
- * "Pagos" se muestra SIEMPRE, pero sólo un administrador puede elegirlo (RBAC de `lib/permisos`,
- * el mismo rol que habilita cambiar el vendedor): esconderlo dejaría al usuario sin saber que el
- * módulo existe, y el tooltip explica por qué no está disponible.
+ * Ofrece SÓLO los módulos que este usuario puede operar (ver `operacionesPermitidas`): PAGOS y
+ * RECHAZO DE CHEQUE son del equipo "Pago a Proveedores" y para el resto no aparecen —ni siquiera
+ * deshabilitados—. Esconderlos es la UI; la regla la hace cumplir el reducer.
  */
 function OperacionSelector() {
   const state = useApp()
   const { operacionApp, usuarioActual } = state
   const dispatch = useDispatch()
-  const habilitado = puedeOperarPagos(usuarioActual)
   /* Módulo elegido que espera confirmación. Mientras hay uno pendiente el cambio NO se aplicó: el
      estado sigue intacto, así que "Volver" no tiene nada que restaurar —simplemente no pasó nada—. */
   const [pendiente, setPendiente] = useState<OperacionApp | null>(null)
@@ -69,12 +65,10 @@ function OperacionSelector() {
             <span className="selbox-ph">Seleccionar...</span>
           )
         }
-        items={OPERACIONES}
+        items={operacionesPermitidas(usuarioActual)}
         itemKey={(o) => o}
         renderItem={(o) => ROTULO[o]}
         itemClassName="dditem--strong"
-        itemDisabled={(o) => o === 'PAGOS' && !habilitado}
-        itemTitle={() => 'Sólo un administrador puede operar el módulo de Pagos.'}
         onSelect={elegir}
       />
 

@@ -1,3 +1,4 @@
+import { ladosDePase } from '@/lib/permisos'
 import { useEffect, useState } from 'react'
 import { AvisoModal } from '@/components/ui/AvisoModal'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
@@ -39,13 +40,14 @@ export function PaseAnticipoView() {
     anticiposClienteId,
     operacionApp,
     paseCuentasDe,
+    usuarioActual,
     pasesDeAnticipo,
     tipoOperacion,
   } = useApp()
   const dispatch = useDispatch()
   /* De qué lado del mostrador es el pase. Es lo ÚNICO que esta pantalla necesita saber, y para una
      sola cosa: contra qué tablero se leen los anticipos. */
-  const rol = rolDeOperacion(operacionApp, paseCuentasDe) ?? 'cliente'
+  const rol = rolDeOperacion(operacionApp, paseCuentasDe) ?? ladosDePase(usuarioActual)[0]
   const enCache = !!cliente && anticiposClienteId === cliente.id
   const [cargando, setCargando] = useState(!enCache)
   // Motivo por el que no se puede avanzar, mostrado al intentarlo.

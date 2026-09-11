@@ -12,6 +12,7 @@
  *     quién puede operar lo decide la lista blanca de la Capa 2, no un flag de Monday (ver abajo).
  *     El id numérico viaja como valor para asignar el cobro.
  */
+import { USUARIO_LOCAL } from '@/data/mock'
 import { USUARIOS } from '@/data/mock'
 import { EQUIPOS_OPERADORES } from '@/lib/permisos'
 import type { Usuario, UsuarioActual } from '@/types'
@@ -67,7 +68,13 @@ const enAlgunEquipo = (u: MondayUser, equipos: readonly string[]): boolean => {
  * proxy de Vite con el token personal: es la única identidad disponible en localhost.
  */
 export async function getUsuarioActual(): Promise<UsuarioActual | null> {
-  if (!mondayHabilitado()) return null
+  /* MODO LOCAL (sin token): no hay sesión que leer, así que se usa una identidad de PRUEBA con
+     todos los accesos —si no, el prototipo no podría recorrer PAGOS ni RECHAZOS—.
+
+     Sólo en DESARROLLO. En producción, sin Monday habilitado se devuelve `null`, y `null` es el lado
+     restrictivo de la regla de módulos: un despliegue mal configurado no puede terminar dándole a
+     todos la identidad de prueba. */
+  if (!mondayHabilitado()) return import.meta.env.DEV ? USUARIO_LOCAL : null
 
   if (!import.meta.env.DEV) {
     const res = await fetch('/api/usuario', {
@@ -96,6 +103,7 @@ export async function getUsuarioActual(): Promise<UsuarioActual | null> {
     name: me.name,
     isAdmin: Boolean(me.is_admin),
     equipos: nombresDeEquipos(me.teams),
+    equipoIds: (me.teams ?? []).map((t) => String(t.id ?? '').trim()).filter(Boolean),
   }
 }
 

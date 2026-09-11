@@ -2,6 +2,7 @@
  * Datos de prueba para trabajar sin token de Monday (desarrollo local). Los servicios devuelven
  * esto cuando `mondayHabilitado()` es falso, así la app se puede recorrer entera sin cuenta.
  */
+import { EQUIPO_PAGO_PROVEEDORES_ID } from '@/lib/permisos'
 import type {
   AnticipoPendiente,
   ChequeEnCartera,
@@ -13,7 +14,21 @@ import type {
   Proveedor,
   SaldosCliente,
   Usuario,
+  UsuarioActual,
 } from '@/types'
+
+/**
+ * Quién es el usuario en el MODO LOCAL, sin token. Es uno de `USUARIOS` —así el selector de vendedor
+ * lo encuentra— y está en el equipo "Pago a Proveedores" para que el prototipo se pueda recorrer
+ * entero. Nunca se usa en producción (ver `getUsuarioActual`).
+ */
+export const USUARIO_LOCAL: UsuarioActual = {
+  id: '1001',
+  name: 'Luciano Torres',
+  isAdmin: true,
+  equipos: ['Administradores', 'Pago a Proveedores'],
+  equipoIds: [EQUIPO_PAGO_PROVEEDORES_ID],
+}
 
 export const USUARIOS: Usuario[] = [
   { id: '1001', ini: 'LT', name: 'Luciano Torres', color: 'var(--avatar-orange)' },

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ladosDePase } from '@/lib/permisos'
 import { AvisoModal } from '@/components/ui/AvisoModal'
 import { AvisoCategoriaAjena } from '@/features/shared/AvisoCategoriaAjena'
 import { CuentasPaseConfig, MSG_SIN_CUENTAS_DE } from '@/features/pases/CuentasPaseConfig'
@@ -35,7 +36,7 @@ import { OperacionConfig } from './OperacionConfig'
  * sabe contra qué categoría consultar ni contra qué validar a quien traiga.
  */
 export function ClienteView() {
-  const { cliente, operacionApp, paseCuentasDe, tipoOperacion, saldos, saldosClienteId } =
+  const { cliente, operacionApp, paseCuentasDe, tipoOperacion, saldos, saldosClienteId, usuarioActual } =
     useApp()
   const dispatch = useDispatch()
   // Estado de la búsqueda: gobierna qué se muestra en el lugar de la ficha del cliente.
@@ -97,9 +98,12 @@ export function ClienteView() {
    * `rolDeOperacion`).
    */
   const rol = rolDeOperacion(operacionApp, paseCuentasDe)
+  /* Cuando hace falta un lado y todavía no hay uno elegido (ver los `?? ladosDePase` de abajo), se
+     usa el PRIMERO que el usuario puede usar —clientes, que puede cualquiera—, sacado de la regla y
+     no escrito a mano: si la regla cambia, el respaldo no puede quedar apuntando a un lado vedado. */
   /* Cómo se lo nombra en pantalla. Sin rol elegido se usa el del cliente: es el texto que ya estaba,
      y con él sólo se rotula un buscador que todavía no puede cargar a nadie. */
-  const rotulo = ROTULO_ROL[rol ?? 'cliente']
+  const rotulo = ROTULO_ROL[rol ?? ladosDePase(usuarioActual)[0]]
   const buscaProveedores = rol === 'proveedor'
 
   /**
@@ -239,7 +243,7 @@ export function ClienteView() {
               estado={estadoBusqueda}
               onEstado={setEstadoBusqueda}
               onElegir={elegir}
-              rol={rol ?? 'cliente'}
+              rol={rol ?? ladosDePase(usuarioActual)[0]}
               {...(buscaProveedores
                 ? {
                     buscarPersonas: buscarProveedores,
@@ -313,7 +317,7 @@ export function ClienteView() {
           titulo={`El ${rotulo.singular} opera al contado`}
           onClose={() => setAvisoContado(false)}
         >
-          {msgContadoOrigen(rol ?? 'cliente')}.
+          {msgContadoOrigen(rol ?? ladosDePase(usuarioActual)[0])}.
         </AvisoModal>
       )}
 

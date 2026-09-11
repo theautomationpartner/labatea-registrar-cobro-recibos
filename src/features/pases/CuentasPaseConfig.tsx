@@ -1,3 +1,4 @@
+import { ladoInicialDePase, ladosDePase } from '@/lib/permisos'
 import type { RolPersona } from '@/lib/personas'
 import { useApp, useDispatch } from '@/state/hooks'
 
@@ -23,14 +24,23 @@ const OPCIONES: readonly { valor: RolPersona; label: string }[] = [
  * respuesta la búsqueda no sabe contra qué categoría consultar ni contra qué validar a quien traiga.
  * Elegirlo es lo que habilita cargar la cuenta origen.
  *
- * Nada viene preseleccionado: el placeholder "Seleccionar..." es lo que hace evidente que falta
- * decidirlo, y así el paso 1 puede reclamarlo igual que en los otros dos módulos. Cambiarlo
- * descarta lo cargado (ver `setPaseCuentasDe`): del otro lado del mostrador esa persona ni siquiera
- * tiene la categoría que la nueva elección exige.
+ * Qué lados se OFRECEN lo define el equipo del usuario (ver `ladosDePase`): quien está en "Pago a
+ * Proveedores" elige entre clientes y proveedores; el resto sólo ve clientes —la otra opción no
+ * aparece—. Con una sola opción ya viene puesta, porque no hay nada que decidir; con dos vuelve el
+ * "Seleccionar...", y el paso 1 lo reclama igual que en los otros dos módulos. Cambiarlo descarta
+ * lo cargado (ver `setPaseCuentasDe`): del otro lado del mostrador esa persona ni siquiera tiene la
+ * categoría que la nueva elección exige.
  */
 export function CuentasPaseConfig() {
-  const { paseCuentasDe } = useApp()
+  const { paseCuentasDe, usuarioActual } = useApp()
   const dispatch = useDispatch()
+  /* Sólo los lados que este usuario puede usar. El reducer tampoco acepta otro: esto es lo que se
+     ve, la regla vive allá. */
+  const permitidos = ladosDePase(usuarioActual)
+  const opciones = OPCIONES.filter((o) => permitidos.includes(o.valor))
+  /* Lo elegido, o el único posible si el estado todavía no lo tiene: con una opción nunca se
+     muestra vacío. Con dos, `null` hasta que el usuario elija. */
+  const elegido = paseCuentasDe ?? ladoInicialDePase(usuarioActual)
 
   return (
     <div className="operacion-cfg">
@@ -42,17 +52,20 @@ export function CuentasPaseConfig() {
         <div className="cfg-c">
           <div className="cfg-l">Las cuentas son de:</div>
           <select
-            className={`cfg-sel ${paseCuentasDe ? '' : 'cfg-sel--ph'}`}
+            className={`cfg-sel ${elegido ? '' : 'cfg-sel--ph'}`}
             aria-label="Las cuentas son de:"
-            value={paseCuentasDe ?? ''}
+            value={elegido ?? ''}
             onChange={(e) =>
               dispatch({ type: 'setPaseCuentasDe', rol: e.target.value as RolPersona })
             }
           >
-            <option value="" disabled>
-              Seleccionar...
-            </option>
-            {OPCIONES.map((o) => (
+            {/* El placeholder sólo cuando hay algo que elegir: con una opción no hay decisión. */}
+            {opciones.length > 1 && (
+              <option value="" disabled>
+                Seleccionar...
+              </option>
+            )}
+            {opciones.map((o) => (
               <option key={o.valor} value={o.valor}>
                 {o.label}
               </option>

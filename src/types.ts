@@ -89,6 +89,11 @@ export interface UsuarioActual {
   isAdmin: boolean
   /** Nombres de los equipos a los que pertenece. De acá sale el rol: ver `lib/permisos`. */
   equipos: string[]
+  /**
+   * IDs de esos mismos equipos. Son los que deciden qué MÓDULOS ve (ver `esDelEquipoProveedores`):
+   * un nombre se puede repetir o cambiar en Monday, un id no.
+   */
+  equipoIds: string[]
 }
 
 /* ===== Facturas pendientes de cobro ===== */

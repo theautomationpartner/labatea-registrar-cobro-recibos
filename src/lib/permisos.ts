@@ -11,7 +11,8 @@
  * Reglas puras (sin React ni servicios): se testean solas y las consumen tanto el encabezado como
  * las vistas, así ninguna de las dos puede discrepar sobre quién puede editar qué.
  */
-import type { UsuarioActual } from '@/types'
+import type { RolPersona } from '@/lib/personas'
+import type { OperacionApp, UsuarioActual } from '@/types'
 
 /** Equipo de Monday cuyos miembros son administradores de la app (grupo privilegiado). */
 export const EQUIPO_ADMINISTRADORES = 'Administradores'
@@ -59,14 +60,79 @@ export const esAdministrador = (u: UsuarioActual | null): boolean =>
   rolUsuario(u) === 'ADMINISTRADOR'
 
 /**
- * ¿Se puede operar el módulo de PAGOS? Sólo el administrador: el resto ve la opción en el selector
- * del encabezado, pero no puede elegirla. Es la MISMA regla que habilita cambiar el vendedor, así
- * que las dos responden al mismo rol y no pueden discrepar.
- */
-export const puedeOperarPagos = (u: UsuarioActual | null): boolean => esAdministrador(u)
-
-/**
  * ¿Se puede cambiar el USUARIO responsable de la operación? Sólo el administrador, en CUALQUIER
  * etapa: el caso real es detectar a mitad del circuito que el cobro va a nombre de otro.
  */
 export const puedeElegirUsuario = (u: UsuarioActual | null): boolean => esAdministrador(u)
+
+/* ===== Equipo "Pago a Proveedores" =====
+   Quién ve qué módulo. Es una regla de INTEGRIDAD de los datos —los pagos y los rechazos mueven la
+   cuenta corriente de proveedores—, así que se escribe distinto que el rol de arriba en dos puntos:
+   va por ID de equipo y falla CERRADA. */
+
+/**
+ * Id del equipo de Monday "Pago a Proveedores" (1501065). Sus miembros —y SÓLO ellos— operan PAGOS y
+ * RECHAZO DE CHEQUE, y hacen pases de saldo entre cuentas de PROVEEDORES.
+ *
+ * Por ID y no por nombre, a diferencia de "Administradores" y "Vendedores": renombrar el equipo en
+ * Monday no puede quitarle el acceso a nadie, y —más importante— crear OTRO equipo con el mismo
+ * nombre no puede dárselo a nadie.
+ */
+export const EQUIPO_PAGO_PROVEEDORES_ID = '1501065'
+
+/**
+ * ¿El usuario de la sesión está en el equipo "Pago a Proveedores"?
+ *
+ * Falla CERRADA, al revés que `rolUsuario`: sin usuario, o con un usuario que no trae sus ids de
+ * equipo —un servidor desactualizado, una lectura del perfil que falló—, la respuesta es NO. Ahí un
+ * error no puede abrir la puerta: en el peor caso alguien del equipo ve la app recortada y avisa, que
+ * es un problema visible; al revés, alguien de afuera registraría pagos y nadie se enteraría.
+ */
+export const esDelEquipoProveedores = (u: UsuarioActual | null): boolean =>
+  !!u && (u.equipoIds ?? []).includes(EQUIPO_PAGO_PROVEEDORES_ID)
+
+/** Todos los módulos, en el orden en que los ofrece el encabezado. */
+const OPERACIONES: readonly OperacionApp[] = ['COBROS', 'PASES', 'PAGOS', 'RECHAZOS']
+
+/** Los que sólo existen para el equipo. PASES no está: es compartido (ver `ladosDePase`). */
+const OPERACIONES_DEL_EQUIPO: readonly OperacionApp[] = ['PAGOS', 'RECHAZOS']
+
+/**
+ * Los módulos que este usuario puede ver en "Seleccionar Operación". Los demás NO se ofrecen —ni
+ * deshabilitados—: quien no tiene acceso no tiene por qué saber que existen.
+ */
+export const operacionesPermitidas = (u: UsuarioActual | null): readonly OperacionApp[] =>
+  esDelEquipoProveedores(u)
+    ? OPERACIONES
+    : OPERACIONES.filter((o) => !OPERACIONES_DEL_EQUIPO.includes(o))
+
+/** ¿Puede operar este módulo? Es lo que consulta el reducer, además de lo que muestra el selector. */
+export const puedeOperar = (u: UsuarioActual | null, op: OperacionApp | null): boolean =>
+  op !== null && operacionesPermitidas(u).includes(op)
+
+/**
+ * Entre qué cuentas puede hacer un PASE DE SALDO este usuario.
+ *
+ * El módulo es COMPARTIDO: lo que el equipo cambia es con qué cuentas. El del equipo "Pago a
+ * Proveedores" puede elegir entre las dos —clientes o proveedores—; el resto sólo entre cuentas de
+ * CLIENTES, porque mover saldo entre proveedores es mover plata que se les debe.
+ *
+ * CLIENTES va siempre primero y está en las dos listas: es el lado que puede cualquiera, y por eso es
+ * también el respaldo seguro cuando hace falta uno y todavía no se eligió (ver `ladosDePase(u)[0]`).
+ * Sin usuario, sólo CLIENTES: falla cerrada, igual que el resto de la regla.
+ */
+export const ladosDePase = (u: UsuarioActual | null): readonly RolPersona[] =>
+  esDelEquipoProveedores(u) ? ['cliente', 'proveedor'] : ['cliente']
+
+/** ¿Puede hacer un pase entre cuentas de este tipo? Es lo que consulta el reducer. */
+export const puedePasarEntre = (u: UsuarioActual | null, rol: RolPersona): boolean =>
+  ladosDePase(u).includes(rol)
+
+/**
+ * Con qué lado NACE el pase. Si el usuario tiene una sola opción, ésa —no hay nada que decidir—; si
+ * tiene dos, ninguna: preseleccionar una de las dos sería decidir por él de qué lado mueve el saldo.
+ */
+export const ladoInicialDePase = (u: UsuarioActual | null): RolPersona | null => {
+  const lados = ladosDePase(u)
+  return lados.length === 1 ? lados[0] : null
+}

@@ -43,7 +43,20 @@ const chequear = (grupo: string, nombre: string, ok: boolean) => {
 
 /* El módulo entero arranca con el cambio de operación: es lo que fija el recorrido de tres etapas
    (ver `recorridoDe`). Sin eso, el estado seguiría siendo el de Cobros. */
-const enRechazos = aplicar(initialState, [{ type: 'setOperacionApp', operacion: 'RECHAZOS' }])
+/* RECHAZOS es del equipo "Pago a Proveedores": sin un usuario que esté en él, el módulo no abre. */
+const enRechazos = aplicar(
+  {
+    ...initialState,
+    usuarioActual: {
+      id: '107870718',
+      name: 'Miembro del equipo',
+      isAdmin: false,
+      equipos: ['Pago a Proveedores'],
+      equipoIds: ['1501065'],
+    },
+  },
+  [{ type: 'setOperacionApp', operacion: 'RECHAZOS' }],
+)
 const [ch1, ch2] = CHEQUES_EN_CARTERA
 const cliente = CLIENTES[0]
 const proveedor = PROVEEDORES[0]

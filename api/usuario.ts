@@ -36,6 +36,9 @@ export default async function handler(req: Pedido, res: ServerResponse): Promise
       /* Nombres de equipo, que es con lo que trabaja `src/lib/permisos.ts`. Van por nombre y no por
          id porque ésa es la regla que ya tiene la app; sin equipos queda el rol más restrictivo. */
       equipos: perfil?.equipos ?? [],
+      /* Los IDS, que son los que deciden qué módulos ve. Sin perfil va vacío, y vacío es el lado
+         restrictivo: sin equipo confirmado no se ofrecen PAGOS ni RECHAZOS. */
+      equipoIds: perfil?.equipoIds ?? [],
     }
   })
 }

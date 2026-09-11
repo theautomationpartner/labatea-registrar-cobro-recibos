@@ -1,3 +1,4 @@
+import { ladoInicialDePase, puedeOperar, puedePasarEntre } from '@/lib/permisos'
 import { hoy } from '@/lib/dates'
 import { totalACancelar, totalAplicado } from '@/lib/cobros'
 import { round2 } from '@/lib/format'
@@ -533,6 +534,9 @@ export function reducer(state: AppState, action: Action): AppState {
        Es el mismo criterio de `setTipoOperacion`, por el mismo motivo: reelegir lo MISMO no toca
        nada, porque no es un cambio y destruir trabajo por un click sin consecuencias sería peor. */
     case 'setPaseCuentasDe':
+      /* Un lado que este usuario no puede usar no se elige, ni desde el selector —que no lo
+         ofrece— ni desde ningún otro lugar (ver `ladosDePase`). */
+      if (!puedePasarEntre(state.usuarioActual, action.rol)) return state
       if (state.paseCuentasDe === action.rol) return state
       return {
         ...state,
@@ -579,6 +583,10 @@ export function reducer(state: AppState, action: Action): AppState {
        cambio, y descartar lo cargado sería destruir trabajo por un click sin consecuencias. */
     case 'setOperacionApp':
       if (state.operacionApp === action.operacion) return state
+      /* Un módulo que este usuario no puede operar NO se abre, lo pida la pantalla o no. El
+         selector ni siquiera lo ofrece, pero la regla vive acá: así un despacho que llegue por otro
+         lado —o un selector que alguien cambie mañana— no puede saltearla. */
+      if (!puedeOperar(state.usuarioActual, action.operacion)) return state
       return {
         ...initialState,
         operacionApp: action.operacion,
@@ -587,6 +595,9 @@ export function reducer(state: AppState, action: Action): AppState {
            En el paso inicial sigue en `false`, así que elegir un módulo sólo llena el selector. */
         operacionConfirmada: state.operacionConfirmada,
         tipoOperacion: recorridoDe(action.operacion),
+        /* El PASE nace con su lado puesto sólo si el usuario tiene UNO (ver `ladoInicialDePase`);
+           con dos, lo elige él. Fuera del pase no hay lado que declarar. */
+        paseCuentasDe: action.operacion === 'PASES' ? ladoInicialDePase(state.usuarioActual) : null,
         /* Cobro y pago NUEVOS, no los que quedaron armados al cargar el módulo: si la pestaña quedó
            abierta de un día para el otro, su fecha tiene que ser la de HOY. */
         cobro: cobroVacio(),
@@ -601,7 +612,11 @@ export function reducer(state: AppState, action: Action): AppState {
        circuito. No toca nada más —el módulo ya dejó el estado a foja cero al elegirse—, así que lo
        único que cambia es que a partir de acá se dibujan las etapas. */
     case 'confirmarOperacionApp':
-      return state.operacionApp ? { ...state, operacionConfirmada: true } : state
+      /* Se vuelve a preguntar al CONFIRMAR, no sólo al elegir: entre las dos cosas pudo cambiar
+         quién es el usuario de la sesión. */
+      return puedeOperar(state.usuarioActual, state.operacionApp)
+        ? { ...state, operacionConfirmada: true }
+        : state
 
     case 'setUsuario':
       return { ...state, usuario: action.usuario }
@@ -954,12 +969,43 @@ export function reducer(state: AppState, action: Action): AppState {
         usuario: state.usuario ?? usuarioPorDefecto(action.usuarios, state.usuarioActual),
       }
 
-    case 'setUsuarioActual':
-      return {
+    case 'setUsuarioActual': {
+      const conSesion = {
         ...state,
         usuarioActual: action.usuario,
         usuario: state.usuario ?? usuarioPorDefecto(state.usuarios, action.usuario),
       }
+      /* Si el módulo en curso NO es de este usuario, se cierra y la app vuelve al paso inicial. En
+         la práctica la sesión se resuelve antes de dibujar nada (ver `App.tsx`), pero la regla no
+         puede depender de ese orden: si alguna vez se invierte, no queda nadie operando un módulo
+         que no le corresponde. */
+      const aFojaCero: AppState = {
+        ...initialState,
+        cobro: cobroVacio(),
+        pago: pagoVacio(),
+        usuarios: state.usuarios,
+        usuariosCargando: state.usuariosCargando,
+        usuarioActual: action.usuario,
+        usuario: usuarioPorDefecto(state.usuarios, action.usuario),
+      }
+      if (conSesion.operacionApp && !puedeOperar(action.usuario, conSesion.operacionApp)) {
+        return aFojaCero
+      }
+      /* En un pase, el lado se revisa contra el usuario: uno que no puede usar se cambia por su
+         lado inicial —y lo cargado del otro lado se descarta, que es lo que hace `setPaseCuentasDe`—;
+         y si todavía no había ninguno y le queda uno solo, nace puesto. */
+      if (conSesion.operacionApp === 'PASES') {
+        const actual = conSesion.paseCuentasDe
+        if (actual === null || !puedePasarEntre(action.usuario, actual)) {
+          const inicial = ladoInicialDePase(action.usuario)
+          if (inicial) return reducer(conSesion, { type: 'setPaseCuentasDe', rol: inicial })
+          /* Un lado vedado sin reemplazo único: no hay cómo seguir con lo cargado, y el pase se
+             cierra entero en vez de quedar armado sobre cuentas que no le corresponden. */
+          if (actual !== null) return aFojaCero
+        }
+      }
+      return conSesion
+    }
 
     case 'errorMonday':
       return { ...state, errorMonday: action.accion }

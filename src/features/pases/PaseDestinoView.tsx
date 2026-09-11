@@ -1,3 +1,4 @@
+import { ladosDePase } from '@/lib/permisos'
 import { useEffect, useState } from 'react'
 import { AvisoModal } from '@/components/ui/AvisoModal'
 import { ModalCargando } from '@/components/ui/ModalCargando'
@@ -50,6 +51,7 @@ export function PaseDestinoView() {
     anticipos,
     operacionApp,
     paseCuentasDe,
+    usuarioActual,
     pasesDeAnticipo,
     clienteDestino,
     saldosDestino,
@@ -78,7 +80,7 @@ export function PaseDestinoView() {
   /* De qué lado del mostrador es el pase. Es el MISMO rol con el que el paso 1 validó al origen
      —sale del mismo lugar del estado—, y por eso las dos puntas no pueden terminar siendo de lados
      distintos. Con el rol sin declarar no se llega hasta acá: sin origen cargado no hay pase. */
-  const rol = rolDeOperacion(operacionApp, paseCuentasDe) ?? 'cliente'
+  const rol = rolDeOperacion(operacionApp, paseCuentasDe) ?? ladosDePase(usuarioActual)[0]
   const anterior = pasoAnterior('destino', tipoOperacion)
   /* Los anticipos elegidos en el paso 2 y lo que suman: ese total es a la vez lo que se debita del
      origen y lo que se acredita al destino. */

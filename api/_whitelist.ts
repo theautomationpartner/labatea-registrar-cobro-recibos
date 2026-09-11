@@ -203,6 +203,8 @@ async function consultarTablero(userId: string, app: string): Promise<boolean> {
 export interface PerfilUsuario {
   nombre: string
   equipos: string[]
+  /** IDs de los equipos. De acá sale qué módulos ve (ver `src/lib/permisos.ts`). */
+  equipoIds: string[]
   esAdminDeCuenta: boolean
 }
 
@@ -221,7 +223,7 @@ const QUERY_PERFIL = `
 `
 
 interface RespuestaPerfil {
-  users?: { id: string; name: string; kind?: string; teams?: { name: string }[] }[]
+  users?: { id: string; name: string; kind?: string; teams?: { id?: string | number; name: string }[] }[]
 }
 
 /**
@@ -239,6 +241,9 @@ export async function perfilDe(userId: string): Promise<PerfilUsuario | null> {
     return {
       nombre: usuario.name ?? '',
       equipos: (usuario.teams ?? []).map((t) => (t.name ?? '').trim()).filter(Boolean),
+      /* La query ya traía el id de cada equipo y se descartaba. Se guarda como TEXTO: la API lo
+         devuelve como número o como string según la versión, y comparar distinto tipo daría falso. */
+      equipoIds: (usuario.teams ?? []).map((t) => String(t.id ?? '').trim()).filter(Boolean),
       esAdminDeCuenta: usuario.kind === 'admin',
     }
   } catch {
