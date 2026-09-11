@@ -80,7 +80,10 @@ export function PasoHeader({ actual, pasos = true, children }: PasoHeaderProps) 
           <SelectoresContexto>{children}</SelectoresContexto>
         </div>
 
-        <div className="paso-header-steps" aria-hidden={!pasos || undefined}>
+        <div
+          className={`paso-header-steps ${pasos ? '' : 'paso-header-steps--fantasma'}`}
+          aria-hidden={!pasos || undefined}
+        >
           <Stepper
             steps={etiquetas}
             current={pasos ? indice : 0}

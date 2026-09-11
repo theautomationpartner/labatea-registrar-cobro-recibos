@@ -293,6 +293,34 @@
      desplazaría el stepper hacia abajo cuando comparte fila con los selectores. */
   padding: 15px 0;
 }
+/* El contenedor del stepper FANTASMA (paso inicial) reserva ALTO pero no ANCHO.
+ *
+ * Reservando las dos cosas rompía justamente lo que venía a cuidar: en el paso inicial la barra
+ * suma el botón "Confirmar" (~140px) al bloque de selectores, y con un stepper de CUATRO etapas
+ * —Cobros y Pagos— la fila ya no entraba. Por el `flex-wrap` de `.paso-header-in` el fantasma bajaba
+ * a una segunda línea, invisible pero ocupando su alto entero, y la banda crecía ~110px hasta que se
+ * confirmaba la operación. Pases y Rechazos tienen tres etapas: entraban, y por eso no pasaba ahí.
+ *
+ * Con ancho cero el fantasma nunca fuerza el salto de línea, así que se queda en la MISMA fila que
+ * los selectores —igual que el stepper real después de confirmar— y el alto de la banda es el mismo
+ * antes y después. El margen negativo anula el `column-gap` de 24px que la fila le daría igual a un
+ * ítem de ancho cero: sin él, a un ancho justo el salto volvería a ocurrir. */
+.paso-header-steps--fantasma {
+  flex: 0 0 0;
+  width: 0;
+  margin-left: -24px;
+  overflow: hidden;
+}
+/* Adentro, el stepper conserva su ancho NATURAL: si se encogiera al ancho cero de su caja, los
+   rótulos partirían palabra por palabra y el alto reservado sería otro que el del stepper real.
+
+   Va con las DOS clases del contenedor a propósito: `.paso-header-steps .stepper`, más abajo, tiene
+   la misma especificidad y declara `flex: 0 1 auto`. Con una sola clase perdía por orden de
+   aparición y el `flex-shrink` volvía a 1 sin que nada lo avisara. */
+.paso-header-steps.paso-header-steps--fantasma .stepper {
+  flex-shrink: 0;
+}
+
 .paso-header-steps .stepper {
   flex: 0 1 auto;
   justify-content: flex-end;
