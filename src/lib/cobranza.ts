@@ -32,9 +32,11 @@ export const ESTADO_SALDO_LABEL: Record<EstadoSaldo, string> = {
 }
 
 /**
- * Las tres opciones del primer criterio, en el orden en que se ofrecen: de la que hay que reclamar a
- * la que no. Cada una lleva su ícono y su tono, que son los que después pintan la pastilla de la
- * tabla de cuentas.
+ * Los TRES estados que puede tener el saldo de una cuenta en el tablero, con el ícono y el tono con
+ * los que se pinta cada uno en la pastilla de la tabla.
+ *
+ * Es el catálogo de lo que el tablero PUBLICA, no el de lo que el usuario puede pedir: qué se puede
+ * buscar lo dice `ESTADOS_SALDO_BUSCABLES`.
  */
 export const ESTADOS_SALDO: readonly {
   valor: EstadoSaldo
@@ -66,6 +68,19 @@ export const ESTADOS_SALDO: readonly {
     tono: 'favor',
   },
 ]
+
+/**
+ * Los estados que el tablero deja BUSCAR, en el orden en que se ofrecen. Son dos y no tres: una
+ * cuenta en cero no se cobra ni se devuelve, así que listarla no lleva a ninguna acción y sólo
+ * diluye el resultado con la mayoría de las cuentas del tablero. Sigue existiendo como estado —una
+ * cuenta puede estar en cero y el mapeo lo reconoce—, simplemente no se pide.
+ */
+export const ESTADOS_SALDO_BUSCABLES: readonly EstadoSaldo[] = ['aCobrar', 'aFavor']
+
+/** Las opciones del primer criterio, con su etiqueta y su ayuda: las buscables, en su orden. */
+export const OPCIONES_ESTADO_SALDO = ESTADOS_SALDO.filter((e) =>
+  ESTADOS_SALDO_BUSCABLES.includes(e.valor),
+)
 
 /** Normaliza para comparar etiquetas: sin tildes, sin mayúsculas y sin espacios de más. */
 const norm = (s: string): string =>

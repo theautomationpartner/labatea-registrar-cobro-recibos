@@ -29,7 +29,9 @@ import {
   DESCENDENTE_POR_DEFECTO,
   ESTADO_SALDO_LABEL,
   ESTADOS_SALDO,
+  ESTADOS_SALDO_BUSCABLES,
   estadoSaldoDeLabel,
+  OPCIONES_ESTADO_SALDO,
   filasDeCobranza,
   ordenarFilas,
   proporcion,
@@ -149,12 +151,19 @@ chequear(
 )
 chequear(
   'criterio',
-  'elegir un estado deja UNA opción; "todos" deja las tres',
-  aplicar(enCobranza, [{ type: 'setCobranzaEstados', estados: ['cero'] }]).cobranzaCriterio.estados
-    .join() === 'cero' &&
-    aplicar(enCobranza, [
-      { type: 'setCobranzaEstados', estados: ESTADOS_SALDO.map((e) => e.valor) },
-    ]).cobranzaCriterio.estados.length === 3,
+  'el estado del saldo se busca de a UNO: o las que deben, o las que tienen saldo a favor',
+  ESTADOS_SALDO_BUSCABLES.join() === 'aCobrar,aFavor' &&
+    OPCIONES_ESTADO_SALDO.length === 2 &&
+    aplicar(enCobranza, [{ type: 'setCobranzaEstados', estados: ['aFavor'] }]).cobranzaCriterio
+      .estados.join() === 'aFavor',
+)
+chequear(
+  'criterio',
+  'el saldo CERO sigue existiendo como estado del tablero, pero no se ofrece buscarlo',
+  ESTADO_SALDO_LABEL.cero === 'Saldo Cero' &&
+    estadoSaldoDeLabel('Saldo Cero') === 'cero' &&
+    ESTADOS_SALDO.length === 3 &&
+    !ESTADOS_SALDO_BUSCABLES.includes('cero'),
 )
 chequear(
   'criterio',
@@ -191,16 +200,16 @@ chequear(
     deudores.totalLeidas > deudores.cuentas.length,
 )
 
-const soloCero = await buscarCobranza({ estados: ['cero'], tramos: CRITERIO_INICIAL.tramos })
+const soloAFavor = await buscarCobranza({ estados: ['aFavor'], tramos: CRITERIO_INICIAL.tramos })
 chequear(
   'búsqueda',
-  'otro estado de saldo trae otras cuentas',
-  soloCero.cuentas.length === 1 && soloCero.cuentas[0].estadoSaldo === 'cero',
+  'el otro estado buscable trae otras cuentas',
+  soloAFavor.cuentas.length === 1 && soloAFavor.cuentas[0].estadoSaldo === 'aFavor',
 )
 chequear(
   'búsqueda',
-  'una cuenta en cero no tiene facturas pendientes que listar',
-  soloCero.facturas.length === 0,
+  'una cuenta con saldo a favor no tiene facturas pendientes que listar',
+  soloAFavor.facturas.length === 0,
 )
 
 const soloMas60 = await buscarCobranza({ estados: ['aCobrar'], tramos: ['vencidoMas60'] })
@@ -405,10 +414,15 @@ chequear(
 )
 chequear(
   'pantalla',
-  'cada criterio ofrece sus opciones y la de "todos"',
-  ESTADOS_SALDO.every((e) => tablero.includes(e.label)) &&
-    TRAMOS_VENCIMIENTO.every((t) => tablero.includes(t.label)) &&
-    tablero.includes('Todos los estados de saldo') &&
+  'el saldo ofrece SÓLO a cobrar y a favor: ni saldo cero ni un "todos"',
+  OPCIONES_ESTADO_SALDO.every((e) => tablero.includes(e.label)) &&
+    !tablero.includes('Saldo Cero') &&
+    !tablero.includes('Todos los estados de saldo'),
+)
+chequear(
+  'pantalla',
+  'el vencimiento sí ofrece sus cinco tramos y la opción "todos"',
+  TRAMOS_VENCIMIENTO.every((t) => tablero.includes(t.label)) &&
     tablero.includes('Todos los estados de vencimiento'),
 )
 chequear(

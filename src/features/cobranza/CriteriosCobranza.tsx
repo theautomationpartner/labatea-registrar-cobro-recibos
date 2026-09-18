@@ -1,4 +1,8 @@
-import { ESTADOS_SALDO, TRAMOS_VENCIMIENTO } from '@/lib/cobranza'
+import {
+  ESTADOS_SALDO_BUSCABLES,
+  OPCIONES_ESTADO_SALDO,
+  TRAMOS_VENCIMIENTO,
+} from '@/lib/cobranza'
 import { useApp, useDispatch } from '@/state/hooks'
 import type { EstadoSaldo, TramoVencimiento } from '@/types'
 
@@ -26,8 +30,10 @@ interface CriteriosCobranzaProps {
  * la consulta la dispara el click en "Buscar", y hasta entonces lo que está abajo sigue siendo la
  * respuesta a la búsqueda anterior.
  *
- * Cada criterio ofrece además su opción "Todos", que es con la que el tablero abre: la pregunta con
- * la que se entra a cobrar es "quién me debe", sin acotar por tramo.
+ * El estado del saldo se elige de a UNO —o las cuentas que deben, o las que tienen saldo a favor—:
+ * son dos preguntas distintas y juntarlas daría una lista que no se puede accionar. El vencimiento,
+ * en cambio, ofrece además su opción "Todos", que es con la que el tablero abre: la pregunta con la
+ * que se entra a cobrar es "quién me debe", sin acotar por tramo.
  *
  * Cambiar un campo NO avisa nada: el botón "Buscar" al lado ya dice qué falta hacer, y un cartel
  * saltando con cada cambio de select era ruido en el camino de armar la consulta.
@@ -37,17 +43,14 @@ export function CriteriosCobranza({ cargando, onBuscar }: CriteriosCobranzaProps
   const dispatch = useDispatch()
   const { estados, tramos } = cobranzaCriterio
 
-  /* El criterio viaja como LISTA —así lo consulta el servicio y así se cachea—, y el select maneja
-     un valor solo: "todas las opciones" es la lista entera, y una opción elegida es una lista de
+  /* El criterio viaja como LISTA —así lo consulta el servicio y así se cachea— y los selects manejan
+     un valor solo: "todos los vencimientos" es la lista entera, y una opción elegida es una lista de
      uno. La traducción vive acá, que es el único lugar donde el criterio se elige de a uno. */
-  const valorEstado = estados.length === ESTADOS_SALDO.length ? TODOS : (estados[0] ?? TODOS)
+  const valorEstado = estados[0] ?? ESTADOS_SALDO_BUSCABLES[0]
   const valorTramo = tramos.length === TRAMOS_VENCIMIENTO.length ? TODOS : (tramos[0] ?? TODOS)
 
   const elegirEstado = (valor: string) =>
-    dispatch({
-      type: 'setCobranzaEstados',
-      estados: valor === TODOS ? ESTADOS_SALDO.map((e) => e.valor) : [valor as EstadoSaldo],
-    })
+    dispatch({ type: 'setCobranzaEstados', estados: [valor as EstadoSaldo] })
 
   const elegirTramo = (valor: string) =>
     dispatch({
@@ -69,8 +72,7 @@ export function CriteriosCobranza({ cargando, onBuscar }: CriteriosCobranzaProps
             value={valorEstado}
             onChange={(e) => elegirEstado(e.target.value)}
           >
-            <option value={TODOS}>Todos los estados de saldo</option>
-            {ESTADOS_SALDO.map((e) => (
+            {OPCIONES_ESTADO_SALDO.map((e) => (
               <option key={e.valor} value={e.valor}>
                 {e.label}
               </option>
