@@ -91,8 +91,11 @@ export const EQUIPO_PAGO_PROVEEDORES_ID = '1501065'
 export const esDelEquipoProveedores = (u: UsuarioActual | null): boolean =>
   !!u && (u.equipoIds ?? []).includes(EQUIPO_PAGO_PROVEEDORES_ID)
 
-/** Todos los módulos, en el orden en que los ofrece el encabezado. */
-const OPERACIONES: readonly OperacionApp[] = ['COBROS', 'PASES', 'PAGOS', 'RECHAZOS']
+/**
+ * Todos los módulos, en el orden en que los ofrece el encabezado. RESUMEN es para todos, como
+ * COBROS: documenta la cuenta de un CLIENTE y no mueve saldo de nadie.
+ */
+const OPERACIONES: readonly OperacionApp[] = ['COBROS', 'PASES', 'PAGOS', 'RECHAZOS', 'RESUMEN']
 
 /** Los que sólo existen para el equipo. PASES no está: es compartido (ver `ladosDePase`). */
 const OPERACIONES_DEL_EQUIPO: readonly OperacionApp[] = ['PAGOS', 'RECHAZOS']

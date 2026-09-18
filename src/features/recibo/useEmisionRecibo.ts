@@ -65,6 +65,9 @@ export function useEmision<D>(documento: Emisible<D>) {
      ventana el botón todavía no se volvió a renderizar. Sin este cerrojo, dos clicks seguidos
      crearían DOS recibos en el tablero. */
   const enVueloRef = useRef(false)
+  /* La fase, leída desde `emitir` sin volver a crear el callback en cada avance del sondeo. */
+  const faseRef = useRef(fase)
+  faseRef.current = fase
 
   /**
    * Escribe el recibo y le pide la emisión al tablero. Al volver deja la fase en `emitiendo`, que
@@ -73,7 +76,9 @@ export function useEmision<D>(documento: Emisible<D>) {
   const emitir = useCallback(
     async (datos: D) => {
       // Con un recibo ya creado no se reintenta: volver a emitir duplicaría el ítem y sus subítems.
-      if (idRef.current || enVueloRef.current) return
+      // La excepción es el documento que no crea ítem y cuyo intento terminó en error.
+      if (enVueloRef.current) return
+      if (idRef.current && !(documento.reemitibleTrasError && faseRef.current === 'error')) return
       enVueloRef.current = true
       dispatch(documento.parchear({ fase: 'creando', error: null }))
       setIncompleto(null)
@@ -179,7 +184,9 @@ export function useEmision<D>(documento: Emisible<D>) {
               fase: 'error',
               error: {
                 estado: actual.label || 'Emisión sin terminar',
-                mensaje: `La emisión no terminó dentro del tiempo de espera. ${documento.nombre === 'el recibo' ? 'El recibo ya está creado' : 'La orden ya está creada'}: revisá su estado en Monday antes de volver a intentarlo.`,
+                mensaje:
+                  documento.avisoSinTerminar ??
+                  `La emisión no terminó dentro del tiempo de espera. ${documento.nombre === 'el recibo' ? 'El recibo ya está creado' : 'La orden ya está creada'}: revisá su estado en Monday antes de volver a intentarlo.`,
               },
             }),
           )
@@ -219,7 +226,8 @@ export function useEmision<D>(documento: Emisible<D>) {
     incompleto,
     emitir,
     /** El documento todavía no se creó, así que un intento fallido se puede repetir sin duplicar nada. */
-    puedeReintentar: fase === 'error' && itemIdGuardado === null,
+    puedeReintentar:
+      fase === 'error' && (itemIdGuardado === null || documento.reemitibleTrasError === true),
     limpiarIncompleto: useCallback(() => setIncompleto(null), []),
   }
 }

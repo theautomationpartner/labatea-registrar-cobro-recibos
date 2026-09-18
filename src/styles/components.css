@@ -544,7 +544,10 @@
   border-radius: 4px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 100;
-  margin-top: 4px;
+  /* PEGADO al input, sin hueco: el menú es la continuación del control que lo abrió, no una tarjeta
+     aparte. El -1px monta su borde superior sobre el inferior del input, así entre los dos queda UNA
+     línea y no dos pegadas, que a simple vista se leen como una separación igual. */
+  margin-top: -1px;
   max-height: 250px;
   overflow-y: auto;
 }

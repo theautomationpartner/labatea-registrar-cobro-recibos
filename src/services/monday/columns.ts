@@ -5,7 +5,7 @@
  * en un servicio.
  */
 
-import type { CajaPago, FormaPago, FormatoCheque } from '@/types'
+import type { CajaPago, FormaPago, FormatoCheque, FormatoResumen } from '@/types'
 
 /**
  * Valor de una columna `people` de Monday. Se arma con el id numérico del usuario; con un id que no
@@ -27,6 +27,13 @@ export const BOARDS = {
   cobrosSub: 18421035599,
   /** "💰Fact Vtas Pends de Cobro": las ventas pendientes de cobro del cliente. */
   factPendientes: 18421035508,
+  /**
+   * "💰Fact Vtas Pends de Cobro 100% COBRADAS" (18426493714): a donde pasa la factura cuando se
+   * termina de cobrar. Es un espejo del de pendientes con los MISMOS ids de columna (verificado
+   * contra los dos tableros), y el RESUMEN DE CTA CTE lo mira igual que al otro: la venta de un
+   * movimiento viejo de la cuenta suele estar ya acá.
+   */
+  factPendientesCobradas: 18426493714,
   /** "💳Ctas Bancarias Personas": las cuentas desde las que el cliente transfiere. */
   ctasBancarias: 18421723667,
   /** "📈Ventas": la venta cerrada. */
@@ -122,6 +129,19 @@ export const FACT_PENDIENTE_ESTADO_INDEX = {
   canceladaParcialmente: 0,
   cancelada: 1,
   pendienteDeCobro: 2,
+} as const
+
+/**
+ * Índices de "🤖Estado de Vencimiento" (color_mm6symyx) en "💰Fact Vtas Pends de Cobro". Leídos del
+ * tablero: {"0":"Vencido 0 a 15 Dias","1":"No vencido","2":"Vencido 15 a 30 dias","3":"Vencido + 60",
+ * "4":"Vencido + 30 - 60  Dias"}. No siguen el orden de gravedad, así que se agrupan por índice.
+ */
+export const ESTADO_VENCIMIENTO_INDEX = {
+  noVencido: 1,
+  vencido0a15: 0,
+  vencido15a30: 2,
+  vencido30a60: 4,
+  vencidoMas60: 3,
 } as const
 
 /**
@@ -223,6 +243,75 @@ export const CHEQUE_CARTERA_ESTADO_INDEX = {
 export const MOVIMIENTO_CTA_CTE_INDEX = {
   rechazoChequeCliente: 7,
   rechazoChequeProveedor: 6,
+} as const
+
+/**
+ * TODAS las etiquetas de "🤖Movimiento" (color_mm5z46ht) en la cuenta de CLIENTES. Leídas del
+ * tablero: {"0":"Anticipo","1":"Cobro","2":"Debito x Pase de Saldo","3":"Vta Pend de Cobro",
+ * "4":"Credito x Pase de Saldo","6":"Saldo Inicial","7":"Rechazo de Cheque"}.
+ *
+ * El RESUMEN DE CTA CTE decide con ellas cómo se nombra cada movimiento (ver
+ * `comprobanteDeMovimiento`). Van por ÍNDICE y no por rótulo. Y es la etiqueta la que clasifica, no
+ * la conexión del "🤖Origen": un COBRO también linkea la factura que canceló.
+ */
+export const MOVIMIENTO_CTA_CTE_CLIENTE_INDEX = {
+  anticipo: 0,
+  cobro: 1,
+  debitoPase: 2,
+  ventaPendiente: 3,
+  creditoPase: 4,
+  saldoInicial: 6,
+  rechazoCheque: 7,
+} as const
+
+/**
+ * Formato de la app → ids de etiqueta de "🤖Formato Archivo Resumen Cta Cte" (dropdown_mm76p5gd).
+ * Leídos del tablero: [{"id":1,"name":"PDF"},{"id":2,"name":"Excel"}].
+ *
+ * "Ambos" no es una etiqueta del tablero: la columna es multi-valor, así que se mandan las dos —mismo
+ * criterio que el "Ambos" del medio de envío—.
+ */
+export const FORMATO_RESUMEN_IDS: Record<FormatoResumen, number[]> = {
+  PDF: [1],
+  Excel: [2],
+  Ambos: [1, 2],
+}
+
+/**
+ * Índices de "🤖Estado Resumen Cta Cte" (color_mm76s2eq) de la cuenta corriente. Leídos del
+ * tablero: {"0":"Generando","1":"Generado","2":"Error - Ver Update","3":"Generar"}.
+ *
+ * La app escribe UNO solo —"Generar"—, que es lo que dispara la automatización; el resto lo mueve el
+ * tablero y la app sólo los lee.
+ */
+export const ESTADO_RESUMEN_INDEX = {
+  generar: 3,
+  generando: 0,
+  generado: 1,
+  error: 2,
+} as const
+
+/**
+ * Medio de envío de la app → ids de etiqueta de "🤖Medio de Envio" (dropdown_mm76hb6t). Leídos del
+ * tablero: [{"id":1,"name":"Email"},{"id":2,"name":"Whatsapp"}]. "Ambos" no es una etiqueta: la
+ * columna es multi-valor, así que se mandan las dos.
+ */
+export const MEDIO_ENVIO_RESUMEN_IDS: Record<'Email' | 'WhatsApp' | 'Ambos', number[]> = {
+  Email: [1],
+  WhatsApp: [2],
+  Ambos: [1, 2],
+}
+
+/**
+ * Índices de "🤖Estado de Envio Resumen Cta Cte" (color_mm76ca15). Leídos del tablero:
+ * {"0":"Enviando","1":"Enviado","2":"Error de Envio","3":"Enviar"}. La app escribe "Enviar"; el resto
+ * lo mueve el tablero.
+ */
+export const ESTADO_ENVIO_RESUMEN_INDEX = {
+  enviar: 3,
+  enviando: 0,
+  enviado: 1,
+  error: 2,
 } as const
 
 /**
@@ -420,6 +509,8 @@ export const COL = {
     pendiente: 'formula_mkwbrnk1',
     /** "🤖Estado": ver `FACT_PENDIENTE_ESTADO_INDEX`. */
     estado: 'color_mkwb727e',
+    /** "🤖Estado de Vencimiento" (status): lo mueve el tablero. Ver `ESTADO_VENCIMIENTO_INDEX`. */
+    estadoVencimiento: 'color_mm6symyx',
   },
   /* "📈Ventas" (18421035510). Lo ÚNICO que la factura pendiente busca acá es el NOMBRE de la venta
      que dejó la deuda, a través de la relación `factPendiente.venta`. Las fechas ya no: viven en la
@@ -446,6 +537,18 @@ export const COL = {
     pendiente: 'formula_mm641qex',
     /** "🤖Estado": ver `ANTICIPO_ESTADO_INDEX`. */
     estado: 'color_mm64qza0',
+    /**
+     * "🤖ID Anticipo" (item_id CON contador): el código que ve el usuario, "ANTICIPO-020". Tiene
+     * prefijo configurado en el tablero, así que su `text` trae el código y no el id crudo
+     * (verificado contra el board).
+     */
+    idAnticipo: 'pulse_id_mm65wm5',
+    /**
+     * "link to Subelementos de 💵Cta Cte Cliente" (board_relation): el movimiento de la cuenta que
+     * generó este anticipo. Es uno de los caminos con los que el RESUMEN DE CTA CTE encuentra el
+     * "🤖ID Anticipo" de un movimiento "Anticipo".
+     */
+    movimientoCtaCte: 'board_relation_mm6z142e',
   },
   /* Board de Cta Cte. El crédito se arma con las columnas BASE, no con las fórmulas del tablero:
      así la app no depende de que el board las tenga al día. Las mirror se leen por `display_value`
@@ -780,6 +883,38 @@ export const COL = {
     ventasPendCancelar: 'numeric_mm677127',
     /** "Anticipo pend de Aplicar" (numbers): ANTICIPOS PENDS DE APLICAR, el saldo a favor sin usar. */
     anticiposPendAplicar: 'numeric_mm67j0rv',
+    /**
+     * "🤖Formato Archivo Resumen Cta Cte" (dropdown): en qué formato se genera el resumen. Se escribe
+     * por ID de etiqueta (ver `FORMATO_RESUMEN_IDS`).
+     */
+    formatoResumen: 'dropdown_mm76p5gd',
+    /**
+     * "🤖Fecha Desde" y "🤖Fecha Hasta" (date): el PERÍODO que abarca el resumen, las dos puntas del
+     * rango elegido en el paso 2. Se escriben junto con el formato, antes de pedir la generación: la
+     * automatización lee el ítem para saber qué movimientos documentar.
+     */
+    fechaDesdeResumen: 'date_mm7643hk',
+    fechaHastaResumen: 'date_mm76jbba',
+    /**
+     * "🤖Incluye Estado Cta Cte" (checkbox): tildado si en el paso 1 se eligió INCLUIR, destildado si
+     * se eligió NO INCLUIR. Le dice a la automatización si genera también el estado de cuenta.
+     */
+    incluyeEstadoResumen: 'boolean_mm767m9h',
+    /**
+     * "🤖Estado Resumen Cta Cte" (status): el semáforo de la generación del resumen. La app lo pone
+     * en "Generar" y lo mueve el TABLERO (ver `ESTADO_RESUMEN_INDEX`).
+     */
+    estadoResumen: 'color_mm76s2eq',
+    /** "🤖Medio de Envio" (dropdown multi-valor): Email y/o Whatsapp. Ver `MEDIO_ENVIO_RESUMEN_IDS`. */
+    medioEnvioResumen: 'dropdown_mm76hb6t',
+    /** "🤖Contactos" (board_relation → Contactos 18420688239): a quiénes se les manda el resumen. */
+    contactosResumen: 'board_relation_mm767f4p',
+    /**
+     * "🤖Estado de Envio Resumen Cta Cte" (status): el semáforo del envío. La app lo pone en "Enviar"
+     * —con el medio y los contactos ya escritos— y lo mueve el TABLERO (ver
+     * `ESTADO_ENVIO_RESUMEN_INDEX`).
+     */
+    estadoEnvioResumen: 'color_mm76ca15',
   },
   /**
    * SUBELEMENTOS de la cuenta corriente: un ítem por MOVIMIENTO de la cuenta. Los ids son los MISMOS
@@ -807,6 +942,17 @@ export const COL = {
      * saldo inicial.
      */
     saldoFinal: 'formula_mm5zgrq9',
+    /**
+     * "🤖Fecha Emision" (date, ISO): la fecha del comprobante que originó el movimiento. Es por la que
+     * el RESUMEN DE CTA CTE decide si el movimiento cae dentro del período pedido.
+     */
+    fechaEmision: 'date_mm76y2xw',
+    /**
+     * "🤖Origen" (board_relation): el ítem que originó el movimiento. Conecta con varios tableros
+     * —facturas pendientes y cobradas, recibos, anticipos y cheques—, así que para saber QUÉ es hay
+     * que pedir el tablero del vinculado.
+     */
+    origen: 'board_relation_mm5z1sce',
   },
   /* ===== PAGOS =====
      "❓ Facturas Compra Pend de Pago" (18425512701): una fila por factura de compra que quedó

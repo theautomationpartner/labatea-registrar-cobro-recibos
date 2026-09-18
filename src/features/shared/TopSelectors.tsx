@@ -17,6 +17,7 @@ const ROTULO: Record<OperacionApp, string> = {
   PASES: 'PASES DE SALDO',
   PAGOS: 'PAGOS',
   RECHAZOS: 'RECHAZO DE CHEQUE',
+  RESUMEN: 'RESUMEN DE CTA CTE',
 }
 
 /**

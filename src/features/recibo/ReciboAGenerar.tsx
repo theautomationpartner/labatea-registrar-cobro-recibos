@@ -123,8 +123,8 @@ interface ReciboAGenerarProps {
   children?: ReactNode
 }
 
-/** Métrica de la cabecera: rótulo chico arriba y el dato debajo. */
-function Dato({ rotulo, children, fuerte }: { rotulo: string; children: ReactNode; fuerte?: boolean }) {
+/** Métrica de la cabecera: rótulo chico arriba y el dato debajo. Lo reusa el resumen de Cta Cte. */
+export function Dato({ rotulo, children, fuerte }: { rotulo: string; children: ReactNode; fuerte?: boolean }) {
   return (
     <div className="comp-head-dato">
       <span className="comp-head-lbl">{rotulo}</span>

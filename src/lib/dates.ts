@@ -22,6 +22,26 @@ export function desdeIso(value: string): string {
   return fecha ? `${pad(fecha.getDate())}/${pad(fecha.getMonth() + 1)}/${fecha.getFullYear()}` : ''
 }
 
+/** yyyy-MM-dd → dd/MM/yy, la fecha corta de un documento. Vacío sin fecha completa. */
+export function desdeIsoCorta(value: string): string {
+  const fecha = parseIso(value)
+  return fecha
+    ? `${pad(fecha.getDate())}/${pad(fecha.getMonth() + 1)}/${String(fecha.getFullYear()).slice(-2)}`
+    : ''
+}
+
+/** yyyy-MM-dd → dd/MM, sin año: el vencimiento al lado de una fecha que ya lo dice. */
+export function desdeIsoDiaMes(value: string): string {
+  const fecha = parseIso(value)
+  return fecha ? `${pad(fecha.getDate())}/${pad(fecha.getMonth() + 1)}` : ''
+}
+
+/** La fecha de HOY en yyyy-MM-dd, con los componentes locales (no `toISOString`, que es UTC). */
+export function hoyIso(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
 /**
  * dd/MM/yyyy → Date local a medianoche. Es el reverso de `desdeIso`: las fechas que el usuario carga
  * (vencimiento del cheque, emisión, vencimiento del plástico) viven en el estado con el formato del

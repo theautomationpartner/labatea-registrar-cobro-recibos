@@ -16,6 +16,7 @@ import {
   asignarDestinoEnvioOP,
   dispararEnvioOP,
   dispararEnvioRecibo,
+  enviarResumenCtaCte,
   reciboPdfGenerado,
   seguirEnvioOP,
   seguirEnvioRecibo,
@@ -77,6 +78,17 @@ export interface ComprobanteEnviable {
    * la función de envío queda inhabilitada por completo.
    */
   exigeContactoQueAcepta?: boolean
+  /**
+   * Cómo se elige el medio:
+   *
+   *   · `selector`         · el desplegable Email / WhatsApp / Ambos. Es el de siempre.
+   *   · `emailConWhatsapp` · el de la FACTURA en la app de operaciones de venta: el Email va SIEMPRE
+   *                          y WhatsApp se suma con un check. Tildarlo es "Ambos". Como el Email es
+   *                          obligatorio, un contacto elegido sin email frena el envío y se nombra.
+   *
+   * Sin valor, `selector`.
+   */
+  modoEnvio?: 'selector' | 'emailConWhatsapp'
   /**
    * Qué se dice cuando NO hay a quién enviarle. Vive acá y no dentro del componente por el mismo
    * motivo que el resto de este archivo: es lo que distingue a un comprobante de otro, y el
@@ -176,9 +188,48 @@ const ORDEN_PAGO: ComprobanteEnviable = {
   },
 }
 
+/**
+ * RESUMEN DE CTA CTE. Se envía como la FACTURA de la app de operaciones de venta: Email siempre y
+ * WhatsApp opcional (ver `modoEnvio`).
+ *
+ * Sólo se ofrecen los contactos que declaran "Resumen Cta Cte" en su "✋Para Enviar"
+ * (dropdown_mm57p8ja): un resumen de cuenta es información sensible, y sumar a mano a alguien que no
+ * lo declaró no es una decisión que corresponda tomar desde acá.
+ *
+ * NO frena por crédito: a un cliente bloqueado o excedido es justamente a quien más sentido tiene
+ * mandarle el estado de su cuenta.
+ */
+const RESUMEN_CTA_CTE: ComprobanteEnviable = {
+  id: 'resumenCtaCte',
+  articulo: 'el',
+  nombre: 'resumen de cuenta corriente',
+  etiquetaContacto: 'Resumen Cta Cte',
+  itemId: (s) => s.resumenCtaCteId,
+  /* Emitido es que el tablero TERMINÓ de generarlo, no que se haya pedido: hasta ahí no hay archivo
+     que mandar. */
+  emitido: (s) => s.emisionResumen.fase === 'emitido' && Boolean(s.resumenCtaCteId),
+  frenaPorCredito: false,
+  titular: (s) => s.cliente,
+  exigeContactoQueAcepta: true,
+  modoEnvio: 'emailConWhatsapp',
+  sinContactos: {
+    titulo: 'No hay contactos que acepten recibir el resumen de cuenta corriente',
+    mensaje: (titular) =>
+      `${titular} NO tiene ningún contacto con "Resumen Cta Cte" asignado en "Para Enviar", así que no es posible realizar el envío. Asignáselo a al menos un contacto en el tablero de Contactos y volvé a reintentar.`,
+  },
+  /* Se despacha desde el ítem de la cuenta corriente: ahí viven el medio, los contactos y el
+     semáforo del envío (ver `enviarResumenCtaCte`). No se comprueba el archivo antes, como sí hace
+     el recibo: `emitido` ya exige que el tablero haya cerrado la generación en "Generado". */
+  async enviar({ itemId, contactoIds, medio, onProgreso }) {
+    const final = await enviarResumenCtaCte({ itemId, medio, contactoIds, onProgreso })
+    return { estado: final }
+  },
+}
+
 const CATALOGO: Record<string, ComprobanteEnviable> = {
   [RECIBO.id]: RECIBO,
   [ORDEN_PAGO.id]: ORDEN_PAGO,
+  [RESUMEN_CTA_CTE.id]: RESUMEN_CTA_CTE,
 }
 
 /**

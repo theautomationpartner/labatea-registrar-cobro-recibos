@@ -15,6 +15,9 @@ export const ETAPA = {
   destino: 'Seleccionar Cuenta Destino',
   chequeRechazado: 'Seleccionar Cheque Rechazado',
   proveedorAcreedor: 'Seleccionar Proveedor Acreedor',
+  rangoFechas: 'Seleccionar Rango de Fechas',
+  estadoCtaCte: 'Facturas que debe',
+  resumenCtaCte: 'Emitir y Enviar',
 } as const
 
 /** Etiquetas que PISAN a las de `ETAPA` en el recorrido del anticipo. */
@@ -51,6 +54,20 @@ const ETAPA_RECHAZOS: Partial<Record<Paso, string>> = {
   cliente: 'Seleccionar Cliente Deudor',
 }
 
+/** Etiquetas que PISAN a las de `ETAPA` en un RESUMEN DE CTA CTE. */
+const ETAPA_RESUMEN: Partial<Record<Paso, string>> = {
+  cliente: 'Seleccionar Cliente',
+}
+
+/** Qué etiquetas propias tiene cada recorrido. Los que no figuran usan las de `ETAPA` tal cual. */
+const ETAPAS_PROPIAS: Partial<Record<TipoOperacion, Partial<Record<Paso, string>>>> = {
+  anticipo: ETAPA_ANTICIPO,
+  aplicacion: ETAPA_APLICACION,
+  pases: ETAPA_PASES,
+  rechazos: ETAPA_RECHAZOS,
+  resumen: ETAPA_RESUMEN,
+}
+
 
 /**
  * Etapas de cada operación, en orden. El ANTICIPO no pasa por "Seleccionar Vtas Pend de Cobro": no
@@ -75,36 +92,43 @@ const RECORRIDO: Record<TipoOperacion, readonly Paso[]> = {
      La última cierra la operación: el rechazo se registra ahí mismo, sin una pantalla de resultado
      que sólo repetiría lo que ya está en pantalla. */
   rechazos: ['cliente', 'chequeRechazado', 'proveedorAcreedor'],
+  /* RESUMEN DE CTA CTE: se documenta la cuenta corriente de un cliente, sin mover saldo. CUATRO
+     etapas: A QUIÉN (el cliente, con el estado de cuenta declarado), QUÉ PERÍODO (con sus
+     movimientos a la vista), las FACTURAS QUE DEBE con su vencimiento y la EMISIÓN con su envío,
+     que cierra la operación. */
+  resumen: ['cliente', 'rangoFechas', 'estadoCtaCte', 'resumenCtaCte'],
 }
+
+/**
+ * El RESUMEN DE CTA CTE sin el estado de la cuenta corriente. "Facturas que debe" es una etapa
+ * OPCIONAL: existe sólo si en el paso 1 se eligió emitir el resumen CON el estado. Si no, no hay
+ * facturas que listar y el recorrido salta del período directo a la emisión.
+ */
+const RECORRIDO_RESUMEN_SIN_ESTADO: readonly Paso[] = ['cliente', 'rangoFechas', 'resumenCtaCte']
 
 /**
  * Recorrido vigente. Sin operación elegida se usa el del COBRO: es el recorrido completo, así que
  * el stepper muestra todas las etapas mientras el usuario todavía no decidió qué registrar.
+ *
+ * `incluyeEstado` sólo pesa en el RESUMEN DE CTA CTE, y arranca en false porque el estado de la
+ * cuenta es opcional: mientras nadie lo pida, la etapa no existe. De este dato salen el stepper,
+ * la numeración de los títulos y los botones de avanzar y volver, así que toda la app se entera
+ * de la misma manera.
  */
-export const pasosDe = (tipo: TipoOperacion | null): readonly Paso[] => RECORRIDO[tipo ?? 'cobro']
+export const pasosDe = (tipo: TipoOperacion | null, incluyeEstado = false): readonly Paso[] =>
+  tipo === 'resumen' && !incluyeEstado ? RECORRIDO_RESUMEN_SIN_ESTADO : RECORRIDO[tipo ?? 'cobro']
 
 /** Etiquetas del stepper para una operación, en orden. */
-export const etiquetasDe = (tipo: TipoOperacion | null): string[] =>
-  pasosDe(tipo).map((p) => etiquetaDePaso(p, tipo))
+export const etiquetasDe = (tipo: TipoOperacion | null, incluyeEstado = false): string[] =>
+  pasosDe(tipo, incluyeEstado).map((p) => etiquetaDePaso(p, tipo))
 
 /**
  * Cómo se llama una etapa en ESTA operación. El mismo paso `cobro` es "Registrar Cobro" cuando se
  * cancelan facturas y "Registrar Anticipo" cuando el cliente entrega dinero a cuenta: es el mismo
  * lugar del recorrido, con otro nombre.
  */
-export const etiquetaDePaso = (paso: Paso, tipo: TipoOperacion | null): string => {
-  const propia =
-    tipo === 'anticipo'
-      ? ETAPA_ANTICIPO
-      : tipo === 'aplicacion'
-        ? ETAPA_APLICACION
-        : tipo === 'pases'
-          ? ETAPA_PASES
-          : tipo === 'rechazos'
-            ? ETAPA_RECHAZOS
-            : undefined
-  return propia?.[paso] ?? ETAPA[paso]
-}
+export const etiquetaDePaso = (paso: Paso, tipo: TipoOperacion | null): string =>
+  (tipo ? ETAPAS_PROPIAS[tipo]?.[paso] : undefined) ?? ETAPA[paso]
 
 /**
  * Bajada del paso "destino". Es una PLANTILLA y no un texto fijo porque nombra el IMPORTE que se
@@ -116,6 +140,13 @@ export const etiquetaDePaso = (paso: Paso, tipo: TipoOperacion | null): string =
  */
 export const descripcionDestino = (loQueRecibe: string): string =>
   `Buscá la cuenta que va a recibir los ${loQueRecibe} pesos seleccionados en el paso anterior`
+
+/**
+ * Bajada de la etapa "Facturas que debe" del RESUMEN DE CTA CTE. Es una PLANTILLA porque nombra al
+ * cliente, que sólo se conoce en tiempo de ejecución; sin cliente se usa la de `DESCRIPCION`.
+ */
+export const descripcionFacturasQueDebe = (cliente: string): string =>
+  `A continuación se listarán las facturas que ${cliente} te debe y con qué vencimiento:`
 
 /**
  * Bajada de cada etapa: la explicación que acompaña al título del paso. Vive junto a las etiquetas
@@ -133,6 +164,14 @@ export const DESCRIPCION: Record<Paso, string> = {
   chequeRechazado: 'Elegí entre los cheques ya usados del cliente el que el banco rechazó.',
   proveedorAcreedor:
     'Buscá al proveedor al que se le había endosado el cheque: se le vuelve a deber su importe.',
+  rangoFechas: 'Elegí el período del resumen y revisá los movimientos de la cuenta corriente que incluye.',
+  estadoCtaCte: 'A continuación se listarán las facturas que el cliente te debe y con qué vencimiento:',
+  resumenCtaCte: 'Emití el resumen de cuenta corriente y enviáselo al cliente.',
+}
+
+/** Bajadas que PISAN a las de `DESCRIPCION` en un RESUMEN DE CTA CTE. */
+const DESCRIPCION_RESUMEN: Partial<Record<Paso, string>> = {
+  cliente: 'Indicá si el resumen va con el estado de la cuenta corriente y buscá el cliente.',
 }
 
 /** Bajadas que PISAN a las de `DESCRIPCION` en un PASE DE SALDO. Neutras como sus etiquetas: el
@@ -159,19 +198,16 @@ const DESCRIPCION_ANTICIPO: Partial<Record<Paso, string>> = {
 }
 
 /** La bajada de la etapa en ESTA operación. */
-export const descripcionDePaso = (paso: Paso, tipo: TipoOperacion | null): string => {
-  const propia =
-    tipo === 'anticipo'
-      ? DESCRIPCION_ANTICIPO
-      : tipo === 'aplicacion'
-        ? DESCRIPCION_APLICACION
-        : tipo === 'pases'
-          ? DESCRIPCION_PASES
-          : tipo === 'rechazos'
-            ? DESCRIPCION_RECHAZOS
-            : undefined
-  return propia?.[paso] ?? DESCRIPCION[paso]
+const DESCRIPCIONES_PROPIAS: Partial<Record<TipoOperacion, Partial<Record<Paso, string>>>> = {
+  anticipo: DESCRIPCION_ANTICIPO,
+  aplicacion: DESCRIPCION_APLICACION,
+  pases: DESCRIPCION_PASES,
+  rechazos: DESCRIPCION_RECHAZOS,
+  resumen: DESCRIPCION_RESUMEN,
 }
+
+export const descripcionDePaso = (paso: Paso, tipo: TipoOperacion | null): string =>
+  (tipo ? DESCRIPCIONES_PROPIAS[tipo]?.[paso] : undefined) ?? DESCRIPCION[paso]
 
 /**
  * En qué posición del recorrido cae una etapa. Es lo que cada vista usa para marcarse como actual y
@@ -180,24 +216,39 @@ export const descripcionDePaso = (paso: Paso, tipo: TipoOperacion | null): strin
  *
  * Sin la etapa en el recorrido devuelve 0: es preferible marcar la primera antes que romper.
  */
-export function indiceDePaso(paso: Paso, tipo: TipoOperacion | null = null): number {
-  const i = pasosDe(tipo).indexOf(paso)
+export function indiceDePaso(
+  paso: Paso,
+  tipo: TipoOperacion | null = null,
+  incluyeEstado = false,
+): number {
+  const i = pasosDe(tipo, incluyeEstado).indexOf(paso)
   return i >= 0 ? i : 0
 }
 
 /** Número de paso que se muestra en pantalla (1-based), el mismo que marca el stepper. */
-export const numeroDePaso = (paso: Paso, tipo: TipoOperacion | null = null): number =>
-  indiceDePaso(paso, tipo) + 1
+export const numeroDePaso = (
+  paso: Paso,
+  tipo: TipoOperacion | null = null,
+  incluyeEstado = false,
+): number => indiceDePaso(paso, tipo, incluyeEstado) + 1
 
 /** La etapa que sigue en ESTE recorrido, o `null` si la actual es la última. */
-export function siguientePaso(paso: Paso, tipo: TipoOperacion | null): Paso | null {
-  const recorrido = pasosDe(tipo)
+export function siguientePaso(
+  paso: Paso,
+  tipo: TipoOperacion | null,
+  incluyeEstado = false,
+): Paso | null {
+  const recorrido = pasosDe(tipo, incluyeEstado)
   return recorrido[recorrido.indexOf(paso) + 1] ?? null
 }
 
 /** La etapa anterior en ESTE recorrido, o `null` si la actual es la primera. */
-export function pasoAnterior(paso: Paso, tipo: TipoOperacion | null): Paso | null {
-  const recorrido = pasosDe(tipo)
+export function pasoAnterior(
+  paso: Paso,
+  tipo: TipoOperacion | null,
+  incluyeEstado = false,
+): Paso | null {
+  const recorrido = pasosDe(tipo, incluyeEstado)
   const i = recorrido.indexOf(paso)
   return i > 0 ? recorrido[i - 1] : null
 }

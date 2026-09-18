@@ -262,6 +262,16 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+/*
+ * Envío HECHO: el botón queda deshabilitado, pero su verde tiene que ser el MISMO que el del
+ * documento emitido —el otro botón de la etapa—. Sin esto, el 0.5 de `:disabled` lo aclara y los
+ * dos verdes se leen distintos. Se apaga sólo la transparencia: el gris de "sin destinatarios" y
+ * el resto de los bloqueados siguen atenuados, que es lo que los marca como no accionables.
+ */
+.btn-block--ok:disabled {
+  opacity: 1;
+  cursor: default;
+}
 /* Envío: ancho fijo, no ocupa el ancho de la card. */
 .btn-block--enviar {
   width: 275px;
@@ -299,4 +309,122 @@
  */
 .selc > .envio-sin-contactos {
   margin-top: 0;
+}
+
+/* ===== Email siempre, WhatsApp opcional =====
+   Portado de la app de operaciones de venta (el envío de la FACTURA). Lo usa todo comprobante con
+   `modoEnvio: 'emailConWhatsapp'`: el Email fijo y la pregunta sí/no para sumar WhatsApp. */
+/* El rótulo y el Email van en la MISMA línea: el medio no se elige, se informa. */
+.envio-medio-linea {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.envio-medio-lbl {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dark, #323338);
+}
+.envio-medio-fijo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border: 1px solid var(--tint-neutral-bd, #e4e7ec);
+  border-radius: 8px;
+  background: var(--tint-neutral, #f7f8fa);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-dark, #323338);
+}
+.envio-medio-fijo i {
+  color: var(--primary-blue, #0073ea);
+}
+.dpago-check {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+/* Envío ya hecho: la pregunta queda congelada. */
+.dpago-check--off {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+/* El input real se oculta pero sigue siendo el que recibe foco y teclado (accesible). */
+.dpago-check-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+/* El cuadradito. Sin tildar va en blanco; tildado, verde lleno con la tilde en blanco. */
+.dpago-check-box {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border: 2px solid var(--border, #d0d4e4);
+  border-radius: 5px;
+  background: var(--bg, #fff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+  color: transparent;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.dpago-check-box--on {
+  background: var(--green, #00c875);
+  border-color: var(--green, #00c875);
+  color: #fff;
+}
+/* Foco por teclado: anillo alrededor del cuadradito (el input está oculto y no lo puede mostrar). */
+.dpago-check-input:focus-visible + .dpago-check-box {
+  outline: 2px solid var(--purple, #6200ee);
+  outline-offset: 2px;
+}
+.dpago-check-txt {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text-dark, #323338);
+}
+/* `.igp label` le impone `display: block`: acá se le devuelve la fila, sólo para este control. */
+.igp .envio-wsp-check {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0;
+  padding-top: 12px;
+}
+
+/* ===== Avisos del envío, a la derecha del botón ===== */
+.enviar-avisos {
+  flex: 1 1 320px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.enviar-aviso {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-gray);
+}
+/* El ícono no se achica cuando el texto ocupa dos renglones. */
+.enviar-aviso i {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+.enviar-aviso--err {
+  color: var(--red);
 }

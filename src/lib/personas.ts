@@ -122,4 +122,5 @@ export const ROTULO_OPERACION: Record<OperacionApp, string> = {
   PASES: 'PASE DE SALDO',
   PAGOS: 'PAGOS',
   RECHAZOS: 'RECHAZO DE CHEQUE',
+  RESUMEN: 'RESUMEN DE CTA CTE',
 }

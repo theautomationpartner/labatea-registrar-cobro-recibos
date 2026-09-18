@@ -83,7 +83,8 @@ interface FilaProps {
   children: ReactNode
 }
 
-function Fila({ label, requerido = true, tono, children }: FilaProps) {
+/** Renglón de la ficha: rótulo a la izquierda y valor a la derecha. Lo reusa el resumen de Cta Cte. */
+export function Fila({ label, requerido = true, tono, children }: FilaProps) {
   const clase = tono === 'total' ? 'rvalue--total' : tono === 'verde' ? 'rvalue--green' : ''
   return (
     <div className="rrow">

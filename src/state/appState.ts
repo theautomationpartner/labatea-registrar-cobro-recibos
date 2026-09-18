@@ -2,7 +2,7 @@ import { ladoInicialDePase, puedeOperar, puedePasarEntre } from '@/lib/permisos'
 import { hoy } from '@/lib/dates'
 import { totalACancelar, totalAplicado } from '@/lib/cobros'
 import { round2 } from '@/lib/format'
-import { indiceDePaso } from '@/lib/pasos'
+import { indiceDePaso, pasosDe } from '@/lib/pasos'
 import { descontarRetencion, esCajaCheque, esRetencionGAN } from '@/lib/pagosProveedor'
 import type { RolPersona } from '@/lib/personas'
 import { indiceDePasoPago } from '@/lib/pasosPago'
@@ -14,16 +14,22 @@ import type {
   CobroState,
   Contacto,
   EmisionRecibo,
+  EstadoCtaCteResumen,
+  FacturaAdeudada,
   FacturaCompraPendiente,
   FacturaPendiente,
+  FormatoResumen,
   LogEntry,
   MedioEnvio,
   MovimientoCaja,
+  MovimientoCtaCte,
   MovimientoPago,
+  MovimientosDelPeriodo,
   PagoState,
   Paso,
   PasoPago,
   Proveedor,
+  RangoResumen,
   SaldosCliente,
   TipoOperacion,
   TipoOperacionPago,
@@ -221,6 +227,51 @@ export interface AppState {
   saldosAcreedor: SaldosCliente | null
   saldosAcreedorId: string | null
 
+  /* ===== MÓDULO DE RESUMEN DE CTA CTE =====
+     Mismo criterio que los demás circuitos: claves propias. El cliente es el mismo `cliente` de
+     Cobros —se elige con el mismo buscador y la misma ficha—, y lo demás es de este recorrido. */
+
+  /**
+   * Si el resumen va con el estado de la cuenta corriente. Se declara en el paso 1, ANTES del
+   * buscador, y `null` = todavía no se eligió: es lo que ese paso reclama para dejar avanzar.
+   */
+  resumenEstadoCtaCte: EstadoCtaCteResumen | null
+  /** El período del resumen. `null` = todavía no se eligió, y por eso no se consulta nada. */
+  resumenRango: RangoResumen | null
+  /** Los movimientos del período, leídos de la cuenta corriente del cliente. */
+  movimientosCtaCte: MovimientoCtaCte[]
+  /** Movimientos de la cuenta que no entraron en la lista por no tener fecha de emisión. */
+  movimientosSinFecha: number
+  /** Mercadería entregada y sin facturar de la cuenta, leída junto con los movimientos. */
+  mercaderiaPendFacturar: number
+  /** Etapa "Facturas que debe": las facturas del cliente que no están canceladas al 100%. */
+  facturasAdeudadas: FacturaAdeudada[]
+  /**
+   * De QUÉ cliente son esas facturas: clave de caché, con el mismo criterio que `facturasClienteId`.
+   * No depende del período —la deuda es la de hoy—, así que cambiar el rango no las vuelve a leer.
+   */
+  facturasAdeudadasClienteId: string | null
+  /**
+   * Clave de caché de esa lectura: de QUÉ cliente y de QUÉ período son los movimientos. Si coincide
+   * con los del estado, la lista ya está leída y navegar entre etapas no vuelve a consultar. Va en
+   * `null` cuando la lectura falló, así el próximo ingreso reintenta.
+   */
+  movimientosCtaCteClave: string | null
+  /**
+   * El ítem de la cuenta corriente del cliente, donde se pide la generación del resumen. `null` = no
+   * se leyó todavía o el cliente no tiene cuenta asignada.
+   */
+  ctaCteId: string | null
+  /** Formato del archivo. Obligatorio antes de emitir: `null` = todavía no se eligió. */
+  resumenFormato: FormatoResumen | null
+  /**
+   * El ítem sobre el que YA se pidió la generación. `null` = todavía no se emitió. Es de donde se
+   * despacha el envío, igual que `reciboId`.
+   */
+  resumenCtaCteId: string | null
+  /** En qué anda la generación del resumen. Global por el mismo motivo que la del recibo. */
+  emisionResumen: EmisionRecibo
+
   /* ===== MÓDULO DE PAGOS =====
      Estado propio del otro circuito. Vive en el MISMO objeto que el de Cobros pero sin compartir
      un solo campo con él: los dos módulos son operaciones independientes, y cambiar de módulo
@@ -318,6 +369,20 @@ export const initialState: AppState = {
   proveedorAcreedor: null,
   saldosAcreedor: null,
   saldosAcreedorId: null,
+  /* RESUMEN DE CTA CTE. Nada viene preseleccionado: el estado de la cuenta, el período y el formato
+     los decide el usuario, y cada etapa reclama el suyo. */
+  resumenEstadoCtaCte: null,
+  resumenRango: null,
+  movimientosCtaCte: [],
+  movimientosSinFecha: 0,
+  mercaderiaPendFacturar: 0,
+  facturasAdeudadas: [],
+  facturasAdeudadasClienteId: null,
+  movimientosCtaCteClave: null,
+  ctaCteId: null,
+  resumenFormato: null,
+  resumenCtaCteId: null,
+  emisionResumen: EMISION_INICIAL,
   /* PAGOS. Igual que Cobros: nada viene preseleccionado, y la etapa 1 es la que lo reclama. */
   pasoPago: 'proveedor',
   pasoPagoMaxIdx: 0,
@@ -351,8 +416,17 @@ export const hayOperacionEnCurso = (state: AppState): boolean =>
      Y cada circuito mira SU documento para saber si ya terminó: con la orden de pago emitida lo
      que queda en pantalla es el comprobante de algo que ya se escribió en Monday, no trabajo a
      medio hacer. */
-  (state.cliente !== null && state.reciboId === null) ||
+  /* El RESUMEN no deja recibo: su documento es la generación sobre la cuenta, así que lo que dice
+     que terminó es esa emisión. */
+  (state.cliente !== null &&
+    (state.operacionApp === 'RESUMEN'
+      ? state.emisionResumen.fase !== 'emitido'
+      : state.reciboId === null)) ||
   (state.proveedor !== null && state.ordenPagoId === null)
+
+/** Clave de caché de los movimientos del resumen: son de UN cliente y de UN período. */
+export const claveMovimientosCtaCte = (clienteId: string, rango: RangoResumen): string =>
+  `${clienteId}·${rango}`
 
 export type Action =
   | { type: 'setOperacionApp'; operacion: OperacionApp }
@@ -390,6 +464,21 @@ export type Action =
   /** `clienteId`: misma clave de caché que en `setSaldos`, con el mismo `null` ante un fallo. */
   | { type: 'setSaldosAcreedor'; saldos: SaldosCliente | null; clienteId: string | null }
   | { type: 'setSaldosDestino'; saldos: SaldosCliente | null; clienteId: string | null }
+  /* RESUMEN DE CTA CTE. El estado de la cuenta, el período con sus movimientos y la emisión. */
+  | { type: 'setResumenEstadoCtaCte'; estado: EstadoCtaCteResumen }
+  | { type: 'setResumenRango'; rango: RangoResumen }
+  /**
+   * Llegaron los movimientos. `clave` es de QUÉ cliente y período son (ver
+   * `claveMovimientosCtaCte`), y va en `null` cuando la lectura FALLÓ: la lista se vacía sin darla
+   * por leída, así el próximo ingreso reintenta.
+   */
+  | { type: 'setMovimientosCtaCte'; resultado: MovimientosDelPeriodo; clave: string | null }
+  /** `clienteId`: de quién son las facturas. Un fallo no se despacha: lo retiene el hook. */
+  | { type: 'setFacturasAdeudadas'; facturas: FacturaAdeudada[]; clienteId: string }
+  | { type: 'setResumenFormato'; formato: FormatoResumen }
+  | { type: 'setResumenCtaCteId'; id: string }
+  /** Mismo criterio que `setEmision`: llega como PARCHE. */
+  | { type: 'setEmisionResumen'; emision: Partial<EmisionRecibo> }
   | { type: 'setImporteAnticipoAplicado'; id: string; importe: number }
   | { type: 'agregarMovimientoPago'; movimiento: Omit<MovimientoPago, 'id'> }
   | { type: 'removeMovimientoPago'; id: string }
@@ -447,7 +536,40 @@ export type Action =
  * etapas de Cobros dentro del modulo de Pases—.
  */
 const recorridoDe = (operacion: OperacionApp | null): TipoOperacion | null =>
-  operacion === 'PASES' ? 'pases' : operacion === 'RECHAZOS' ? 'rechazos' : null
+  operacion === 'PASES'
+    ? 'pases'
+    : operacion === 'RECHAZOS'
+      ? 'rechazos'
+      : operacion === 'RESUMEN'
+        ? 'resumen'
+        : null
+
+/**
+ * El resumen vuelve a quedar SIN emitir. Lo usa todo cambio que altera lo que el documento diría —el
+ * cliente, el período, el estado de la cuenta—: el archivo ya generado describe otra cosa, así que
+ * se lo deja de dar por emitido y su envío también vuelve a empezar.
+ *
+ * Los destinatarios elegidos NO se tocan: son contactos del cliente, y el período no los cambia (al
+ * cambiar de cliente los descarta `setCliente`).
+ *
+ * No borra nada en Monday: la generación escribe sobre la cuenta del cliente, no crea un ítem, así
+ * que volver a pedirla no duplica nada.
+ */
+const resumenSinEmitir = (state: AppState): AppState => ({
+  ...state,
+  resumenCtaCteId: null,
+  emisionResumen: EMISION_INICIAL,
+  documentoEnviado: false,
+  log: [],
+})
+
+/**
+ * La generación está EN VUELO: se escribió o se está escribiendo sobre la cuenta y se espera al
+ * tablero. Mientras tanto no se acepta ningún cambio que la invalide —el período, el estado de la
+ * cuenta, el formato—: el archivo que salga tiene que describir lo que se pidió.
+ */
+export const generacionResumenEnVuelo = (state: AppState): boolean =>
+  state.emisionResumen.fase === 'creando' || state.emisionResumen.fase === 'emitiendo'
 
 /**
  * Responsable por defecto: el usuario de la lista que coincide con el logueado (mismo id de
@@ -481,7 +603,11 @@ export function reducer(state: AppState, action: Action): AppState {
       /* Al ir a un paso se recuerda el índice MÁS AVANZADO alcanzado: volver atrás no lo baja, así
          el stepper deja volver a saltar hacia adelante a las etapas ya completadas. El índice es el
          de ESTE recorrido: el del anticipo tiene una etapa menos que el del cobro. */
-      const idx = indiceDePaso(action.paso, state.tipoOperacion)
+      const idx = indiceDePaso(
+        action.paso,
+        state.tipoOperacion,
+        state.resumenEstadoCtaCte === 'INCLUIR',
+      )
       return { ...state, paso: action.paso, pasoMaxIdx: Math.max(state.pasoMaxIdx, idx) }
     }
 
@@ -626,6 +752,9 @@ export function reducer(state: AppState, action: Action): AppState {
        navegable, en vez de dejar etapas accesibles armadas con los datos del cliente anterior. */
     case 'setCliente':
       if (state.cliente?.id === action.cliente.id) return { ...state, cliente: action.cliente }
+      /* Con el resumen del cliente actual generándose no se cambia de cliente: el tablero está
+         armando el archivo de ESA cuenta, y soltarlo a mitad dejaría la espera sin dueño. */
+      if (generacionResumenEnVuelo(state)) return state
       return {
         ...state,
         cliente: action.cliente,
@@ -665,6 +794,18 @@ export function reducer(state: AppState, action: Action): AppState {
         contactos: [],
         documentoEnviado: false,
         log: [],
+        /* RESUMEN DE CTA CTE: los movimientos, la cuenta y la generación son de ESE cliente. El
+           estado de la cuenta y el período NO se descartan: son decisiones sobre el documento, no
+           sobre la persona, y la lista se vuelve a leer sola para el cliente nuevo. */
+        movimientosCtaCte: [],
+        movimientosSinFecha: 0,
+        mercaderiaPendFacturar: 0,
+        facturasAdeudadas: [],
+        facturasAdeudadasClienteId: null,
+        movimientosCtaCteClave: null,
+        ctaCteId: null,
+        resumenCtaCteId: null,
+        emisionResumen: EMISION_INICIAL,
       }
 
     /* Llegaron los saldos de la cuenta corriente del cliente. Van al estado global —y no al estado
@@ -886,6 +1027,77 @@ export function reducer(state: AppState, action: Action): AppState {
     /* Saldos de Cta Cte del acreedor. Llegan solos, después del proveedor: sólo rellenan sus cajas. */
     case 'setSaldosAcreedor':
       return { ...state, saldosAcreedor: action.saldos, saldosAcreedorId: action.clienteId }
+
+    /* ===== RESUMEN DE CTA CTE ===== */
+
+    /* Con o sin el estado de la cuenta. Cambia lo que el documento dice, así que un resumen ya
+       emitido deja de valer. Reelegir lo MISMO no toca nada. */
+    case 'setResumenEstadoCtaCte': {
+      if (state.resumenEstadoCtaCte === action.estado) return state
+      if (generacionResumenEnVuelo(state)) return state
+      /* Elegir NO INCLUIR saca "Facturas que debe" del recorrido. Si el avance quedó apuntando a
+         esa etapa —se venía de un resumen CON estado—, se lo trae al último paso que sí existe:
+         quedarse parado en una etapa que ya no está deja la navegación sin destino. */
+      const recorrido = pasosDe(state.tipoOperacion, action.estado === 'INCLUIR')
+      const paso = recorrido.includes(state.paso) ? state.paso : 'rangoFechas'
+      return {
+        ...resumenSinEmitir(state),
+        resumenEstadoCtaCte: action.estado,
+        paso,
+        pasoMaxIdx: Math.min(state.pasoMaxIdx, recorrido.length - 1),
+      }
+    }
+
+    /* El período. La lista anterior NO se borra acá: la clave de caché deja de coincidir y el paso la
+       vuelve a leer, así la tabla no parpadea vacía entre una consulta y otra. Lo que sí deja de
+       valer es un resumen ya emitido: era de otro período. */
+    case 'setResumenRango':
+      if (state.resumenRango === action.rango) return state
+      if (generacionResumenEnVuelo(state)) return state
+      return { ...resumenSinEmitir(state), resumenRango: action.rango }
+
+    /* Llegaron los movimientos. Se aceptan SÓLO si siguen siendo del cliente y el período en curso:
+       con dos consultas en vuelo —el usuario cambió de rango antes de que la primera volviera—, la
+       que llega tarde traería la lista de un período que ya no es el elegido. */
+    case 'setMovimientosCtaCte': {
+      const vigente =
+        state.cliente && state.resumenRango
+          ? claveMovimientosCtaCte(state.cliente.id, state.resumenRango)
+          : null
+      if (action.clave !== null && action.clave !== vigente) return state
+      return {
+        ...state,
+        movimientosCtaCte: action.resultado.movimientos,
+        movimientosSinFecha: action.resultado.sinFecha,
+        mercaderiaPendFacturar: action.resultado.mercaderiaPendFacturar,
+        movimientosCtaCteClave: action.clave,
+        ctaCteId: action.resultado.ctaCteId,
+      }
+    }
+
+    /* Llegaron las facturas que debe el cliente. Se aceptan SÓLO si siguen siendo del cliente en
+       curso: una respuesta que llega después de cambiar de cliente es de otra cuenta. */
+    case 'setFacturasAdeudadas':
+      if (state.cliente?.id !== action.clienteId) return state
+      return {
+        ...state,
+        facturasAdeudadas: action.facturas,
+        facturasAdeudadasClienteId: action.clienteId,
+      }
+
+    /* El formato del archivo. Con la generación en vuelo o ya emitida no se cambia: el archivo que
+       se está armando —o que ya se armó— es del formato que se pidió. */
+    case 'setResumenFormato':
+      if (generacionResumenEnVuelo(state) || state.emisionResumen.fase === 'emitido') return state
+      return { ...state, resumenFormato: action.formato }
+
+    /* Se pidió la generación sobre ESTA cuenta: es de donde se despacha el envío. */
+    case 'setResumenCtaCteId':
+      return { ...state, resumenCtaCteId: action.id }
+
+    /* Avance de la generación, tal como lo va reportando `useEmision`. */
+    case 'setEmisionResumen':
+      return { ...state, emisionResumen: { ...state.emisionResumen, ...action.emision } }
 
 
     case 'agregarMovimientoPago':

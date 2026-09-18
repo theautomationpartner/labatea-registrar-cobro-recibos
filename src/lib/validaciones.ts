@@ -54,3 +54,30 @@ export function sinViaDeEnvio(
   const falta = faltaParaMedio(contacto, medio)
   return medio === 'Ambos' ? falta.telefono && falta.email : falta.telefono || falta.email
 }
+
+/**
+ * Los contactos elegidos que NO pueden recibir el documento por el medio elegido. Con "Ambos" no hay
+ * ninguno: se le envía a cada uno por el canal que tenga.
+ */
+export function contactosSinVia<T extends { phone: string; email: string }>(
+  contactos: readonly T[],
+  medio: MedioEnvio,
+): T[] {
+  if (medio === 'Ambos') return []
+  return contactos.filter((c) => sinViaDeEnvio(c, medio))
+}
+
+/** Cómo se nombra en el mensaje el dato que cada medio necesita. */
+const DATO_DEL_MEDIO: Record<Exclude<MedioEnvio, 'Ambos'>, string> = {
+  Email: 'una dirección de email cargada',
+  WhatsApp: 'un número de teléfono cargado',
+}
+
+/**
+ * Por qué ese contacto no puede recibir el documento. Nombra las TRES cosas que hacen falta para
+ * entenderlo sin ir a buscar nada: el medio elegido, el contacto, y qué le falta.
+ */
+export const msgContactoSinVia = (nombre: string, medio: MedioEnvio): string =>
+  medio === 'Ambos'
+    ? ''
+    : `Seleccionó ${medio.toLowerCase()} como medio de envío, pero el contacto ${nombre} NO tiene ${DATO_DEL_MEDIO[medio]}.`

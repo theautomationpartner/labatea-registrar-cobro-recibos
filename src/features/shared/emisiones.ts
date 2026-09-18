@@ -15,17 +15,20 @@
 import {
   crearOrdenDePago,
   emitirRecibo,
+  escribirDatosResumen,
   getEstadoEmision,
   getEstadoEmisionOP,
+  getEstadoResumenCtaCte,
   ordenPagoCompleta,
   pedirEmision,
   pedirEmisionOP,
+  pedirGeneracionResumen,
   reciboCompleto,
   type DatosOrdenPago,
   type DatosRecibo,
 } from '@/services/monday'
 import type { Action, AppState } from '@/state/appState'
-import type { EmisionRecibo } from '@/types'
+import type { EmisionRecibo, FormatoResumen } from '@/types'
 
 /**
  * Cuántos subelementos entraron de cada tipo, contra los que se esperaban. Los dos documentos lo
@@ -73,6 +76,17 @@ export interface Emisible<D> {
   faltantes: (datos: D, resultado: ResultadoEmision) => string[]
   /** Qué se dice cuando el documento quedó incompleto. Nombra el documento y qué hacer. */
   mensajeIncompleto: string
+  /**
+   * Se puede volver a pedir la emisión aunque el tablero la haya cerrado en ERROR. Sólo lo declara un
+   * documento cuya escritura NO crea un ítem —el resumen escribe sobre la cuenta que ya existe—, así
+   * que reintentar no duplica nada. Un recibo o una orden NO: su ítem ya está creado.
+   */
+  reemitibleTrasError?: boolean
+  /**
+   * Qué se dice cuando la espera vence sin que el tablero cierre. Por defecto nombra el ítem ya
+   * creado, que es el caso del recibo y la orden.
+   */
+  avisoSinTerminar?: string
 }
 
 /* ===== Los documentos que hoy se emiten ===== */
@@ -117,4 +131,41 @@ export const ORDEN_PAGO_EMISIBLE: Emisible<DatosOrdenPago> = {
     ].filter((x): x is string => typeof x === 'string'),
   mensajeIncompleto:
     'No se pidió la emisión: a la orden de pago le faltan subelementos y el documento saldría sin ellos. Completala en Monday y emitila desde el tablero.',
+}
+
+/** Lo que la generación del resumen necesita: sobre qué cuenta, en qué formato y de qué período. */
+export interface DatosResumenCtaCte {
+  ctaCteId: string
+  formato: FormatoResumen
+  /** Las dos puntas del período del resumen, en ISO (yyyy-MM-dd). */
+  periodo: { desde: string; hasta: string }
+  /** En el paso 1 se eligió INCLUIR el estado de la cuenta corriente. */
+  incluyeEstado: boolean
+}
+
+/**
+ * RESUMEN DE CTA CTE. A diferencia de los otros dos, NO crea un ítem: el resumen se pide sobre la
+ * cuenta corriente del cliente, que ya existe. Por eso "crear" es sólo dejar escrito el formato, no
+ * hay subelementos que puedan faltar, y un error del tablero se puede reintentar sin duplicar nada.
+ */
+export const RESUMEN_CTA_CTE_EMISIBLE: Emisible<DatosResumenCtaCte> = {
+  nombre: 'el resumen de cuenta corriente',
+  itemId: (s) => s.resumenCtaCteId,
+  guardarId: (id) => ({ type: 'setResumenCtaCteId', id }),
+  emision: (s) => s.emisionResumen,
+  parchear: (emision) => ({ type: 'setEmisionResumen', emision }),
+  /* "Crear" es dejar escritos el formato, el período (🤖Fecha Desde / 🤖Fecha Hasta) y si incluye el
+     estado de la cuenta (🤖Incluye Estado Cta Cte). */
+  crear: async ({ ctaCteId, formato, periodo, incluyeEstado }) => {
+    await escribirDatosResumen(ctaCteId, formato, periodo, incluyeEstado)
+    return { id: ctaCteId, facturasCreadas: 0, facturasEsperadas: 0, pagosCreados: 0, pagosEsperados: 0 }
+  },
+  pedirEmision: pedirGeneracionResumen,
+  getEstado: getEstadoResumenCtaCte,
+  completo: () => true,
+  faltantes: () => [],
+  mensajeIncompleto: '',
+  reemitibleTrasError: true,
+  avisoSinTerminar:
+    'La generación del resumen no terminó dentro del tiempo de espera. Revisá el estado en la cuenta corriente del cliente en Monday antes de volver a intentarlo.',
 }

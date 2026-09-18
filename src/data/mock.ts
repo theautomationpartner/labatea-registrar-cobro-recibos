@@ -3,6 +3,7 @@
  * esto cuando `mondayHabilitado()` es falso, así la app se puede recorrer entera sin cuenta.
  */
 import { EQUIPO_PAGO_PROVEEDORES_ID } from '@/lib/permisos'
+import type { ClaseMovimiento } from '@/lib/resumenCtaCte'
 import type {
   AnticipoPendiente,
   ChequeEnCartera,
@@ -567,3 +568,127 @@ export const PARAMETROS_RETENCION_MOCK = {
      local arma exactamente el mismo subelemento que el modo con token. */
   itemId: '12912259087',
 }
+
+/* ===== MÓDULO DE RESUMEN DE CTA CTE ===== */
+
+/**
+ * Movimientos de prueba de la cuenta corriente del cliente, tal como los devuelve el tablero ANTES
+ * de filtrarlos por período y de nombrarlos. La fecha va como DÍAS HACIA ATRÁS desde hoy —y no
+ * fija— para que cada rango del selector muestre algo distinto el día que se abra el prototipo.
+ *
+ * Cubren cada regla de nombre (ver `comprobanteDeMovimiento`): saldo inicial, ventas con su factura,
+ * cobros con el nombre interno del tablero, un anticipo con su ID, un crédito por pase de saldo,
+ * un movimiento viejo que sólo entra en el último año y uno sin fecha de emisión.
+ */
+export const MOVIMIENTOS_CTA_CTE_MOCK: {
+  id: string
+  nombre: string
+  clase: ClaseMovimiento
+  /** Etiqueta de "🤖Movimiento", tal como la publica el tablero. */
+  tipo: string
+  diasAtras: number | null
+  factura?: { nro: string; venceEnDias: number }
+  idAnticipo?: string
+  saldoInicial: number
+  ventas: number
+  cobros: number
+}[] = [
+  {
+    id: 'm-0',
+    nombre: 'Movimiento - Saldo Inicial - 4192 - La Batea S.A.',
+    clase: 'saldoInicial',
+    tipo: 'Saldo Inicial',
+    diasAtras: 300,
+    saldoInicial: 0,
+    ventas: 150_000,
+    cobros: 0,
+  },
+  {
+    id: 'm-1',
+    nombre: 'Movimiento - VTA-090 - 4192 - La Batea S.A.',
+    clase: 'venta',
+    tipo: 'Vta Pend de Cobro',
+    diasAtras: 200,
+    factura: { nro: 'VTA-090', venceEnDias: -170 },
+    saldoInicial: 150_000,
+    ventas: 1_100_000,
+    cobros: 0,
+  },
+  {
+    id: 'm-2',
+    nombre: 'Mov - Recibo - RECIBO-061 - 4192 - La Batea S.A.',
+    clase: 'cobro',
+    tipo: 'Cobro',
+    diasAtras: 52,
+    saldoInicial: 1_250_000,
+    ventas: 0,
+    cobros: 850_000,
+  },
+  {
+    id: 'm-3',
+    nombre: 'Movimiento - VTA-104 - 4192 - La Batea S.A.',
+    clase: 'venta',
+    tipo: 'Vta Pend de Cobro',
+    diasAtras: 38,
+    factura: { nro: 'VTA-104', venceEnDias: -8 },
+    saldoInicial: 400_000,
+    ventas: 2_380_000,
+    cobros: 0,
+  },
+  {
+    id: 'm-4',
+    nombre: 'Anticipo - RECIBO-066',
+    clase: 'anticipo',
+    tipo: 'Anticipo',
+    diasAtras: 21,
+    idAnticipo: 'ANTICIPO-015',
+    saldoInicial: 2_780_000,
+    ventas: 0,
+    cobros: 180_000,
+  },
+  {
+    id: 'm-5',
+    nombre: 'Movimiento - VTA-111 - 4192 - La Batea S.A.',
+    clase: 'venta',
+    tipo: 'Vta Pend de Cobro',
+    diasAtras: 9,
+    factura: { nro: 'VTA-111', venceEnDias: 21 },
+    saldoInicial: 2_600_000,
+    ventas: 1_600_000,
+    cobros: 0,
+  },
+  {
+    id: 'm-6',
+    nombre: 'Mov - Credito x Pase de Saldo - RECIBO-063 - 4192 - La Batea S.A.',
+    clase: 'creditoPase',
+    tipo: 'Credito x Pase de Saldo',
+    diasAtras: 6,
+    saldoInicial: 4_200_000,
+    ventas: 0,
+    cobros: 200_000,
+  },
+  {
+    id: 'm-7',
+    nombre: 'Recibo - RECIBO-072 - 4192 - La Batea S.A.',
+    clase: 'cobro',
+    tipo: 'Cobro',
+    diasAtras: 3,
+    saldoInicial: 4_000_000,
+    ventas: 0,
+    cobros: 500_000,
+  },
+  {
+    id: 'm-8',
+    nombre: 'Movimiento - VTA-075 - 4192 - La Batea S.A.',
+    clase: 'venta',
+    tipo: 'Vta Pend de Cobro',
+    diasAtras: null,
+    saldoInicial: 0,
+    ventas: 0,
+    cobros: 0,
+  },
+]
+
+/** "🤖Remito Pends de Facturar" de prueba de la cuenta: la mercadería entregada y sin facturar. */
+export const MERCADERIA_PEND_FACTURAR_MOCK = 286_621.81
+

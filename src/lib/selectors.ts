@@ -3,11 +3,43 @@
  * servicio. Mismo lugar y misma firma que en la app de operaciones de venta, así el código que
  * las consume (la ficha del cliente, hoy) se mueve de una app a la otra sin tocar imports.
  */
+import { round2 } from '@/lib/format'
 import type { Cliente } from '@/types'
 
 /** Umbrales de semáforo sobre el % de crédito utilizado. */
 const CREDITO_ALERTA = 50
 const CREDITO_CRITICO = 90
+
+/** El semáforo de una línea de crédito: de qué color se pinta un uso del `pct` por ciento. */
+export interface SemaforoCredito {
+  /** Color del semáforo, en variables CSS. */
+  color: string
+  /** Clase de texto asociada al semáforo. */
+  clase: 'v-green' | 'v-orange' | 'v-red'
+}
+
+/**
+ * El semáforo que le corresponde a un porcentaje de uso de la línea.
+ *
+ * Vive aparte de `creditoCliente` porque el semáforo lo mira algo más que la ficha del cliente, y
+ * con los umbrales escritos dos veces una pantalla podía mostrar en amarillo lo que la otra
+ * mostraba en verde.
+ */
+/**
+ * Qué porcentaje del límite de crédito tiene tomado la cuenta, con dos decimales. `null` sin
+ * límite asignado: un porcentaje sobre cero no es un dato.
+ *
+ * La mira el documento del RESUMEN DE CTA CTE, y vive acá —junto al resto de las reglas del
+ * límite— y no dentro de ese módulo.
+ */
+export const usoDeLinea = (limite: number, lineaUtilizada: number): number | null =>
+  limite > 0 ? round2((lineaUtilizada / limite) * 100) : null
+
+export function semaforoDeCredito(pct: number): SemaforoCredito {
+  if (pct >= CREDITO_CRITICO) return { color: 'var(--red)', clase: 'v-red' }
+  if (pct >= CREDITO_ALERTA) return { color: 'var(--yellow)', clase: 'v-orange' }
+  return { color: 'var(--green)', clase: 'v-green' }
+}
 
 export interface CreditoCliente {
   disponible: number
@@ -30,15 +62,7 @@ export function creditoCliente(c: Cliente): CreditoCliente {
   const usadoPct = c.limit > 0 ? Math.round((usado / c.limit) * 100) : 0
   const disponiblePct = c.limit > 0 ? Math.round((disponible / c.limit) * 100) : 100
 
-  let color = 'var(--green)'
-  let clase: CreditoCliente['clase'] = 'v-green'
-  if (usadoPct >= CREDITO_CRITICO) {
-    color = 'var(--red)'
-    clase = 'v-red'
-  } else if (usadoPct >= CREDITO_ALERTA) {
-    color = 'var(--yellow)'
-    clase = 'v-orange'
-  }
+  const { color, clase } = semaforoDeCredito(usadoPct)
 
   return {
     disponible,

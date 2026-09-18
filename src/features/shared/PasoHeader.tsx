@@ -48,6 +48,7 @@ export function PasoHeader({ actual, pasos = true, children }: PasoHeaderProps) 
     pasoPagoMaxIdx,
     tipoOperacion,
     tipoOperacionPago,
+    resumenEstadoCtaCte,
   } = useApp()
   const dispatch = useDispatch()
 
@@ -55,12 +56,17 @@ export function PasoHeader({ actual, pasos = true, children }: PasoHeaderProps) 
      operaciones independientes, con etapas propias y estado propio, así que cada una navega por su
      recorrido y por su índice de avance. Mezclarlos dejaría al usuario saltando a pasos ajenos. */
   const enPagos = operacionApp === 'PAGOS'
-  const etiquetas = enPagos ? etiquetasPago(tipoOperacionPago) : etiquetasDe(tipoOperacion)
+  /* "Facturas que debe" es una etapa OPCIONAL del RESUMEN DE CTA CTE: el stepper la muestra
+     sólo si el resumen se emite CON el estado de la cuenta corriente. */
+  const incluyeEstado = resumenEstadoCtaCte === 'INCLUIR'
+  const etiquetas = enPagos
+    ? etiquetasPago(tipoOperacionPago)
+    : etiquetasDe(tipoOperacion, incluyeEstado)
   const indice =
     actual ??
     (enPagos
       ? indiceDePasoPago(pasoPago, tipoOperacionPago)
-      : indiceDePaso(paso, tipoOperacion))
+      : indiceDePaso(paso, tipoOperacion, incluyeEstado))
   const maxAlcanzado = enPagos ? pasoPagoMaxIdx : pasoMaxIdx
 
   const irAPaso = (i: number) => {
@@ -69,7 +75,7 @@ export function PasoHeader({ actual, pasos = true, children }: PasoHeaderProps) 
       if (destinoPago) dispatch({ type: 'gotoPago', paso: destinoPago })
       return
     }
-    const destino = pasosDe(tipoOperacion)[i]
+    const destino = pasosDe(tipoOperacion, incluyeEstado)[i]
     if (destino) dispatch({ type: 'goto', paso: destino })
   }
 

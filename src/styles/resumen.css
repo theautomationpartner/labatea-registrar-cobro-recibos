@@ -1,0 +1,281 @@
+/**
+ * RESUMEN DE CTA CTE. Las vistas heredan el marco de `.cobro-v2` (paso 2 y 3) y de `.recibo-v2`
+ * (paso 4); acá vive sólo lo propio: la caja del estado de cuenta en rojo, el selector del período,
+ * el campo de formato y la tabla de movimientos.
+ */
+
+/* ===== Paso 1 · "Estado de Cta Cte" sin elegir al intentar avanzar ===== */
+.cliente-v2 .cfgbox--error {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px rgba(226, 68, 92, 0.14);
+}
+
+/* ===== Selectores obligatorios (rango y formato) ===== */
+.resumen-v2 .res-sel--error,
+.resumen-v2 .res-sel--error:focus {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px rgba(226, 68, 92, 0.14);
+}
+/* Sin elegir: el placeholder se ve como tal, no como una opción ya tomada. */
+.resumen-v2 .res-sel--ph {
+  color: var(--text-gray);
+}
+.resumen-v2 select.full {
+  height: 38px;
+  cursor: pointer;
+  background: #fff;
+}
+.resumen-v2 select.full:disabled {
+  cursor: not-allowed;
+  background: var(--tint-neutral);
+}
+
+/* ===== Paso 2 · período ===== */
+.resumen-v2 .res-rango {
+  display: flex;
+  align-items: flex-end;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin: -4px 0 18px;
+}
+.resumen-v2 .res-rango-campo {
+  margin-bottom: 0;
+}
+.resumen-v2 .res-rango-sel {
+  width: 240px;
+}
+.resumen-v2 .res-periodo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  min-height: 38px;
+  font-size: 13px;
+  color: var(--c-text-secondary, var(--text-gray));
+}
+
+/* Movimientos que quedaron afuera por no tener fecha: hay que mirarlo, no es un error de la app. */
+.resumen-v2 .res-sin-fecha {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 14px 0 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: #8a5a00;
+}
+.resumen-v2 .res-sin-fecha i {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--orange);
+}
+
+/* ===== Tabla de movimientos =====
+   Las filas usan las clases de la tabla de anticipos (`ant-tabla`, ver `anticipos.css`): acá sólo
+   va lo que esa tabla necesita para vivir en este paso. */
+
+/* Las variables de color de `ant-tabla` las define `.cobro-v2`. En el comprobante a generar la tabla
+   vive dentro de `.recibo-v2`, así que se declaran acá con los MISMOS valores. */
+.mov-ctacte {
+  --c-text-main: #1f2937;
+  --c-text-secondary: #667085;
+  --c-border: #e4e7ec;
+  --c-primary: #0052cc;
+}
+
+/* SÓLO LECTURA: la fila no se resalta al pasar el mouse. En la tabla de anticipos ese resaltado
+   invita a marcar la fila; acá no hay nada que marcar ni que clickear. */
+.anticipos-v2 .ant-row.mov-fila:hover td {
+  background: transparent;
+}
+.mov-ctacte .ant-tabla {
+  cursor: default;
+}
+/* TODAS las filas miden lo mismo, como en la tabla de anticipos: allá el alto lo fija la caja de
+   36px del importe a aplicar (`--ant-alto-in`), presente en cada fila. Acá no hay esa caja, y sin
+   esto la fila sin segundo renglón ("Saldo Inicial", un pase) quedaba más baja que las demás. Se
+   reserva con la misma medida y el mismo recurso —una caja de contenido, no el alto de la celda,
+   que el navegador cuenta con el relleno incluido—. */
+.mov-ctacte .mov-comp {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: var(--ant-alto-in);
+}
+
+/* Fila de RELLENO de la última página: mide lo mismo que una fila con datos (la caja `mov-comp` de
+   36px más el relleno de la celda y su filete) pero no se ve —ni el filete—: el espacio queda en
+   blanco. */
+.anticipos-v2 .ant-tabla .mov-relleno td {
+  border-bottom-color: transparent;
+}
+
+/* ===== Paso 4 · formato y documento ===== */
+.resumen-v2 .res-formato {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.resumen-v2 .res-formato .rlabel {
+  font-size: 13px;
+}
+.resumen-v2 .res-formato-sel {
+  width: 100%;
+}
+.resumen-v2 .res-vacio {
+  margin: 0;
+  font-size: 13px;
+  color: var(--r-text-label, var(--text-gray));
+}
+/* El aviso de movimientos sin fecha, entre el documento y el envío. */
+.recibo-v2.resumen-v2 .res-sin-fecha {
+  margin: 0;
+}
+
+/* Botones que cierran la operación, en MAYÚSCULAS por clase: el lector de pantalla sigue leyendo el
+   texto normal (en mayúsculas lo deletrearía como una sigla). */
+.btn-mayus {
+  text-transform: uppercase;
+}
+
+/* ===== Paginador de la tabla de movimientos ===== */
+.mov-paginador {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 0 0;
+}
+.mov-pag-info {
+  font-size: 13px;
+  color: var(--c-text-secondary);
+}
+.mov-pag-info strong {
+  color: var(--c-text-main);
+  font-weight: 700;
+}
+.mov-pag-botones {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mov-pag-btn {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--c-text-main);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.mov-pag-btn:hover:not(:disabled):not(.mov-pag-btn--on) {
+  background: var(--tint-input);
+  border-color: var(--tint-input-bd);
+}
+.mov-pag-btn:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
+}
+/* La página en pantalla: el mismo azul que marca la fila elegida en la tabla de anticipos. */
+.mov-pag-btn--on {
+  background: var(--c-primary);
+  border-color: var(--c-primary);
+  color: #fff;
+  cursor: default;
+}
+.mov-pag-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.mov-pag-salto {
+  min-width: 20px;
+  text-align: center;
+  color: var(--c-text-secondary);
+}
+
+/* Pastilla de "Estado de Vencimiento" sin vencer: la misma `fact-estado` de la tabla de facturas de
+   COBROS (que trae los tonos rojo y naranja), en verde. */
+.fact-estado.is-ok {
+  background: #e7f8ef;
+  color: #067647;
+}
+
+/* ===== Documentos de Cta Cte (Comprobante a generar) =====
+   Las tablas son las del recibo (`comp-table rec-tabla`: banda gris en el encabezado, rótulos en
+   mayúsculas y filetes). Acá se suma lo que traen los documentos de la cuenta: la fila de SALDO
+   INICIAL, la de TOTALES con su línea violeta y la franja de cifras al pie. */
+.recibo-v2 .doc-sub {
+  margin: 0 0 12px;
+}
+.recibo-v2 .doc-tabla .ta-c {
+  text-align: center;
+}
+.recibo-v2 .doc-tabla td {
+  color: var(--r-text-main);
+}
+/* El saldo con el que abre el período: la fila entera en negrita. */
+.recibo-v2 .doc-tabla .doc-fila-inicial td {
+  font-weight: 700;
+}
+.recibo-v2 .doc-tabla .doc-fuerte {
+  font-weight: 700;
+}
+/* TOTALES: separados de las filas por la línea violeta del documento, en negrita y sin filete abajo. */
+.recibo-v2 .doc-tabla tfoot td {
+  padding-top: 16px;
+  padding-bottom: 16px;
+  border-top: 2px solid #6a6fb5;
+  border-bottom: none;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+/* Franja de cifras al pie del documento: rótulo chico arriba, cifra grande abajo, separadores. */
+.recibo-v2 .doc-metricas {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 24px;
+  padding: 16px 0;
+  border-top: 1px solid var(--r-border);
+  border-bottom: 1px solid var(--r-border);
+}
+.recibo-v2 .doc-metrica {
+  flex: 1 1 140px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  text-align: center;
+}
+.recibo-v2 .doc-metrica + .doc-metrica {
+  border-left: 1px solid var(--r-border);
+}
+.recibo-v2 .doc-metrica-lbl {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #4b5c7c;
+}
+.recibo-v2 .doc-metrica-val {
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--r-text-main);
+  white-space: nowrap;
+}
+.recibo-v2 .doc-metrica-val--verde {
+  color: #16a34a;
+}
+.recibo-v2 .doc-metrica-val--naranja {
+  color: #d97706;
+}
+.recibo-v2 .doc-metrica-val--rojo {
+  color: #dc2626;
+}

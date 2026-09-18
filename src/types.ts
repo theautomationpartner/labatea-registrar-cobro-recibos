@@ -16,11 +16,15 @@
  *              endosado a un proveedor. Circuito propio de tres etapas —el cliente deudor, el
  *              cheque rechazado de su cartera y el proveedor acreedor—, y toca los DOS lados del
  *              mostrador: es la única operación de la app que lo hace.
+ *   · RESUMEN · se le emite y envía a un cliente el RESUMEN DE SU CUENTA CORRIENTE de un período.
+ *              Circuito propio de cuatro etapas —el cliente, el rango de fechas, el estado de la
+ *              cuenta y la emisión con su envío—. Es la única operación que NO mueve saldo: lee la
+ *              cuenta y la documenta.
  *
  * Elegir uno cambia la app entera, no una parte: por eso el ruteo de más alto nivel mira ESTE valor
  * antes que el paso (ver `App`), y cambiarlo descarta lo que se venía cargando en el anterior.
  */
-export type OperacionApp = 'COBROS' | 'PASES' | 'PAGOS' | 'RECHAZOS'
+export type OperacionApp = 'COBROS' | 'PASES' | 'PAGOS' | 'RECHAZOS' | 'RESUMEN'
 
 /**
  * Etapas del módulo de COBROS. Son suyas y de nadie más: PAGOS es una operación independiente y
@@ -42,6 +46,11 @@ export type Paso =
      clave propia. */
   | 'chequeRechazado'
   | 'proveedorAcreedor'
+  /* Sólo RESUMEN DE CTA CTE: el período que abarca el resumen (con sus movimientos a la vista), el
+     estado de la cuenta que acompaña al documento y la emisión con su envío. */
+  | 'rangoFechas'
+  | 'estadoCtaCte'
+  | 'resumenCtaCte'
 
 /**
  * Qué se está registrando DENTRO del módulo de COBROS. Es lo primero que se elige —antes incluso
@@ -55,11 +64,12 @@ export type Paso =
  *                  pendientes. Recorre las mismas cuatro etapas que el cobro; lo que cambia es el
  *                  paso 3, donde el dinero sale de los anticipos y no de una forma de pago.
  */
-export type TipoOperacion = 'cobro' | 'anticipo' | 'aplicacion' | 'pases' | 'rechazos'
+export type TipoOperacion = 'cobro' | 'anticipo' | 'aplicacion' | 'pases' | 'rechazos' | 'resumen'
 
 /*
- * `pases` y `rechazos` NO se eligen en ese selector: son los recorridos de los MÓDULOS "Pases de
- * Saldo" y "Rechazo de Cheque", y los pone el propio cambio de módulo (ver `setOperacionApp`).
+ * `pases`, `rechazos` y `resumen` NO se eligen en ese selector: son los recorridos de los MÓDULOS
+ * "Pases de Saldo", "Rechazo de Cheque" y "Resumen de Cta Cte", y los pone el propio cambio de módulo
+ * (ver `setOperacionApp`).
  * Viven en esta unión porque el recorrido, las etiquetas y el stepper se resuelven todos por
  * `TipoOperacion`: darles una vía aparte habría significado dos formas distintas de contestar
  * "¿en qué etapa estoy?".
@@ -735,3 +745,111 @@ export interface PagoState {
   /** Se confirma al cerrar la operación; cualquier cambio en los movimientos lo vuelve a abrir. */
   confirmado: boolean
 }
+
+/* ===== MÓDULO DE RESUMEN DE CTA CTE ===== */
+
+/**
+ * Si el resumen va acompañado del ESTADO de la cuenta corriente. Se declara en el paso 1, antes de
+ * buscar al cliente, y es obligatorio: sin él no se sale de esa etapa.
+ */
+export type EstadoCtaCteResumen = 'INCLUIR' | 'NO_INCLUIR'
+
+/**
+ * El período que abarca el resumen, contado hacia atrás desde HOY. La clave es la que viaja por el
+ * estado; los días y el rótulo salen de `lib/resumenCtaCte`.
+ */
+export type RangoResumen = 'ultimos15' | 'ultimos30' | 'ultimos45' | 'ultimos60' | 'ultimoAnio'
+
+/**
+ * En qué formato se genera el archivo del resumen. Obligatorio antes de emitir. "Ambos" genera los
+ * dos archivos: en el tablero son las dos etiquetas a la vez.
+ */
+export type FormatoResumen = 'Excel' | 'PDF' | 'Ambos'
+
+/**
+ * Un movimiento de la cuenta corriente del cliente: un SUBELEMENTO de su ítem en "💵Cta Cte Cliente"
+ * (18421858736). Es SÓLO lectura: la app no escribe ni edita ninguno.
+ */
+export interface MovimientoCtaCte {
+  /** ID del subelemento en Monday. Sólo sirve de clave de la fila: no se muestra ni se linkea. */
+  id: string
+  /**
+   * Cómo se identifica el comprobante en el resumen. Depende de la clase de movimiento (ver
+   * `comprobanteDeMovimiento`): "VTA-111" en una venta, "RECIBO-072" en un cobro, "Pago por
+   * Anticipo - ANTICIPO-020" en un anticipo, "Saldo Inicial"…
+   */
+  comprobante: string
+  /** Etiqueta de "🤖Movimiento" tal como figura en el tablero ("Cobro", "Vta Pend de Cobro"…). */
+  tipo: string
+  /** "🤖Fecha Emision" (date_mm76y2xw) del movimiento, en ISO. Vacío si el tablero no la tiene. */
+  emision: string
+  /**
+   * "🤖Fecha Vto" (date_mm647vwr) de la factura conectada, en ISO. SÓLO lo lleva la venta pendiente
+   * de cobro: los demás movimientos no vencen, así que para ellos queda vacío.
+   */
+  vencimiento: string
+  /** "🤖Saldo Inicial": con cuánto venía la cuenta antes de este movimiento. */
+  saldoInicial: number
+  /** "🤖Ventas": lo que el movimiento suma a la cuenta. */
+  ventas: number
+  /** "🤖Cobros": lo que el movimiento resta de la cuenta. */
+  cobros: number
+  /** "🤖Saldo Final": cómo queda la cuenta después del movimiento. */
+  saldoFinal: number
+  /** El movimiento es una venta pendiente de cobro, con su factura conectada. */
+  esVentaPendiente: boolean
+}
+
+/**
+ * Una factura que el cliente todavía debe, para la etapa "Facturas que debe" del RESUMEN DE CTA CTE.
+ * Sale de "💰Fact Vtas Pends de Cobro" (18421035508): las del cliente que NO están "Cancelada 100%".
+ * Es SÓLO lectura.
+ */
+export interface FacturaAdeudada {
+  /** ID del ítem en Monday. Sólo es la clave de la fila. */
+  id: string
+  /** Número del comprobante: hoy el "VTA-XXX" del nombre del ítem. */
+  comprobante: string
+  /** Etiqueta de "🤖Estado de Cobro" (color_mkwb727e), tal cual: "Pend de Cancelar 100%"… */
+  estadoCobro: string
+  /** "🤖Fecha Emision" (date_mm648d33), ISO. Vacío si no está cargada. */
+  emision: string
+  /** "🤖Fecha Vto" (date_mm647vwr), ISO. Vacío si no está cargada. */
+  vencimiento: string
+  /** "🤖Vta $" (numeric_mkwbck5d): el importe de la factura. */
+  importe: number
+  /** "🤖Cobrado $" (lookup_mm4c3vc8): la SUMA de lo cobrado en sus subelementos. */
+  cobrado: number
+  /** "🤖Pend de Cobrar $" (formula_mkwbrnk1): lo que queda por pagar. */
+  pendiente: number
+  /** Etiqueta de "🤖Estado de Vencimiento" (color_mm6symyx), tal cual. Vacío si no tiene. */
+  estadoVencimiento: string
+  /**
+   * Qué tan grave es ese estado, para colorearlo: `ok` no vencida, `alerta` vencida hace menos de 30
+   * días, `vencida` 30 días o más. `null` sin estado.
+   */
+  tonoVencimiento: 'ok' | 'alerta' | 'vencida' | null
+}
+
+/** Lo que devuelve la lectura de la cuenta para un cliente y un período. */
+export interface MovimientosDelPeriodo {
+  /**
+   * ID del ítem de la cuenta corriente asignada al cliente. Es sobre ESE ítem que después se pide el
+   * resumen. `null` = el cliente no tiene cuenta corriente asignada en el tablero de Personas.
+   */
+  ctaCteId: string | null
+  /** Movimientos del período, en el orden de la cuenta. */
+  movimientos: MovimientoCtaCte[]
+  /**
+   * Movimientos de la cuenta que NO se pudieron ubicar en ningún período porque no tienen su fecha de
+   * emisión cargada. No entran en la lista —no hay cómo saber si caen dentro del rango—, y se cuentan
+   * para poder decirlo en pantalla en vez de omitirlos en silencio.
+   */
+  sinFecha: number
+  /**
+   * "🤖Remito Pends de Facturar" (numeric_mm5f2npa) del ítem de la cuenta: la mercadería entregada
+   * y todavía sin facturar. No depende del período: es lo que la cuenta tiene hoy. 0 sin cuenta.
+   */
+  mercaderiaPendFacturar: number
+}
+

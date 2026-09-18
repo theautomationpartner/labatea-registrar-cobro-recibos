@@ -3,6 +3,8 @@ import { ladosDePase } from '@/lib/permisos'
 import { AvisoModal } from '@/components/ui/AvisoModal'
 import { AvisoCategoriaAjena } from '@/features/shared/AvisoCategoriaAjena'
 import { CuentasPaseConfig, MSG_SIN_CUENTAS_DE } from '@/features/pases/CuentasPaseConfig'
+import { EstadoCtaCteConfig } from '@/features/resumen/EstadoCtaCteConfig'
+import { MSG_SIN_ESTADO_CTA_CTE } from '@/lib/resumenCtaCte'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
 import { clienteBloqueado, MENSAJE_CLIENTE_BLOQUEADO } from '@/lib/credito'
 import {
@@ -36,8 +38,16 @@ import { OperacionConfig } from './OperacionConfig'
  * sabe contra qué categoría consultar ni contra qué validar a quien traiga.
  */
 export function ClienteView() {
-  const { cliente, operacionApp, paseCuentasDe, tipoOperacion, saldos, saldosClienteId, usuarioActual } =
-    useApp()
+  const {
+    cliente,
+    operacionApp,
+    paseCuentasDe,
+    tipoOperacion,
+    saldos,
+    saldosClienteId,
+    usuarioActual,
+    resumenEstadoCtaCte,
+  } = useApp()
   const dispatch = useDispatch()
   // Estado de la búsqueda: gobierna qué se muestra en el lugar de la ficha del cliente.
   const [estadoBusqueda, setEstadoBusqueda] = useState<BusquedaEstado>('idle')
@@ -51,6 +61,10 @@ export function ClienteView() {
   const [avisoSinOperacion, setAvisoSinOperacion] = useState(false)
   // Aviso emergente del PASE, al operar sin haber declarado de quiénes son las cuentas.
   const [avisoSinCuentasDe, setAvisoSinCuentasDe] = useState(false)
+  /* RESUMEN DE CTA CTE: se intentó avanzar sin declarar el estado de la cuenta. Abre la ventana y
+     deja la caja en rojo; el borde lo apaga la propia caja en cuanto hay una opción elegida. */
+  const [avisoSinEstadoCtaCte, setAvisoSinEstadoCtaCte] = useState(false)
+  const [marcarEstadoCtaCte, setMarcarEstadoCtaCte] = useState(false)
   // Aviso emergente al intentar pasar el saldo de un cliente que opera al contado.
   const [avisoContado, setAvisoContado] = useState(false)
   // Ventana emergente cuando la búsqueda no encuentra al cliente: es el ÚNICO aviso de ese caso.
@@ -165,6 +179,13 @@ export function ClienteView() {
       setAvisoSinCuentasDe(true)
       return
     }
+    /* Y en un resumen, sin saber si va con el estado de la cuenta: es la decisión que encabeza el
+       paso, así que se reclama antes que el cliente. */
+    if (operacionApp === 'RESUMEN' && !resumenEstadoCtaCte) {
+      setMarcarEstadoCtaCte(true)
+      setAvisoSinEstadoCtaCte(true)
+      return
+    }
     /* Sin un cliente confirmado el botón sigue a la vista: se avisa que hace falta cargarlo. */
     if (!clienteListo) {
       setAvisoSinCliente(true)
@@ -195,7 +216,9 @@ export function ClienteView() {
     ? 'Indicá qué vas a cobrar para continuar'
     : operacionApp === 'PASES' && !paseCuentasDe
       ? 'Indicá de quiénes son las cuentas para continuar'
-      : origenContado
+      : operacionApp === 'RESUMEN' && !resumenEstadoCtaCte
+        ? 'Indicá si el resumen incluye el estado de la cuenta corriente para continuar'
+        : origenContado
         ? `El ${rotulo.singular} opera al contado: no se le puede pasar saldo`
         : !clienteListo
           ? `Buscá y confirmá un ${rotulo.singular} para continuar`
@@ -228,6 +251,10 @@ export function ClienteView() {
             primero que se define, y lo que gobierna todo lo que sigue—, así que ocupa su mismo
             lugar: entre el título de la etapa y el buscador. */}
         {operacionApp === 'PASES' && <CuentasPaseConfig />}
+
+        {/* Si el RESUMEN va con el estado de la cuenta corriente. Misma clase de decisión, mismo
+            lugar: arriba del buscador. */}
+        {operacionApp === 'RESUMEN' && <EstadoCtaCteConfig marcarFaltante={marcarEstadoCtaCte} />}
 
         {/* Buscador de la persona. El vendedor de la operación ya se ve —y se cambia— en el
             selector del encabezado, así que no se repite acá.
@@ -308,6 +335,16 @@ export function ClienteView() {
           onClose={() => setAvisoSinCuentasDe(false)}
         >
           {MSG_SIN_CUENTAS_DE}
+        </AvisoModal>
+      )}
+
+      {/* RESUMEN sin declarar el estado de la cuenta: la caja ya quedó en rojo; esto explica por qué. */}
+      {avisoSinEstadoCtaCte && (
+        <AvisoModal
+          titulo="Falta indicar el estado de la cuenta corriente"
+          onClose={() => setAvisoSinEstadoCtaCte(false)}
+        >
+          {MSG_SIN_ESTADO_CTA_CTE}
         </AvisoModal>
       )}
 
