@@ -15,6 +15,7 @@ import '@/styles/pagos.css'
 import '@/styles/recibo.css'
 import '@/styles/envio.css'
 import '@/styles/resumen.css'
+import '@/styles/cobranza.css'
 import '@/styles/seguridad.css'
 
 const container = document.getElementById('root')

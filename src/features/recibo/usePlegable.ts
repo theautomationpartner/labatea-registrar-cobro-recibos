@@ -5,12 +5,14 @@ import { useEffect, useRef, useState } from 'react'
  * es el tiempo que el cuerpo sigue montado después de cerrarse, para que la salida se vea en vez de
  * desaparecer de un corte.
  *
- * Son los MISMOS tiempos que el despliegue de las facturas pendientes (ver `TablaFacturas`).
+ * Son los MISMOS tiempos que el despliegue de las facturas pendientes (ver `TablaFacturas`) y que el
+ * de las filas del tablero de cobranza (ver `useFilaDesplegada`), que los importa de acá: abrir y
+ * cerrar algo tiene que sentirse igual en toda la app.
  */
-const MS_PLEGADO = 200
+export const MS_PLEGADO = 200
 
 /** Cuánto dura el DESPLIEGUE. Coincide con `rec-desplegar`. */
-const MS_DESPLIEGUE = 240
+export const MS_DESPLIEGUE = 240
 
 export interface Plegable {
   /** La card está abierta: gobierna el chevron y el `aria-expanded` del botón. */

@@ -1,3 +1,4 @@
+import { claveCobranza, CRITERIO_INICIAL, criterioCompleto } from '@/lib/cobranza'
 import { ladoInicialDePase, puedeOperar, puedePasarEntre } from '@/lib/permisos'
 import { hoy } from '@/lib/dates'
 import { totalACancelar, totalAplicado } from '@/lib/cobros'
@@ -10,11 +11,13 @@ import type {
   AnticipoPendiente,
   ChequeEnCartera,
   Cliente,
+  CriterioCobranza,
   OperacionApp,
   CobroState,
   Contacto,
   EmisionRecibo,
   EstadoCtaCteResumen,
+  EstadoSaldo,
   FacturaAdeudada,
   FacturaCompraPendiente,
   FacturaPendiente,
@@ -30,9 +33,11 @@ import type {
   PasoPago,
   Proveedor,
   RangoResumen,
+  ResultadoCobranza,
   SaldosCliente,
   TipoOperacion,
   TipoOperacionPago,
+  TramoVencimiento,
   Usuario,
   UsuarioActual,
 } from '@/types'
@@ -272,6 +277,32 @@ export interface AppState {
   /** En qué anda la generación del resumen. Global por el mismo motivo que la del recibo. */
   emisionResumen: EmisionRecibo
 
+  /* ===== MÓDULO DE GESTIÓN DE COBRANZA =====
+     El tablero de análisis. No tiene etapas ni documento: tiene un CRITERIO de búsqueda y el
+     RESULTADO de haberlo consultado, y nada más. Las tres claves son las que hacen que la pantalla
+     sepa, en cualquier momento, si lo que se está mirando contesta lo que se está preguntando. */
+
+  /** Los dos criterios elegidos: estados de saldo y tramos de vencimiento (ver `lib/cobranza`). */
+  cobranzaCriterio: CriterioCobranza
+  /** Lo que devolvió la última búsqueda. `null` = todavía no se buscó, o se pidió volver a buscar. */
+  cobranzaResultado: ResultadoCobranza | null
+  /**
+   * De QUÉ criterio es ese resultado (ver `claveCobranza`). Si NO coincide con el criterio elegido,
+   * los filtros se movieron después de buscar: lo que hay en pantalla contesta otra pregunta, y el
+   * tablero lo dice en vez de hacerlo pasar por actual.
+   */
+  cobranzaClave: string | null
+  /**
+   * El criterio cuya búsqueda está PEDIDA. Mientras no coincida con `cobranzaClave` hay una consulta
+   * por hacer, y es lo único que la dispara (ver `useCobranza`): el tablero nunca sale a la red por
+   * su cuenta, lo hace porque alguien lo pidió.
+   *
+   * Arranca en `null` y sólo lo llena el botón "Buscar": entrar al módulo no consulta nada, y
+   * cambiar un criterio tampoco. Una consulta de este tablero recorre el board de cuentas entero,
+   * así que no puede salir sin que alguien la haya pedido.
+   */
+  cobranzaPedida: string | null
+
   /* ===== MÓDULO DE PAGOS =====
      Estado propio del otro circuito. Vive en el MISMO objeto que el de Cobros pero sin compartir
      un solo campo con él: los dos módulos son operaciones independientes, y cambiar de módulo
@@ -383,6 +414,13 @@ export const initialState: AppState = {
   resumenFormato: null,
   resumenCtaCteId: null,
   emisionResumen: EMISION_INICIAL,
+  /* GESTIÓN DE COBRANZA. El criterio arranca puesto —es la pregunta con la que se entra a cobrar,
+     ver `CRITERIO_INICIAL`— pero SIN pedir: el tablero abre en blanco y no consulta hasta que se
+     aprieta "Buscar". */
+  cobranzaCriterio: CRITERIO_INICIAL,
+  cobranzaResultado: null,
+  cobranzaClave: null,
+  cobranzaPedida: null,
   /* PAGOS. Igual que Cobros: nada viene preseleccionado, y la etapa 1 es la que lo reclama. */
   pasoPago: 'proveedor',
   pasoPagoMaxIdx: 0,
@@ -479,6 +517,10 @@ export type Action =
   | { type: 'setResumenCtaCteId'; id: string }
   /** Mismo criterio que `setEmision`: llega como PARCHE. */
   | { type: 'setEmisionResumen'; emision: Partial<EmisionRecibo> }
+  | { type: 'setCobranzaEstados'; estados: readonly EstadoSaldo[] }
+  | { type: 'setCobranzaTramos'; tramos: readonly TramoVencimiento[] }
+  | { type: 'pedirCobranza' }
+  | { type: 'setCobranzaResultado'; resultado: ResultadoCobranza; clave: string }
   | { type: 'setImporteAnticipoAplicado'; id: string; importe: number }
   | { type: 'agregarMovimientoPago'; movimiento: Omit<MovimientoPago, 'id'> }
   | { type: 'removeMovimientoPago'; id: string }
@@ -1099,6 +1141,44 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'setEmisionResumen':
       return { ...state, emisionResumen: { ...state.emisionResumen, ...action.emision } }
 
+
+    /* ===== GESTIÓN DE COBRANZA =====
+       Cambiar un criterio NO descarta el resultado que hay en pantalla: sigue siendo una lectura
+       válida del tablero, sólo que de otra pregunta. Queda marcada como desactualizada —su clave ya
+       no coincide con el criterio— y es la propia pantalla la que lo dice y ofrece volver a buscar.
+       Borrarla habría dejado el tablero en blanco por tildar un chip. */
+    case 'setCobranzaEstados':
+      return {
+        ...state,
+        cobranzaCriterio: { ...state.cobranzaCriterio, estados: action.estados },
+      }
+
+    case 'setCobranzaTramos':
+      return {
+        ...state,
+        cobranzaCriterio: { ...state.cobranzaCriterio, tramos: action.tramos },
+      }
+
+    /* "Buscar": se pide la consulta del criterio elegido. El resultado anterior se descarta ACÁ y no
+       al cambiar un filtro, así lo que se ve es siempre o la respuesta a la pregunta en pantalla o
+       nada: nunca la respuesta a otra haciéndose pasar por ésta.
+
+       Un criterio incompleto no se pide: sin estado de saldo no hay cuentas que traer y sin tramo no
+       hay facturas que listar (ver `criterioCompleto`). La pantalla lo explica; el reducer se limita
+       a no salir a la red por algo que no se puede consultar. */
+    case 'pedirCobranza':
+      if (!criterioCompleto(state.cobranzaCriterio)) return state
+      return {
+        ...state,
+        cobranzaResultado: null,
+        cobranzaClave: null,
+        cobranzaPedida: claveCobranza(state.cobranzaCriterio),
+      }
+
+    /* La respuesta llegó, y se guarda CON la clave del criterio que la trajo: es lo que después
+       permite saber si sigue contestando lo que se pregunta. */
+    case 'setCobranzaResultado':
+      return { ...state, cobranzaResultado: action.resultado, cobranzaClave: action.clave }
 
     case 'agregarMovimientoPago':
       return {

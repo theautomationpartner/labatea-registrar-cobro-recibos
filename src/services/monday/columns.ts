@@ -865,6 +865,25 @@ export const COL = {
     bancoOrigen: 'board_relation_mm6kj05n',
   },
   ctaCte: {
+    /**
+     * "🤖ID Cta Cte" (pulse_id_mm63y3d3): el número con el que se nombra la cuenta. Es lo que la
+     * GESTIÓN DE COBRANZA muestra en la primera columna de su tabla de cuentas.
+     */
+    nro: 'pulse_id_mm63y3d3',
+    /**
+     * "🤖 Estado del Saldo" (fórmula): en qué estado está el saldo de la cuenta — "Saldo a Cobrar",
+     * "Saldo Cero" o "Saldo a Favor" (ver `ESTADO_SALDO_LABEL` en `lib/cobranza`). Es el PRIMER
+     * criterio de búsqueda de la GESTIÓN DE COBRANZA.
+     *
+     * Es una FÓRMULA, así que no se puede filtrar como regla de `items_page`: se pide su
+     * `display_value` y el filtro corre sobre la respuesta (ver `services/monday/cobranza`).
+     */
+    estadoSaldo: 'formula_mm6sr4rn',
+    /**
+     * "🤖Linea Utilizada" (fórmula): la deuda de la cuenta MÁS la mercadería entregada y todavía
+     * sin facturar. Es el numerador del uso de la línea de crédito (ver `usoDeLinea`).
+     */
+    lineaUtilizada: 'formula_mm5es5xz',
     /** "🤖Total Ventas": todo lo facturado a la cuenta. */
     totalVentas: 'lookup_mm5g2exg',
     /** "🤖Total Cobros": todo lo cobrado. Vacío = 0. */

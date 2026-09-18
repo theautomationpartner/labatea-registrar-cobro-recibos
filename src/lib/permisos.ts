@@ -93,9 +93,18 @@ export const esDelEquipoProveedores = (u: UsuarioActual | null): boolean =>
 
 /**
  * Todos los módulos, en el orden en que los ofrece el encabezado. RESUMEN es para todos, como
- * COBROS: documenta la cuenta de un CLIENTE y no mueve saldo de nadie.
+ * COBROS: documenta la cuenta de un CLIENTE y no mueve saldo de nadie. COBRANZA, con más razón: sólo
+ * LEE las cuentas de los clientes y sus facturas —no escribe una sola columna en Monday—, y es la
+ * pantalla con la que un vendedor sale a cobrar lo suyo.
  */
-const OPERACIONES: readonly OperacionApp[] = ['COBROS', 'PASES', 'PAGOS', 'RECHAZOS', 'RESUMEN']
+const OPERACIONES: readonly OperacionApp[] = [
+  'COBROS',
+  'PASES',
+  'PAGOS',
+  'RECHAZOS',
+  'RESUMEN',
+  'COBRANZA',
+]
 
 /** Los que sólo existen para el equipo. PASES no está: es compartido (ver `ladosDePase`). */
 const OPERACIONES_DEL_EQUIPO: readonly OperacionApp[] = ['PAGOS', 'RECHAZOS']

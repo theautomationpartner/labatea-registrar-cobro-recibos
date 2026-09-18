@@ -123,4 +123,5 @@ export const ROTULO_OPERACION: Record<OperacionApp, string> = {
   PAGOS: 'PAGOS',
   RECHAZOS: 'RECHAZO DE CHEQUE',
   RESUMEN: 'RESUMEN DE CTA CTE',
+  COBRANZA: 'GESTIÓN DE COBRANZA',
 }

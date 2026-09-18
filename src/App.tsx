@@ -10,6 +10,7 @@ import { enMonday, getSessionToken, resumenSessionToken } from '@/lib/mondayAuth
 import { estadoSegundoFactor } from '@/services/mfa'
 import { InicioView } from '@/features/inicio/InicioView'
 import { ClienteView } from '@/features/cliente/ClienteView'
+import { CobranzaView } from '@/features/cobranza/CobranzaView'
 import { CobroView } from '@/features/cobro/CobroView'
 import { AnticiposView } from '@/features/anticipos/AnticiposView'
 import { FacturasView } from '@/features/facturas/FacturasView'
@@ -168,12 +169,17 @@ export function App() {
       InicioView
     : operacionApp === 'PAGOS'
       ? PagosView
-      : /* El paso 3 tiene DOS vistas según el recorrido: con dinero (formas de pago) o aplicando el
-           saldo a favor del cliente. Es la única etapa que cambia de pantalla; el resto del
-           recorrido comparte las mismas. */
-        paso === 'cobro' && tipoOperacion === 'aplicacion'
-        ? AnticiposView
-        : VISTAS[paso]
+      : /* GESTIÓN DE COBRANZA · el tablero es UNA pantalla sin etapas, así que se rutea por el
+           MÓDULO y nunca por el paso: en su estado `paso` sigue valiendo lo que valía al entrar,
+           y mirarlo dibujaría la etapa de otro circuito. */
+        operacionApp === 'COBRANZA'
+        ? CobranzaView
+        : /* El paso 3 tiene DOS vistas según el recorrido: con dinero (formas de pago) o
+             aplicando el saldo a favor del cliente. Es la única etapa que cambia de pantalla; el
+             resto del recorrido comparte las mismas. */
+          paso === 'cobro' && tipoOperacion === 'aplicacion'
+          ? AnticiposView
+          : VISTAS[paso]
 
   /* Cada paso arranca desde arriba, como en una navegación real. Cambiar de MÓDULO también: es la
      navegación más grande que hace la app, así que con más razón no puede aterrizar a media

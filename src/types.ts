@@ -21,10 +21,16 @@
  *              cuenta y la emisión con su envío—. Es la única operación que NO mueve saldo: lee la
  *              cuenta y la documenta.
  *
+ *   · COBRANZA · TABLERO DE GESTIÓN DE COBRANZA: se consultan las cuentas corrientes de los
+ *              clientes por el estado de su saldo y las facturas de venta que deben por su
+ *              vencimiento, para decidir a quién reclamarle. NO tiene etapas: es UNA pantalla de
+ *              análisis, y es la única operación que no escribe NADA en Monday —ni un ítem, ni una
+ *              columna—. Desde ahí se salta a la operación que sí actúa (ver `CobranzaView`).
+ *
  * Elegir uno cambia la app entera, no una parte: por eso el ruteo de más alto nivel mira ESTE valor
  * antes que el paso (ver `App`), y cambiarlo descarta lo que se venía cargando en el anterior.
  */
-export type OperacionApp = 'COBROS' | 'PASES' | 'PAGOS' | 'RECHAZOS' | 'RESUMEN'
+export type OperacionApp = 'COBROS' | 'PASES' | 'PAGOS' | 'RECHAZOS' | 'RESUMEN' | 'COBRANZA'
 
 /**
  * Etapas del módulo de COBROS. Son suyas y de nadie más: PAGOS es una operación independiente y
@@ -853,3 +859,118 @@ export interface MovimientosDelPeriodo {
   mercaderiaPendFacturar: number
 }
 
+/* ===== MÓDULO DE GESTIÓN DE COBRANZA ===== */
+
+/**
+ * En qué estado está el saldo de una cuenta corriente, según "🤖 Estado del Saldo"
+ * (`formula_mm6sr4rn`) de "💵Cta Cte Cliente" (18421858736). Es el PRIMER criterio de búsqueda del
+ * tablero de cobranza:
+ *
+ *   · aCobrar · la cuenta tiene saldo deudor: el cliente nos debe. Es el caso que se reclama.
+ *   · cero    · la cuenta está en cero: no debe ni tiene saldo a favor.
+ *   · aFavor  · la cuenta tiene saldo a favor del cliente (anticipos sin aplicar).
+ *
+ * La clave es la que viaja por el estado; la ETIQUETA con la que se la compara contra el tablero
+ * vive en `lib/cobranza`, junto con el resto de las reglas.
+ */
+export type EstadoSaldo = 'aCobrar' | 'cero' | 'aFavor'
+
+/**
+ * Qué tan vencida está una factura, según "🤖Estado de Vencimiento" (`color_mm6symyx`) de
+ * "💰Fact Vtas Pends de Cobro" (18421035508). Es el SEGUNDO criterio de búsqueda: los tramos que
+ * el usuario elige son los que la consulta le pide al tablero.
+ *
+ * Son las cinco etiquetas de esa columna y en ORDEN DE GRAVEDAD, que no es el de sus índices (ver
+ * `ESTADO_VENCIMIENTO_INDEX`): acá el orden es el que se lee en pantalla, de lo que todavía no
+ * venció a lo que lleva más de sesenta días.
+ */
+export type TramoVencimiento =
+  | 'noVencido'
+  | 'vencido0a15'
+  | 'vencido15a30'
+  | 'vencido30a60'
+  | 'vencidoMas60'
+
+/**
+ * Los dos criterios con los que se busca. Viajan juntos porque juntos definen QUÉ hay en pantalla:
+ * el resultado que se muestra es el de ESTE par y de ningún otro (ver `claveCobranza`).
+ *
+ * Las dos listas son MULTI-VALOR: el usuario puede pedir varias opciones a la vez, y ninguna de las
+ * dos puede quedar vacía —sin un estado de saldo no hay cuentas que traer, y sin un tramo no hay
+ * facturas que listar—.
+ */
+export interface CriterioCobranza {
+  /** Estados de "🤖 Estado del Saldo" que se piden. */
+  estados: readonly EstadoSaldo[]
+  /** Tramos de "🤖Estado de Vencimiento" que se piden. */
+  tramos: readonly TramoVencimiento[]
+}
+
+/**
+ * Una cuenta corriente de cliente alcanzada por el primer criterio: un ítem de "💵Cta Cte Cliente"
+ * (18421858736). Es SÓLO lectura, como todo el módulo.
+ */
+export interface CuentaCobranza {
+  /** ID del ítem de la cuenta en Monday. Es la clave de la fila. */
+  id: string
+  /** "🤖ID Cta Cte" (`pulse_id_mm63y3d3`): el número con el que se nombra la cuenta. */
+  nro: string
+  /**
+   * ID del cliente conectado en "🤖Personas" (`board_relation_mm58dyn`). Es con el que se piden sus
+   * facturas. Vacío = la cuenta no tiene cliente conectado, así que no hay facturas que buscarle.
+   */
+  clienteId: string
+  /** Razón social del cliente conectado, o el nombre del ítem de la cuenta si no hay ninguno. */
+  cliente: string
+  /** Código del cliente en el sistema (`text_mm542r9d`). Vacío si no está cargado. */
+  codigo: string
+  /** Etiqueta de "🤖 Estado del Saldo" tal como la publica el tablero. */
+  estadoSaldoLabel: string
+  /** A qué opción del filtro corresponde esa etiqueta. `null` = a ninguna de las tres. */
+  estadoSaldo: EstadoSaldo | null
+  /** "Fact Vent pend de Aplciar" (`numeric_mm677127`): lo que la cuenta declara como deuda. */
+  ventasPendCancelar: number
+  /** "Anticipo pend de Aplicar" (`numeric_mm67j0rv`): el saldo a favor sin aplicar. */
+  anticipos: number
+  /** "🤖Limite de credito" (`lookup_mm585jgv`) espejado en la cuenta. 0 = sin límite asignado. */
+  limite: number
+  /** "🤖Linea Utilizada" (`formula_mm5es5xz`): deuda + mercadería entregada y sin facturar. */
+  lineaUtilizada: number
+  /** "🤖Remito Pends de Facturar" (`numeric_mm5f2npa`): entregado y todavía sin facturar. */
+  mercaderiaPendFacturar: number
+}
+
+/**
+ * Una factura de venta pendiente traída por el segundo criterio. Es la MISMA forma que la factura
+ * adeudada del RESUMEN DE CTA CTE —sale del mismo tablero y con las mismas columnas—, más el cliente
+ * al que pertenece: acá las facturas de todas las cuentas llegan en una sola lista y hay que poder
+ * repartirlas.
+ */
+export interface FacturaCobranza extends FacturaAdeudada {
+  /** ID del cliente conectado en "🤖Personas" (`board_relation_mm5zaxck`). */
+  clienteId: string
+  /**
+   * En qué tramo de vencimiento cae, resuelto por el ÍNDICE de la columna y no por su texto (ver
+   * `ESTADO_VENCIMIENTO_INDEX`). `null` = el tablero todavía no le puso el estado.
+   *
+   * Viaja con la factura para que el reparto de la deuda por tramo —la batería del tablero— no
+   * tenga que volver a interpretar la etiqueta que la tabla ya muestra.
+   */
+  tramo: TramoVencimiento | null
+}
+
+/** Lo que devuelve una búsqueda del tablero de cobranza. */
+export interface ResultadoCobranza {
+  /** Las cuentas que cumplen el criterio de saldo. */
+  cuentas: CuentaCobranza[]
+  /** Las facturas de esas cuentas que cumplen el criterio de vencimiento. */
+  facturas: FacturaCobranza[]
+  /**
+   * Cuentas alcanzadas por el filtro que NO tienen cliente conectado. No entran en el listado —sin
+   * cliente no hay facturas que pedirles— y se CUENTAN para poder decirlo en pantalla en vez de
+   * omitirlas en silencio, con el mismo criterio que los movimientos sin fecha del resumen.
+   */
+  sinCliente: number
+  /** Cuántas cuentas leyó el tablero antes de filtrar. Es el denominador de "N de M cuentas". */
+  totalLeidas: number
+}

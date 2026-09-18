@@ -1,0 +1,804 @@
+/**
+ * GESTIÓN DE COBRANZA · el tablero de análisis.
+ *
+ * Hereda TODO el marco de `.cobro-v2` —el ancho, los tokens de color, el panel (`cobro-static`), la
+ * card, el renglón de vacío y el pie de acciones— y de `.pases-v2` los paneles de cierre. Acá vive
+ * sólo lo propio del tablero: los chips de los dos criterios, la fila de indicadores, la batería de
+ * vencimientos, el ranking de deudores y la tabla de cuentas con su fila desplegable.
+ *
+ * Los widgets están dibujados con los mismos recursos que el resto de la app —cajas blancas con
+ * filete de 1px, radio de 12px, la sombra suave de `--c-shadow-soft` y los colores de `base.css`—,
+ * así que el módulo no introduce una segunda identidad visual: se lee como una pantalla más, sólo
+ * que en vez de un formulario tiene gráficos.
+ */
+
+.cobranza-v2 {
+  /* Alto de la barra de la batería y de la barrita de uso de línea. Van en variables porque los usan
+     la pista y el relleno: con el número suelto en cada lugar, cambiar uno desalinea al otro. */
+  --cbz-bateria-alto: 26px;
+  --cbz-uso-alto: 6px;
+  /* Alto de UNA barra del ranking: 16px de relleno + 18 del nombre + 5 + 10 de la barra + 5 + 16 del
+     pie + 2 del filete transparente del botón. Lo comparten la barra, la barra en gris y el mensaje
+     de que nadie debe, que es lo que hace que ese widget no cambie de alto entre estados. */
+  --cbz-rank-fila: 72px;
+}
+
+/* La card de criterios y la de la tabla no necesitan el relleno completo de una card de formulario:
+   su contenido ya trae cajas con su propio aire. */
+.cobranza-v2 .cbz-card {
+  --cobro-card-pad: 20px 24px;
+}
+
+/* ===== La configuración de la búsqueda ===== */
+
+/* Los dos campos y el botón en UNA fila, con el botón alineado a su base: es un formulario de
+   búsqueda, no un panel de opciones. En pantalla angosta los campos se apilan y el botón se va al
+   ancho completo. */
+.cobranza-v2 .cbz-busqueda {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+/* Los dos campos crecen para repartirse el ancho: sus opciones son frases ("Vencido + 30 - 60
+   Dias"), no nombres cortos como los del encabezado, así que el ancho fijo de aquéllos no sirve. */
+.cobranza-v2 .cbz-campo {
+  flex: 1 1 280px;
+  min-width: 240px;
+}
+
+/* ===== Los dos campos =====
+   Misma estructura que los selectores del encabezado (`topsel-item` + `selbox`, ver
+   `components.css`): el rótulo arriba y la caja abajo con su chevron contra el borde derecho. Lo
+   único que se cambia son los COLORES —caja neutra en vez del azul de la marca— porque el azul del
+   encabezado marca el contexto de toda la operación, y acá esto es un campo más de un formulario. */
+.cobranza-v2 .cbz-selbox {
+  position: relative;
+  display: block;
+}
+.cobranza-v2 .cbz-sel {
+  width: 100%;
+  cursor: pointer;
+  /* El chevron del navegador se apaga: cambia de dibujo en cada sistema, y el que se ve es el mismo
+     ícono que usan los selectores del encabezado. Con él se va la reserva de espacio que hacía el
+     navegador, así que el relleno de la derecha lo pone esta regla. */
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 36px;
+  border-color: var(--c-border);
+  color: var(--c-text-main);
+  background: #fff;
+}
+.cobranza-v2 .cbz-sel:hover:not(:disabled) {
+  border-color: #b9c0cf;
+}
+.cobranza-v2 .cbz-sel:focus {
+  outline: none;
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 3px rgba(0, 82, 204, 0.12);
+}
+.cobranza-v2 .cbz-sel:disabled {
+  cursor: not-allowed;
+  color: var(--c-text-secondary);
+  background: var(--tint-neutral);
+}
+.cobranza-v2 .cbz-sel-chevron {
+  position: absolute;
+  top: 50%;
+  /* 15px y no los 14 del relleno: es la distancia exacta a la que queda el chevron del encabezado,
+     que lo separa del borde con su relleno más el ancho del glifo. */
+  right: 15px;
+  transform: translateY(-50%);
+  font-size: 12px;
+  color: var(--c-text-secondary);
+  /* El ícono está encima del campo: sin esto, clickearlo no abriría el desplegable. */
+  pointer-events: none;
+}
+.cobranza-v2 .cbz-sel:disabled + .cbz-sel-chevron {
+  opacity: 0.5;
+}
+/* El botón mide lo mismo que los campos y no se estira: es la acción, no un tercer campo. */
+.cobranza-v2 .cbz-buscar {
+  flex: 0 0 auto;
+  height: 38px;
+  min-width: 140px;
+}
+/* Aviso dentro de la card de la tabla (cuentas que quedaron afuera del listado). */
+.cobranza-v2 .cbz-aviso {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 12px 16px;
+  border: 1px solid #f3dcae;
+  border-left: 3px solid var(--orange);
+  border-radius: var(--c-radius-md);
+  background: #fffaf0;
+  font-size: 13px;
+  line-height: 19px;
+  color: #8a5a00;
+}
+.cobranza-v2 .cbz-aviso i {
+  margin-top: 2px;
+  color: var(--orange);
+}
+
+/* ===== Datos todavía sin llegar =====
+   Cada dato tiene su bloque gris del mismo alto que tendrá el número: el layout del tablero es el
+   mismo antes y después de la consulta. Late sólo mientras hay una consulta en vuelo; antes de la
+   primera búsqueda queda quieto, porque ahí no está cargando nada. */
+.cobranza-v2 .cbz-skel {
+  display: inline-block;
+  /* Centrado en su renglón y nunca más alto que él: el bloque gris ocupa el lugar del dato, no
+     define cuánto mide la línea. */
+  vertical-align: middle;
+  border-radius: 4px;
+  background: #e9ecf3;
+}
+.cobranza-v2 .cbz-skel--pulso {
+  animation: cbz-latido 1.2s ease-in-out infinite;
+}
+@keyframes cbz-latido {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+/* Con `prefers-reduced-motion` el latido se apaga: el gris alcanza para decir que falta el dato. */
+@media (prefers-reduced-motion: reduce) {
+  .cobranza-v2 .cbz-skel--pulso {
+    animation: none;
+  }
+}
+
+/* ===== Fila de indicadores (widget "Numbers") ===== */
+
+.cobranza-v2 .cbz-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+.cobranza-v2 .cbz-kpi {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--c-bg-card);
+  border: 1px solid var(--c-border);
+  border-radius: var(--c-radius-lg);
+  box-shadow: var(--c-shadow-soft);
+}
+/* El indicador que concluye —la deuda pendiente— cierra la fila con el filete azul del total. */
+.cobranza-v2 .cbz-kpi--total {
+  border-color: var(--tint-input-bd);
+  background: var(--tint-input);
+}
+.cobranza-v2 .cbz-kpi-ic {
+  flex: 0 0 auto;
+}
+.cobranza-v2 .cbz-kpi-ic--azul {
+  background: rgba(0, 82, 204, 0.1);
+  color: var(--c-primary);
+}
+.cobranza-v2 .cbz-kpi-ic--verde {
+  background: rgba(0, 200, 117, 0.12);
+  color: var(--green-dark);
+}
+.cobranza-v2 .cbz-kpi-ic--rojo {
+  background: rgba(226, 68, 92, 0.12);
+  color: var(--c-danger);
+}
+.cobranza-v2 .cbz-kpi-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.cobranza-v2 .cbz-kpi-lbl {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--c-text-secondary);
+}
+/* El alto de los dos renglones del dato está RESERVADO, tenga o no tenga cifra: el bloque gris de
+   antes de buscar es más chico que el número, así que sin esto la tarjeta crecía al llegar la
+   respuesta. Se reserva con `min-height` y un `line-height` explícito —no con el alto natural del
+   texto—, que es lo único que mide igual estando vacío. */
+.cobranza-v2 .cbz-kpi-num {
+  font-size: 19px;
+  line-height: 26px;
+  min-height: 26px;
+  font-weight: 700;
+  color: var(--c-text-main);
+  white-space: nowrap;
+}
+.cobranza-v2 .cbz-kpi--total .cbz-kpi-num {
+  font-size: 22px;
+  line-height: 30px;
+  min-height: 30px;
+  color: var(--c-primary);
+}
+.cobranza-v2 .cbz-kpi-num--verde {
+  color: var(--green-dark);
+}
+.cobranza-v2 .cbz-kpi-num--rojo {
+  color: var(--c-danger);
+}
+/* DOS renglones reservados: el pie del vencido suma los días de mora y ocupa dos líneas, así que
+   con uno solo la fila de tarjetas cambiaba de alto según lo que trajera la búsqueda. */
+.cobranza-v2 .cbz-kpi-pie {
+  font-size: 11.5px;
+  line-height: 16px;
+  min-height: 32px;
+  color: var(--c-text-secondary);
+}
+
+/* ===== Los dos widgets de gráficos ===== */
+
+.cobranza-v2 .cbz-widgets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.cobranza-v2 .cbz-widget {
+  padding: 18px 20px;
+  background: var(--c-bg-card);
+  border: 1px solid var(--c-border);
+  border-radius: var(--c-radius-lg);
+  box-shadow: var(--c-shadow-soft);
+}
+.cobranza-v2 .cbz-widget-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.cobranza-v2 .cbz-widget-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--c-text-main);
+}
+.cobranza-v2 .cbz-widget-title i {
+  color: var(--c-primary);
+}
+/* La cifra del encabezado del widget: con su alto escrito, para que la cabecera mida lo mismo con
+   el número puesto que con su bloque gris (mismo criterio que los indicadores). */
+.cobranza-v2 .cbz-widget-total {
+  display: inline-block;
+  font-size: 15px;
+  line-height: 18px;
+  min-height: 18px;
+  font-weight: 700;
+  color: var(--c-text-main);
+  white-space: nowrap;
+}
+.cobranza-v2 .cbz-widget-vacio {
+  margin: 0;
+}
+
+/* ===== Batería de vencimientos ===== */
+
+.cobranza-v2 .cbz-bateria {
+  display: flex;
+  height: var(--cbz-bateria-alto);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--tint-neutral);
+}
+.cobranza-v2 .cbz-bateria-franja {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2px;
+  transition: width 0.25s ease;
+}
+/* Lo que el tablero no clasificó: gris rayado, para que no se confunda con un tramo. */
+.cobranza-v2 .cbz-bateria-franja--sin {
+  background: repeating-linear-gradient(
+    45deg,
+    #d6d9e3,
+    #d6d9e3 4px,
+    #e7e9f0 4px,
+    #e7e9f0 8px
+  );
+}
+.cobranza-v2 .cbz-bateria-pct {
+  font-size: 11px;
+  font-weight: 700;
+  /* Sobre el amarillo y el verde claro el texto va OSCURO, con un halo claro que lo despega del
+     color. Sobre las franjas oscuras se invierte (ver `textoClaroSobre`): ningún color fijo se lee
+     sobre los cinco tonos de la escala. */
+  color: #1f2937;
+  text-shadow: 0 0 3px rgba(255, 255, 255, 0.75);
+}
+.cobranza-v2 .cbz-bateria-pct--claro {
+  color: #fff;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.45);
+}
+
+.cobranza-v2 .cbz-leyenda {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cobranza-v2 .cbz-leyenda-item {
+  display: grid;
+  grid-template-columns: 12px 1fr auto 52px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  font-size: 13px;
+  color: var(--c-text-main);
+}
+.cobranza-v2 .cbz-leyenda-item + .cbz-leyenda-item {
+  border-top: 1px solid #f1f3f8;
+}
+/* Tramo sin deuda: se sigue listando —es un dato— pero apagado. */
+.cobranza-v2 .cbz-leyenda-item--off {
+  color: #98a2b3;
+}
+.cobranza-v2 .cbz-leyenda-item--off .cbz-leyenda-punto {
+  opacity: 0.4;
+}
+.cobranza-v2 .cbz-leyenda-punto {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.cobranza-v2 .cbz-leyenda-punto--sin {
+  background: #d6d9e3;
+}
+.cobranza-v2 .cbz-leyenda-lbl {
+  min-width: 0;
+}
+.cobranza-v2 .cbz-leyenda-num {
+  font-weight: 700;
+  white-space: nowrap;
+}
+.cobranza-v2 .cbz-leyenda-pct {
+  text-align: right;
+  font-size: 12px;
+  color: var(--c-text-secondary);
+}
+
+/* ===== Ranking de deudores ===== */
+
+.cobranza-v2 .cbz-ranking {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cobranza-v2 .cbz-rank-item--gris {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 10px;
+}
+/* Una barra mide SIEMPRE lo mismo: sus tres renglones (nombre, barra y pie) con sus separaciones y
+   su relleno. De acá sale el alto del widget sin datos y el del mensaje de "ninguna cuenta debe",
+   así que el widget sólo crece cuando hay más de una cuenta. */
+.cobranza-v2 .cbz-rank-item,
+.cobranza-v2 .cbz-rank-vacio {
+  min-height: var(--cbz-rank-fila);
+}
+.cobranza-v2 .cbz-rank-vacio {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+.cobranza-v2 .cbz-rank-btn {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--c-radius-md);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.cobranza-v2 .cbz-rank-btn:hover {
+  background: var(--tint-input);
+  border-color: var(--tint-input-bd);
+}
+.cobranza-v2 .cbz-rank-btn:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 1px;
+}
+.cobranza-v2 .cbz-rank-cab {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.cobranza-v2 .cbz-rank-cab {
+  line-height: 18px;
+}
+.cobranza-v2 .cbz-rank-cli {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--c-text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cobranza-v2 .cbz-rank-num {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--c-text-main);
+  white-space: nowrap;
+}
+.cobranza-v2 .cbz-rank-barra {
+  display: block;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--tint-neutral);
+  overflow: hidden;
+}
+.cobranza-v2 .cbz-rank-relleno {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  border-radius: 5px;
+  background: var(--c-primary);
+  transition: width 0.25s ease;
+}
+/* Lo vencido, adentro de la barra de la cuenta y desde su izquierda: se lee como "de lo que debe,
+   esto ya venció". */
+.cobranza-v2 .cbz-rank-vencido {
+  display: block;
+  height: 100%;
+  border-radius: 5px 0 0 5px;
+  background: var(--c-danger);
+}
+.cobranza-v2 .cbz-rank-pie {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  line-height: 16px;
+  min-height: 16px;
+  color: var(--c-text-secondary);
+}
+.cobranza-v2 .cbz-rank-alerta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  color: var(--c-danger);
+}
+.cobranza-v2 .cbz-rank-share {
+  margin-left: auto;
+}
+
+/* ===== Tabla de cuentas ===== */
+
+.cobranza-v2 .cbz-tabla-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.cobranza-v2 .cbz-tabla-head .cobro-card-title {
+  margin-bottom: 0;
+}
+.cobranza-v2 .cbz-tabla-sub {
+  font-size: 12.5px;
+  color: var(--c-text-secondary);
+}
+
+/* La columna del desplegable: sólo tiene que entrar el chevron. */
+.cobranza-v2 .cbz-col-chevron {
+  width: 40px;
+}
+.cobranza-v2 .cbz-chevron {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--c-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  /* Gira en lugar de cambiar de ícono: el giro ES la transición entre cerrado y abierto, y dura lo
+     mismo que el despliegue del detalle que acompaña. */
+  transition: transform 0.24s ease-out, background 0.15s ease, color 0.15s ease;
+}
+.cobranza-v2 .cbz-chevron--on {
+  transform: rotate(90deg);
+  color: var(--c-primary);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cobranza-v2 .cbz-chevron {
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+}
+.cobranza-v2 .cbz-chevron:hover {
+  background: var(--tint-input);
+  color: var(--c-primary);
+}
+.cobranza-v2 .cbz-chevron:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 1px;
+}
+
+/* Encabezado que ordena. El ícono va SIEMPRE, también en las columnas inactivas (en `fa-sort`): así
+   se ve de entrada cuáles se pueden ordenar, y el ancho de la columna no cambia al activarla. */
+.cobranza-v2 .cbz-th-orden {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cobranza-v2 .cbz-th-orden i {
+  font-size: 10px;
+  opacity: 0.55;
+}
+.cobranza-v2 .cbz-th-orden:hover {
+  color: var(--c-primary);
+}
+.cobranza-v2 .cbz-th-orden--on {
+  color: var(--c-primary);
+}
+.cobranza-v2 .cbz-th-orden--on i {
+  opacity: 1;
+}
+/* El encabezado centrado centra también su botón. */
+.cobranza-v2 .ant-tabla thead th.ant-col-cen .cbz-th-orden {
+  justify-content: center;
+}
+
+/* La fila entera abre el detalle: se comporta como un control, así que lo dice con el cursor. */
+.cobranza-v2 .cbz-fila {
+  cursor: pointer;
+}
+.cobranza-v2 .anticipos-v2 .ant-row.cbz-fila:hover td,
+.cobranza-v2 .ant-row.cbz-fila:hover td {
+  background: #e2ecfc;
+}
+/* Desplegada: el mismo azul claro y el mismo filete izquierdo con el que la app marca lo elegido. */
+.cobranza-v2 .cbz-fila--on td {
+  background: var(--tint-input);
+}
+.cobranza-v2 .cbz-fila--on td:first-child {
+  box-shadow: inset 3px 0 0 var(--c-primary);
+}
+
+/* Pastilla del estado del saldo. Misma forma que la pastilla de vencimiento de las facturas
+   (`fact-estado`), con los tres tonos de este criterio. */
+.cobranza-v2 .cbz-saldo {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.cobranza-v2 .cbz-saldo--deuda {
+  background: #fdecee;
+  color: #b42318;
+}
+.cobranza-v2 .cbz-saldo--cero {
+  background: var(--tint-neutral);
+  color: var(--c-text-secondary);
+}
+.cobranza-v2 .cbz-saldo--favor {
+  background: #e7f8ef;
+  color: #067647;
+}
+.cobranza-v2 .cbz-saldo .fact-estado-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.cobranza-v2 .cbz-num-vencido {
+  color: var(--c-danger);
+}
+/* El saldo a favor del cliente: en verde, como todo lo que juega a su favor en la app. */
+.cobranza-v2 .cbz-num-favor {
+  color: var(--green-dark);
+}
+
+.cobranza-v2 .cbz-th-orden:disabled {
+  cursor: default;
+  color: inherit;
+}
+.cobranza-v2 .cbz-th-orden:disabled i {
+  opacity: 0.25;
+}
+
+/* ===== Listado sin cuentas =====
+   El renglón mide lo mismo que una fila con datos —la caja `mov-comp` de 36px más el relleno de la
+   celda—, así que la tabla vacía y la tabla con una cuenta tienen exactamente el mismo alto. */
+/* El filete de abajo se conserva —igual que en una fila con datos—: es lo que hace que la tabla
+   vacía y la tabla con una cuenta midan EXACTAMENTE lo mismo. */
+.cobranza-v2 .cbz-vacia {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 8px;
+  flex-direction: row;
+  color: var(--c-text-secondary);
+  font-size: 13.5px;
+}
+.cobranza-v2 .cbz-vacia i {
+  color: var(--c-primary);
+}
+
+/* ===== Fila desplegada =====
+   El MISMO mecanismo que el plegado de las cards del recibo (`rec-exp-wrap`) y de las facturas
+   pendientes: el envoltorio de afuera anima su alto de `0fr` a `1fr` y el de adentro recorta lo que
+   todavía no entra. Mismos tiempos y mismas curvas, porque abrir y cerrar algo tiene que sentirse
+   igual en toda la app. */
+.cobranza-v2 .cbz-exp-wrap {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+/* La animación NO va en la clase base: ahí correría en cada render de la tabla y la fila se
+   desplegaría sola delante del usuario. Sólo se anima la que se acaba de abrir. */
+.cobranza-v2 .cbz-exp-wrap--abriendo {
+  animation: cbz-desplegar 0.24s ease-out;
+}
+/* Plegado: el camino inverso, un poco más corto —cerrar puede ser más rápido que abrir, porque no
+   hay nada nuevo que leer—. Su duración tiene que coincidir con `MS_PLEGADO`. */
+.cobranza-v2 .cbz-exp-wrap--cerrando {
+  animation: cbz-plegar 0.2s ease-in forwards;
+  /* Mientras se cierra ya no se opera: lo que queda es la salida de algo que se cerró. */
+  pointer-events: none;
+}
+.cobranza-v2 .cbz-exp-in {
+  /* Recorta el detalle mientras la fila todavía no lo contiene entero. El relleno vive ADENTRO, en
+     `cbz-detalle`: acá arriba no se encogería con la grilla y dejaría un salto al empezar y terminar. */
+  overflow: hidden;
+}
+@keyframes cbz-desplegar {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+}
+@keyframes cbz-plegar {
+  from {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+  to {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+/* Con movimiento reducido el detalle aparece y desaparece sin animarse: la información es la misma. */
+@media (prefers-reduced-motion: reduce) {
+  .cobranza-v2 .cbz-exp-wrap--abriendo,
+  .cobranza-v2 .cbz-exp-wrap--cerrando {
+    animation: none;
+  }
+}
+
+.cobranza-v2 .cbz-detalle-fila > td {
+  padding: 0;
+  background: #fbfcfe;
+  border-bottom: 1px solid var(--c-border);
+}
+.cobranza-v2 .cbz-detalle {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 20px 20px;
+  /* El detalle pertenece a la fila de arriba: el filete azul de la izquierda es lo que lo dice. */
+  border-left: 3px solid var(--c-primary);
+}
+.cobranza-v2 .cbz-detalle-vacio {
+  margin: 0;
+}
+
+/* Cómo se reparte la deuda de ESTA cuenta, debajo de sus facturas. */
+.cobranza-v2 .cbz-detalle-tramos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cobranza-v2 .cbz-tramo-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 12px;
+  color: var(--c-text-secondary);
+}
+.cobranza-v2 .cbz-tramo-pill strong {
+  color: var(--c-text-main);
+}
+.cobranza-v2 .cbz-tramo-pct {
+  color: #98a2b3;
+}
+
+/* La línea de crédito de la cuenta: cuatro cifras en cuatro cards, cerrando el detalle. */
+.cobranza-v2 .cbz-creditos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+.cobranza-v2 .cbz-credito {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid var(--c-border);
+  border-radius: var(--c-radius-md);
+}
+.cobranza-v2 .cbz-credito-lbl {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--c-text-secondary);
+}
+.cobranza-v2 .cbz-credito-val {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--c-text-main);
+}
+/* La barra del uso va DENTRO de su card, debajo del porcentaje. */
+.cobranza-v2 .cbz-uso-track {
+  margin-top: 2px;
+  height: var(--cbz-uso-alto);
+  border-radius: 3px;
+  background: var(--tint-neutral);
+  overflow: hidden;
+}
+.cobranza-v2 .cbz-uso-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+
+/* ===== Pantalla angosta ===== */
+
+/* Con los dos campos apilados, el botón pasa a ocupar el ancho completo: al costado de un campo de
+   ancho completo quedaría colgado en una fila propia y a la derecha. */
+@media (max-width: 760px) {
+  .cobranza-v2 .cbz-buscar {
+    width: 100%;
+  }
+}

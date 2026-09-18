@@ -18,6 +18,7 @@ const ROTULO: Record<OperacionApp, string> = {
   PAGOS: 'PAGOS',
   RECHAZOS: 'RECHAZO DE CHEQUE',
   RESUMEN: 'RESUMEN DE CTA CTE',
+  COBRANZA: 'GESTIÓN DE COBRANZA',
 }
 
 /**

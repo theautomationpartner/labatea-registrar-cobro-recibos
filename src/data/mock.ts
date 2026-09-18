@@ -10,10 +10,12 @@ import type {
   Cliente,
   Contacto,
   CuentaPropia,
+  EstadoSaldo,
   FacturaCompraPendiente,
   FacturaPendiente,
   Proveedor,
   SaldosCliente,
+  TramoVencimiento,
   Usuario,
   UsuarioActual,
 } from '@/types'
@@ -692,3 +694,183 @@ export const MOVIMIENTOS_CTA_CTE_MOCK: {
 /** "🤖Remito Pends de Facturar" de prueba de la cuenta: la mercadería entregada y sin facturar. */
 export const MERCADERIA_PEND_FACTURAR_MOCK = 286_621.81
 
+/**
+ * Cuentas corrientes de prueba de la GESTIÓN DE COBRANZA, tal como las devuelve el tablero ANTES de
+ * filtrarlas por criterio. Cubren lo que el tablero tiene que saber mostrar:
+ *
+ *   · los TRES estados de saldo ("Saldo a Cobrar", "Saldo Cero" y "Saldo a Favor"), así los chips
+ *     del primer criterio cambian de verdad lo que se lista;
+ *   · los CINCO tramos de vencimiento repartidos entre las cuentas, para que la batería y el
+ *     ranking tengan algo que repartir;
+ *   · una cuenta con saldo declarado y SIN facturas en ningún tramo (la deuda vive en otra parte);
+ *   · una cuenta SIN límite de crédito, donde el uso de la línea no se puede calcular;
+ *   · una factura SIN vencimiento cargado, que no cae en ningún tramo.
+ *
+ * Las fechas van como DÍAS respecto de HOY —y no fijas— para que el prototipo muestre siempre una
+ * mora coherente con el tramo de cada factura, el día que se abra.
+ */
+export const CUENTAS_COBRANZA_MOCK: {
+  /** ID del ítem de la cuenta y su "🤖ID Cta Cte". */
+  id: string
+  nro: string
+  /** El cliente conectado. Sin `clienteId` la cuenta cuenta como "sin cliente conectado". */
+  clienteId: string
+  cliente: string
+  codigo: string
+  estado: EstadoSaldo
+  ventasPendCancelar: number
+  anticipos: number
+  limite: number
+  mercaderiaPendFacturar: number
+  facturas: {
+    id: string
+    nro: string
+    tramo: TramoVencimiento | null
+    /** Hace cuántos días se emitió y en cuántos vence (negativo = ya venció). */
+    emitidaHaceDias: number
+    venceEnDias: number | null
+    importe: number
+    cobrado: number
+  }[]
+}[] = [
+  {
+    id: 'cc-1',
+    nro: 'CTACTE-018',
+    clienteId: '4192',
+    cliente: 'La Batea S.A.',
+    codigo: '4192',
+    estado: 'aCobrar',
+    ventasPendCancelar: 4_200_000,
+    anticipos: 0,
+    limite: 4_500_000,
+    mercaderiaPendFacturar: 0,
+    facturas: [
+      { id: 'cf-1', nro: 'VTA-087', tramo: 'vencidoMas60', emitidaHaceDias: 120, venceEnDias: -90, importe: 1_519_675.16, cobrado: 100_000 },
+      { id: 'cf-2', nro: 'VTA-088', tramo: 'vencido30a60', emitidaHaceDias: 75, venceEnDias: -45, importe: 1_196_571.76, cobrado: 0 },
+      { id: 'cf-3', nro: 'VTA-091', tramo: 'vencido0a15', emitidaHaceDias: 38, venceEnDias: -8, importe: 992_640.32, cobrado: 200_000 },
+      { id: 'cf-4', nro: 'VTA-094', tramo: 'noVencido', emitidaHaceDias: 12, venceEnDias: 18, importe: 861_368.09, cobrado: 0 },
+    ],
+  },
+  {
+    id: 'cc-2',
+    nro: 'CTACTE-024',
+    clienteId: '8271',
+    cliente: 'Global Tech LLC',
+    codigo: '8271',
+    estado: 'aCobrar',
+    ventasPendCancelar: 1_500_000,
+    anticipos: 0,
+    limite: 2_000_000,
+    mercaderiaPendFacturar: 0,
+    facturas: [
+      { id: 'cf-5', nro: 'VTA-101', tramo: 'vencido15a30', emitidaHaceDias: 50, venceEnDias: -20, importe: 780_411.4, cobrado: 0 },
+      { id: 'cf-6', nro: 'VTA-104', tramo: 'noVencido', emitidaHaceDias: 6, venceEnDias: 24, importe: 719_588.6, cobrado: 0 },
+    ],
+  },
+  {
+    id: 'cc-3',
+    nro: 'CTACTE-031',
+    clienteId: '6720',
+    cliente: 'Cerealera del Este',
+    codigo: '6720',
+    estado: 'aCobrar',
+    ventasPendCancelar: 1_250_000,
+    anticipos: 0,
+    /* Por encima del límite: el uso de la línea pasa el 100% y el semáforo lo tiene que decir. */
+    limite: 1_000_000,
+    mercaderiaPendFacturar: 0,
+    facturas: [
+      { id: 'cf-7', nro: 'VTA-066', tramo: 'vencidoMas60', emitidaHaceDias: 210, venceEnDias: -180, importe: 640_000, cobrado: 90_000 },
+      { id: 'cf-8', nro: 'VTA-072', tramo: 'vencido30a60', emitidaHaceDias: 80, venceEnDias: -50, importe: 700_000, cobrado: 0 },
+    ],
+  },
+  {
+    id: 'cc-4',
+    nro: 'CTACTE-037',
+    clienteId: '5510',
+    cliente: 'Agro Norte S.R.L.',
+    codigo: '5510',
+    estado: 'aCobrar',
+    ventasPendCancelar: 780_000,
+    anticipos: 0,
+    limite: 900_000,
+    mercaderiaPendFacturar: 0,
+    facturas: [
+      { id: 'cf-9', nro: 'VTA-098', tramo: 'vencido0a15', emitidaHaceDias: 34, venceEnDias: -4, importe: 520_000, cobrado: 0 },
+      /* Sin vencimiento cargado: el tablero no le puso tramo, así que no se cuenta como vencida. */
+      { id: 'cf-10', nro: 'VTA-099', tramo: null, emitidaHaceDias: 20, venceEnDias: null, importe: 260_000, cobrado: 0 },
+    ],
+  },
+  {
+    id: 'cc-5',
+    nro: 'CTACTE-042',
+    clienteId: '3948',
+    cliente: 'Distribuidora Sur',
+    codigo: '3948',
+    estado: 'aCobrar',
+    ventasPendCancelar: 50_000,
+    anticipos: 0,
+    /* Sin límite asignado: el uso de la línea no se puede calcular y la columna muestra "—". */
+    limite: 0,
+    mercaderiaPendFacturar: 120_000,
+    facturas: [
+      { id: 'cf-11', nro: 'VTA-112', tramo: 'noVencido', emitidaHaceDias: 3, venceEnDias: 27, importe: 50_000, cobrado: 0 },
+    ],
+  },
+  {
+    id: 'cc-6',
+    nro: 'CTACTE-050',
+    clienteId: '9134',
+    cliente: 'Molinos del Litoral S.A.',
+    codigo: '9134',
+    estado: 'aCobrar',
+    /* Declara deuda pero no tiene facturas pendientes en el tablero: la fila aparece igual, en cero,
+       y es justamente el caso que el tablero tiene que poder mostrar. */
+    ventasPendCancelar: 310_000,
+    anticipos: 0,
+    limite: 600_000,
+    mercaderiaPendFacturar: 0,
+    facturas: [],
+  },
+  {
+    id: 'cc-7',
+    nro: 'CTACTE-055',
+    clienteId: '7702',
+    cliente: 'Semillera Pampeana',
+    codigo: '7702',
+    estado: 'cero',
+    ventasPendCancelar: 0,
+    anticipos: 0,
+    limite: 400_000,
+    mercaderiaPendFacturar: 0,
+    facturas: [],
+  },
+  {
+    id: 'cc-8',
+    nro: 'CTACTE-061',
+    clienteId: '6188',
+    cliente: 'Forrajes del Oeste',
+    codigo: '6188',
+    estado: 'aFavor',
+    ventasPendCancelar: 0,
+    anticipos: 420_000,
+    limite: 700_000,
+    mercaderiaPendFacturar: 0,
+    facturas: [],
+  },
+  {
+    id: 'cc-9',
+    nro: 'CTACTE-066',
+    /* Sin cliente conectado: no hay a quién pedirle las facturas, así que la cuenta queda afuera del
+       listado y se cuenta aparte (ver `ResultadoCobranza.sinCliente`). */
+    clienteId: '',
+    cliente: 'CTACTE-066 - sin cliente conectado',
+    codigo: '',
+    estado: 'aCobrar',
+    ventasPendCancelar: 95_000,
+    anticipos: 0,
+    limite: 0,
+    mercaderiaPendFacturar: 0,
+    facturas: [],
+  },
+]

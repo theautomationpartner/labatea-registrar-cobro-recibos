@@ -79,17 +79,18 @@ const casos: { nombre: string; ok: boolean }[] = [
 
   /* ===== Qué módulos ofrece el selector ===== */
   {
-    nombre: 'el miembro ve los CINCO módulos',
-    ok: operacionesPermitidas(MIEMBRO).join() === 'COBROS,PASES,PAGOS,RECHAZOS,RESUMEN',
+    nombre: 'el miembro ve los SEIS módulos',
+    ok: operacionesPermitidas(MIEMBRO).join() === 'COBROS,PASES,PAGOS,RECHAZOS,RESUMEN,COBRANZA',
   },
   {
-    /* PASES y RESUMEN son COMPARTIDOS: los ven los dos grupos. Lo exclusivo es PAGOS y RECHAZOS. */
-    nombre: 'el ajeno ve COBROS, PASES y RESUMEN, sin PAGOS ni RECHAZOS',
-    ok: operacionesPermitidas(AJENO).join() === 'COBROS,PASES,RESUMEN',
+    /* PASES, RESUMEN y COBRANZA son COMPARTIDOS: los ven los dos grupos. Lo exclusivo es PAGOS y
+       RECHAZOS. */
+    nombre: 'el ajeno ve COBROS, PASES, RESUMEN y COBRANZA, sin PAGOS ni RECHAZOS',
+    ok: operacionesPermitidas(AJENO).join() === 'COBROS,PASES,RESUMEN,COBRANZA',
   },
   {
     nombre: 'sin usuario, tampoco aparecen PAGOS ni RECHAZOS',
-    ok: operacionesPermitidas(null).join() === 'COBROS,PASES,RESUMEN',
+    ok: operacionesPermitidas(null).join() === 'COBROS,PASES,RESUMEN,COBRANZA',
   },
   {
     nombre: 'puedeOperar responde igual que el selector',

@@ -14,6 +14,8 @@ export * from './saldos'
 export * from './pases'
 export * from './rechazoCheque'
 export * from './resumenCtaCte'
+/* ===== GESTIÓN DE COBRANZA ===== sólo lectura: el módulo no escribe nada en Monday. */
+export * from './cobranza'
 export * from './cuentas'
 export * from './recibos'
 export * from './registro'

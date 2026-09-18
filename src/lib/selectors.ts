@@ -21,16 +21,16 @@ export interface SemaforoCredito {
 /**
  * El semáforo que le corresponde a un porcentaje de uso de la línea.
  *
- * Vive aparte de `creditoCliente` porque el semáforo lo mira algo más que la ficha del cliente, y
- * con los umbrales escritos dos veces una pantalla podía mostrar en amarillo lo que la otra
- * mostraba en verde.
+ * Vive aparte de `creditoCliente` porque lo mira algo más que la ficha del cliente: la tabla de la
+ * GESTIÓN DE COBRANZA pinta el uso de línea de cada cuenta, y con los umbrales escritos dos veces
+ * una pantalla podía mostrar en amarillo lo que la otra mostraba en verde.
  */
 /**
  * Qué porcentaje del límite de crédito tiene tomado la cuenta, con dos decimales. `null` sin
  * límite asignado: un porcentaje sobre cero no es un dato.
  *
- * La mira el documento del RESUMEN DE CTA CTE, y vive acá —junto al resto de las reglas del
- * límite— y no dentro de ese módulo.
+ * La miran el documento del RESUMEN DE CTA CTE y la tabla de la GESTIÓN DE COBRANZA, así que vive
+ * acá y no en el módulo de una de las dos.
  */
 export const usoDeLinea = (limite: number, lineaUtilizada: number): number | null =>
   limite > 0 ? round2((lineaUtilizada / limite) * 100) : null
