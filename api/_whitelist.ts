@@ -198,7 +198,7 @@ async function consultarTablero(userId: string, app: string): Promise<boolean> {
  * aparte de la lista blanca a propósito: la lista blanca decide QUIÉN entra —y falla cerrada—,
  * esto es dato de presentación y de rol, así que un fallo suyo no puede dejar a nadie afuera.
  *
- * `kind === 'admin'` es el admin de la CUENTA de Monday: manda aunque no esté en ningún equipo.
+ * `is_admin` es el admin de la CUENTA de Monday: manda aunque no esté en ningún equipo.
  */
 export interface PerfilUsuario {
   nombre: string
@@ -213,7 +213,7 @@ const QUERY_PERFIL = `
     users(ids: $ids) {
       id
       name
-      kind
+      is_admin
       teams {
         id
         name
@@ -223,7 +223,12 @@ const QUERY_PERFIL = `
 `
 
 interface RespuestaPerfil {
-  users?: { id: string; name: string; kind?: string; teams?: { id?: string | number; name: string }[] }[]
+  users?: {
+    id: string
+    name: string
+    is_admin?: boolean | null
+    teams?: { id?: string | number; name: string }[]
+  }[]
 }
 
 /**
@@ -244,9 +249,14 @@ export async function perfilDe(userId: string): Promise<PerfilUsuario | null> {
       /* La query ya traía el id de cada equipo y se descartaba. Se guarda como TEXTO: la API lo
          devuelve como número o como string según la versión, y comparar distinto tipo daría falso. */
       equipoIds: (usuario.teams ?? []).map((t) => String(t.id ?? '').trim()).filter(Boolean),
-      esAdminDeCuenta: usuario.kind === 'admin',
+      esAdminDeCuenta: Boolean(usuario.is_admin),
     }
-  } catch {
+  } catch (e) {
+    /* Se AVISA en el log del servidor. Este fallo es silencioso por diseño —no puede dejar a nadie
+       afuera— y por eso puede pasar desapercibido: cuando la query pidió un campo que la API ya no
+       tenía (`kind`), el perfil vino vacío durante días y sólo se notó cuando una regla nueva empezó
+       a depender de sus equipos. Un renglón en el log habría bastado. */
+    console.warn('[perfil] no se pudo leer el perfil del usuario:', (e as Error)?.message ?? e)
     return null
   }
 }

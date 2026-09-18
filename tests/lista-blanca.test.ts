@@ -12,7 +12,7 @@
  */
 import assert from 'node:assert/strict'
 import { ErrorAuth } from '../api/_guard'
-import { exigirListaBlanca, limpiarCacheListaBlanca } from '../api/_whitelist'
+import { exigirListaBlanca, limpiarCacheListaBlanca, perfilDe } from '../api/_whitelist'
 
 process.env.MONDAY_API_TOKEN = 'token-de-prueba'
 process.env.WHITELIST_BOARD_ID = '18427866249'
@@ -191,5 +191,59 @@ assert.equal(await intentar(), 403, 'la app declarada no salva a un usuario inac
 limpiarCacheListaBlanca()
 responderConApps([{ estado: 'Activo', apps: `${APP}9` }])
 assert.equal(await intentar(), 403, 'un id que empieza igual no habilita')
+
+/* ===== El PERFIL del usuario: nombre, equipos y admin de cuenta =====
+   De sus equipos sale qué módulos ve (`src/lib/permisos.ts`). Falla en silencio a propósito —un
+   problema para leerlo no puede dejar a nadie afuera—, y ese silencio ya escondió un error: la query
+   pedía `kind`, un campo que la API dejó de tener, así que el perfil venía VACÍO y todo el mundo
+   quedaba sin equipos. Se notó recién cuando una regla nueva empezó a depender de ellos. */
+
+let queryPerfil = ''
+globalThis.fetch = (async (_url: string, init: { body: string }) => {
+  queryPerfil = (JSON.parse(init.body) as { query: string }).query
+  return {
+    ok: true,
+    json: async () => ({
+      data: {
+        users: [
+          {
+            id: '107870718',
+            name: 'The Automation Partner',
+            is_admin: true,
+            teams: [
+              { id: 1501065, name: 'Pago a Proveedores' },
+              { id: '1480182', name: 'Administradores' },
+            ],
+          },
+        ],
+      },
+    }),
+  }
+}) as unknown as typeof fetch
+
+const perfil = await perfilDe('107870718')
+
+assert.ok(perfil, 'el perfil se lee')
+assert.deepEqual(perfil?.equipoIds, ['1501065', '1480182'], 'los ids de equipo, como TEXTO')
+assert.deepEqual(
+  perfil?.equipos,
+  ['Pago a Proveedores', 'Administradores'],
+  'y los nombres, que son los que usa el rol',
+)
+assert.equal(perfil?.esAdminDeCuenta, true, 'admin de la cuenta, leído de `is_admin`')
+assert.equal(perfil?.nombre, 'The Automation Partner')
+
+/* Contra el error que ya ocurrió: la query no puede pedir un campo que la API no tiene. */
+assert.ok(!queryPerfil.includes('kind'), 'la query NO pide `kind`: ese campo ya no existe en User')
+assert.ok(queryPerfil.includes('is_admin'), 'pide `is_admin`, que es el que lo reemplaza')
+assert.match(queryPerfil, /teams\s*{\s*id/, 'y pide el ID de cada equipo, no sólo el nombre')
+
+/* Si la API contesta con errores, el perfil es `null` y NO se propaga la excepción: quien llama
+   sigue adelante sin él (con el lado restrictivo de cada regla). */
+globalThis.fetch = (async () => ({
+  ok: true,
+  json: async () => ({ errors: [{ message: 'Cannot query field "kind" on type "User".' }] }),
+})) as unknown as typeof fetch
+assert.equal(await perfilDe('107870718'), null, 'una query rota devuelve null, no revienta')
 
 console.log('lista-blanca (permiso por app): OK')
