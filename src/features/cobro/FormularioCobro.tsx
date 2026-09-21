@@ -102,7 +102,7 @@ type EstadoCuit = 'pendiente' | 'ok' | 'error'
 const ANIO_DIGITOS = 4
 
 /** Tope del número de certificado. Holgado: acota el desborde, no la forma del comprobante. */
-const NRO_COMPROBANTE_DIGITOS = 20
+const NRO_COMPROBANTE_LARGO = 20
 
 /** Tope del número de operación de una transferencia. Mismo criterio: acota, no da forma. */
 const NRO_OPERACION_LARGO = 30
@@ -1468,17 +1468,19 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
                 <input
                   id="cobro-ret-nro"
                   className={`cobro-in ${mal('nroCompRet') ? 'cobro-in--error' : ''}`}
-                  inputMode="numeric"
                   autoComplete="off"
                   placeholder="Nro del certificado"
+                  maxLength={NRO_COMPROBANTE_LARGO}
                   aria-invalid={mal('nroCompRet') || undefined}
                   value={borrador.nroComprobanteRetencion ?? ''}
-                  /* Sólo dígitos: la columna del tablero es NUMÉRICA, así que una letra tipeada acá
-                 haría fallar la creación del subelemento entero. Lo que no es número no entra. */
+                  /* Se acepta TAL CUAL: su columna del tablero ("🤖Nro Comprobante") es de TEXTO
+                     —la misma que usan el cheque, el cupón y la transferencia—, y el número de un
+                     certificado de retención puede llevar letras, guiones o barras que son parte
+                     del dato. Filtrarlos guardaba un número que no era el del papel. */
                   onChange={(e) =>
                     setBorrador({
                       ...borrador,
-                      nroComprobanteRetencion: soloDigitos(e.target.value, NRO_COMPROBANTE_DIGITOS),
+                      nroComprobanteRetencion: e.target.value.slice(0, NRO_COMPROBANTE_LARGO),
                     })
                   }
                 />
