@@ -262,10 +262,19 @@ export function ReciboView() {
       )}
 
       {/* El cobro salió pero el tablero no lo confirmó. Se nombra así, sin prometer nada: lo único
-          seguro es que el ítem está escrito y que su registro no cerró. */}
+          seguro es que el ítem está escrito y que su registro no cerró.
+
+          El texto es FIJO y no el error que quedó en `avisoRegistro`: ahí puede haber un timeout,
+          un rechazo del tablero o una lectura caída, y las tres terminan en el mismo lugar —el
+          cobro está en Monday y hay que ir a mirar su estado de registración—. El mensaje dice eso
+          y no la causa técnica, que al usuario no le cambia el siguiente paso. */}
       {avisoRegistro && (
-        <AvisoModal titulo="El registro no se confirmó" onClose={() => setAvisoRegistro('')}>
-          {avisoRegistro} Revisá el recibo en Monday antes de volver a intentarlo.
+        <AvisoModal
+          titulo="No se pudo confirmar el registro del cobro"
+          onClose={() => setAvisoRegistro('')}
+        >
+          El registro del cobro en el sistema tardó más de lo esperado; revisá que en Monday el
+          cobro esté creado y validá su estado de registración para ver lo sucedido.
         </AvisoModal>
       )}
 
