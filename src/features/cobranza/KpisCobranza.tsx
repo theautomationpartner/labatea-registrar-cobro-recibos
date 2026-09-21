@@ -10,20 +10,20 @@ interface Kpi {
   pie: string
   icono: string
   tono: 'verde' | 'rojo' | 'azul'
-  /** El indicador que concluye: la cifra va más grande y en el azul del total. */
+  /** El indicador que ABRE la fila: la cifra va más grande y en el azul del total. */
   destacado?: boolean
 }
 
 /**
- * Los tres números de la cobranza, al estilo del widget "Numbers" de Monday: lo que todavía no
- * venció, lo que ya venció y lo que suman los dos.
+ * Los tres números de la cobranza, al estilo del widget "Numbers" de Monday: cuánto hay para cobrar
+ * y cómo se reparte entre lo que todavía no venció y lo que ya venció.
  *
- * Se leen de izquierda a derecha como una sola frase —de lo que está al día a lo que hay que
- * reclamar, y cuánto es todo—, y son los de TODAS las cuentas del resultado, no los de la página que
- * se está viendo.
+ * Se leen de izquierda a derecha del total a sus dos partes: primero cuánto es todo —que es la
+ * pregunta con la que se entra— y después de qué está hecho. Son los de TODAS las cuentas del
+ * resultado, no los de la página que se está viendo.
  *
- * Los colores salen de la app: el verde de lo que está bien, el rojo de lo que hay que mirar y el
- * azul del total.
+ * Los colores salen de la app: el azul del total, el verde de lo que está bien y el rojo de lo que
+ * hay que mirar.
  */
 export function KpisCobranza({
   resumen,
@@ -39,7 +39,15 @@ export function KpisCobranza({
 
   const kpis: Kpi[] = [
     {
-      rotulo: 'A vencer (al día)',
+      rotulo: 'Total deuda pendiente',
+      valor: money(resumen.pendiente),
+      pie: `sobre ${money(resumen.total)} facturados`,
+      icono: 'fa-hand-holding-dollar',
+      tono: 'azul',
+      destacado: true,
+    },
+    {
+      rotulo: 'Total no vencido',
       valor: money(resumen.aVencer),
       pie: `${proporcion(resumen.aVencer, resumen.pendiente)}% de lo pendiente`,
       icono: 'fa-calendar-check',
@@ -54,14 +62,6 @@ export function KpisCobranza({
           : `${pctVencido}% de lo pendiente`,
       icono: 'fa-triangle-exclamation',
       tono: 'rojo',
-    },
-    {
-      rotulo: 'Deuda pendiente',
-      valor: money(resumen.pendiente),
-      pie: `sobre ${money(resumen.total)} facturados`,
-      icono: 'fa-hand-holding-dollar',
-      tono: 'azul',
-      destacado: true,
     },
   ]
 

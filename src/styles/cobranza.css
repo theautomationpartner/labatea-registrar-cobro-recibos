@@ -21,6 +21,30 @@
      pie + 2 del filete transparente del botón. Lo comparten la barra, la barra en gris y el mensaje
      de que nadie debe, que es lo que hace que ese widget no cambie de alto entre estados. */
   --cbz-rank-fila: 72px;
+  /* Separación entre barras del ranking. Va en variable porque entra en la cuenta de abajo. */
+  --cbz-rank-hueco: 4px;
+  /*
+   * Alto del widget de la batería: EXACTAMENTE el del ranking con sus tres cuentas, que es su tope
+   * (ver `TOP_DEUDORES`). Los dos widgets viven uno al lado del otro, así que el que tiene el
+   * contenido fijo —la batería, siempre cinco renglones— se mide contra el que puede crecer.
+   *
+   * Es una CUENTA y no un número redondo para que siga valiendo si cambia la barra o el tope: el
+   * relleno de la card arriba y abajo, la cabecera con su separación, las tres barras con sus dos
+   * huecos, y los dos filetes de la card (que entran en la medida por el `border-box`).
+   */
+  --cbz-widget-alto: calc(
+    18px + var(--cbz-widget-head-alto) + 16px + (var(--cbz-rank-fila) * 3) +
+      (var(--cbz-rank-hueco) * 2) + 18px + 2px
+  );
+  /* Alto de la cabecera de un widget. Escrito, no heredado del texto: el alto natural del título
+     da 19,5px y una cuenta con decimales deja las dos cards desalineadas por medio píxel. */
+  --cbz-widget-head-alto: 20px;
+}
+
+/* El tablero no tiene pie de acciones —no hay nada que confirmar ni una etapa siguiente—, así que
+   el aire del final lo pone el propio cuerpo: sin esto el último widget queda pegado al borde. */
+.cobranza-v2 .paso-body {
+  padding-bottom: 48px;
 }
 
 /* La card de criterios y la de la tabla no necesitan el relleno completo de una card de formulario:
@@ -171,7 +195,7 @@
   border-radius: var(--c-radius-lg);
   box-shadow: var(--c-shadow-soft);
 }
-/* El indicador que concluye —la deuda pendiente— cierra la fila con el filete azul del total. */
+/* El indicador que abre la fila —la deuda pendiente— es el total, y se lee como tal. */
 .cobranza-v2 .cbz-kpi--total {
   border-color: var(--tint-input-bd);
   background: var(--tint-input);
@@ -257,6 +281,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
+  min-height: var(--cbz-widget-head-alto);
   margin-bottom: 16px;
 }
 .cobranza-v2 .cbz-widget-title {
@@ -284,6 +309,19 @@
 }
 .cobranza-v2 .cbz-widget-vacio {
   margin: 0;
+}
+
+/* La batería mide lo mismo que el ranking lleno (ver `--cbz-widget-alto`): son dos cards lado a
+   lado, y una más baja que la otra deja un escalón en el medio de la pantalla. El alto sobrante lo
+   reparte la leyenda entre sus cinco renglones, en vez de quedar como un hueco al pie. */
+.cobranza-v2 .cbz-widget--bateria {
+  display: flex;
+  flex-direction: column;
+  min-height: var(--cbz-widget-alto);
+}
+.cobranza-v2 .cbz-widget--bateria .cbz-leyenda {
+  flex: 1;
+  justify-content: space-between;
 }
 
 /* ===== Batería de vencimientos ===== */
@@ -381,7 +419,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--cbz-rank-hueco);
 }
 .cobranza-v2 .cbz-rank-item--gris {
   display: flex;
@@ -504,6 +542,71 @@
 .cobranza-v2 .cbz-tabla-sub {
   font-size: 12.5px;
   color: var(--c-text-secondary);
+}
+
+/* ===== Buscador del listado =====
+   Filtra las cuentas que ya se trajeron, mientras se teclea. Va debajo del título y no en la fila de
+   criterios: no cambia lo que se consultó, sólo qué se está mirando de lo consultado. */
+.cobranza-v2 .cbz-buscador {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 380px;
+  height: 36px;
+  margin-bottom: 14px;
+  padding: 0 10px;
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
+  background: #fff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.cobranza-v2 .cbz-buscador:focus-within {
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 3px rgba(0, 82, 204, 0.12);
+}
+.cobranza-v2 .cbz-buscador-ic {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--c-text-secondary);
+}
+.cobranza-v2 .cbz-buscador-in {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  color: var(--c-text-main);
+}
+.cobranza-v2 .cbz-buscador-in::placeholder {
+  color: var(--c-text-secondary);
+}
+.cobranza-v2 .cbz-buscador-in:disabled {
+  cursor: not-allowed;
+}
+/* La cruz del navegador se apaga: aparece sólo en algunos y con otro dibujo. La de la app está
+   siempre en el mismo lugar y hace lo mismo. */
+.cobranza-v2 .cbz-buscador-in::-webkit-search-cancel-button {
+  appearance: none;
+}
+.cobranza-v2 .cbz-buscador-x {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--c-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.cobranza-v2 .cbz-buscador-x:hover {
+  background: var(--tint-neutral);
+  color: var(--c-text-main);
 }
 
 /* La columna del desplegable: sólo tiene que entrar el chevron. */

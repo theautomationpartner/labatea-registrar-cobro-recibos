@@ -4,6 +4,7 @@ import {
   CUENTAS_POR_PAGINA,
   DESCENDENTE_POR_DEFECTO,
   filasDeCobranza,
+  filtrarCuentas,
   ORDEN_INICIAL,
   ordenarFilas,
   resumenCobranza,
@@ -30,9 +31,12 @@ import { useFilaDesplegada } from './useFilaDesplegada'
  * El orden de la pantalla es el orden de las preguntas:
  *
  *   1. LA BÚSQUEDA · de qué cuentas se parte y qué facturas se listan (dos selects y "Buscar").
- *   2. LAS CUENTAS · el listado alcanzado, con las facturas de cada una a un click.
- *   3. LOS NÚMEROS · cuánto hay al día, cuánto vencido y cuánto es todo (widget "Numbers").
- *   4. LOS GRÁFICOS · desde cuándo se debe y quién debe más (widgets "Battery" y "Chart").
+ *   2. LOS NÚMEROS · cuánto hay para cobrar y cómo se reparte (widget "Numbers").
+ *   3. LOS GRÁFICOS · desde cuándo se debe y quién debe más (widgets "Battery" y "Chart").
+ *   4. LAS CUENTAS · el listado alcanzado, con las facturas de cada una a un click.
+ *
+ * De lo general a lo particular: primero cuánto es el problema, después de qué está hecho y recién
+ * al final cuenta por cuenta, que es donde se va a trabajar.
  *
  * TODO eso está montado desde el primer render: la tabla con su encabezado y el renglón que dice que
  * no hay cuentas, y los widgets con sus datos en gris (ver `Esqueleto`). La pantalla no crece ni se
@@ -51,12 +55,17 @@ export function CobranzaView() {
   const [orden, setOrden] = useState<OrdenCobranza>(ORDEN_INICIAL)
   const [descendente, setDescendente] = useState(DESCENDENTE_POR_DEFECTO[ORDEN_INICIAL])
   const [pagina, setPagina] = useState(1)
+  /* Lo tecleado en el buscador del listado. Filtra en memoria lo que ya se trajo: no sale a la red
+     ni cambia el criterio de la búsqueda, que es otra cosa y vive arriba. */
+  const [termino, setTermino] = useState('')
   const plegado = useFilaDesplegada()
 
   const listo = resultado !== null
   const filas = resultado ? filasDeCobranza(resultado) : []
   const ordenadas = ordenarFilas(filas, orden, descendente)
+  const filtradas = filtrarCuentas(ordenadas, termino)
   const resumen = resumenCobranza(filas)
+  const filtrando = termino.trim() !== ''
 
   /* Clickear la columna ya activa invierte el orden; otra columna arranca con el sentido que le
      corresponde —los importes de mayor a menor, el nombre de la A a la Z—. */
@@ -71,15 +80,21 @@ export function CobranzaView() {
 
   const buscar = () => {
     /* La lista se reemplaza entera: la fila desplegada se cierra SIN animar —lo que se estaba
-       mirando ya no va a estar— y el listado vuelve a su primera página. */
+       mirando ya no va a estar—, el buscador del listado se vacía y se vuelve a la primera
+       página. Dejar el término puesto escondería el resultado nuevo detrás de un filtro viejo. */
     plegado.cerrarYa()
+    setTermino('')
     setPagina(1)
     consultar()
   }
 
   /* Desde el ranking: la tabla salta a la página donde está esa cuenta y la despliega. Sin esto, el
-     gráfico señalaría un deudor que hay que ir a buscar a mano tres páginas más arriba. */
+     gráfico señalaría un deudor que hay que ir a buscar a mano tres páginas más abajo. */
   const irACuenta = (fila: FilaCobranza) => {
+    /* Con un filtro puesto la cuenta señalada puede no estar en la lista, así que el buscador se
+       limpia: lo que el gráfico marca tiene que poder verse. */
+    const enLista = filtrarCuentas(ordenadas, termino).some((f) => f.cuenta.id === fila.cuenta.id)
+    if (!enLista) setTermino('')
     const i = ordenadas.findIndex((f) => f.cuenta.id === fila.cuenta.id)
     if (i < 0) return
     setPagina(Math.floor(i / CUENTAS_POR_PAGINA) + 1)
@@ -101,8 +116,7 @@ export function CobranzaView() {
               <h1 className="step-title-main">Gestión de Cobranza</h1>
               <p className="step-desc-main">
                 Consultá las cuentas corrientes de tus clientes por el estado de su saldo y las
-                facturas de venta que te deben por su vencimiento. Es sólo lectura: nada de lo que
-                hagas acá modifica Monday.
+                facturas pends de cancelar por vencimiento
               </p>
             </div>
           </div>
@@ -114,6 +128,24 @@ export function CobranzaView() {
           </div>
         </div>
 
+        <KpisCobranza resumen={resumen} listo={listo} cargando={cargando} />
+
+        <div className="cbz-widgets">
+          <BateriaVencimientos
+            porTramo={resumen.porTramo}
+            pendiente={resumen.pendiente}
+            listo={listo}
+            cargando={cargando}
+          />
+          <RankingDeudores
+            filas={filas}
+            pendienteTotal={resumen.pendiente}
+            onElegir={irACuenta}
+            listo={listo}
+            cargando={cargando}
+          />
+        </div>
+
         <div className="cobro-static">
           <div className="cobro-card cbz-card">
             <div className="cbz-tabla-head">
@@ -123,8 +155,46 @@ export function CobranzaView() {
                   ? 'Elegí los criterios y usá Buscar'
                   : resumen.cuentas === 0
                     ? `Ninguna de las ${resultado.totalLeidas} cuentas del tablero cumple el criterio`
-                    : `${resumen.cuentas} de ${resultado.totalLeidas} cuentas del tablero · ${resumen.facturas} ${resumen.facturas === 1 ? 'factura pendiente' : 'facturas pendientes'}`}
+                    : filtrando
+                      ? `${filtradas.length} de ${resumen.cuentas} cuentas coinciden con "${termino.trim()}"`
+                      : `${resumen.cuentas} de ${resultado.totalLeidas} cuentas del tablero · ${resumen.facturas} ${resumen.facturas === 1 ? 'factura pendiente' : 'facturas pendientes'}`}
               </span>
+            </div>
+
+            {/* Buscador del listado: filtra lo que YA se trajo, mientras se teclea. No vuelve a
+                consultar —el criterio de la búsqueda está arriba—: acá se trata de encontrar una
+                cuenta entre las que el criterio alcanzó, que con doscientas es lo que uno viene a
+                hacer. */}
+            <div className="cbz-buscador">
+              <i className="fas fa-magnifying-glass cbz-buscador-ic" aria-hidden="true" />
+              <input
+                type="search"
+                className="cbz-buscador-in"
+                placeholder="Buscar por cliente, cuenta corriente o código..."
+                aria-label="Buscar una cuenta entre las alcanzadas"
+                disabled={!listo || resumen.cuentas === 0}
+                value={termino}
+                onChange={(e) => {
+                  setTermino(e.target.value)
+                  /* Lo que se está mirando puede no estar en la lista filtrada, y la página 3 de
+                     veintitrés cuentas no existe cuando quedan dos. */
+                  plegado.cerrarYa()
+                  setPagina(1)
+                }}
+              />
+              {filtrando && (
+                <button
+                  type="button"
+                  className="cbz-buscador-x"
+                  aria-label="Limpiar la búsqueda"
+                  onClick={() => {
+                    setTermino('')
+                    setPagina(1)
+                  }}
+                >
+                  <i className="fas fa-xmark" />
+                </button>
+              )}
             </div>
 
             {fallo && (
@@ -147,7 +217,7 @@ export function CobranzaView() {
             )}
 
             <TablaCuentas
-              filas={ordenadas}
+              filas={filtradas}
               orden={orden}
               descendente={descendente}
               onOrdenar={ordenar}
@@ -159,31 +229,6 @@ export function CobranzaView() {
           </div>
         </div>
 
-        <KpisCobranza resumen={resumen} listo={listo} cargando={cargando} />
-
-        <div className="cbz-widgets">
-          <BateriaVencimientos
-            porTramo={resumen.porTramo}
-            pendiente={resumen.pendiente}
-            listo={listo}
-            cargando={cargando}
-          />
-          <RankingDeudores
-            filas={filas}
-            pendienteTotal={resumen.pendiente}
-            onElegir={irACuenta}
-            listo={listo}
-            cargando={cargando}
-          />
-        </div>
-
-        <div className="actions-footer">
-          <div className="actions-footer-fin">
-            <button type="button" className="btn btn-primary" disabled={cargando} onClick={buscar}>
-              <i className="fas fa-rotate" /> Actualizar datos
-            </button>
-          </div>
-        </div>
       </div>
     </section>
   )

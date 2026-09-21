@@ -33,10 +33,13 @@ import {
   estadoSaldoDeLabel,
   OPCIONES_ESTADO_SALDO,
   filasDeCobranza,
+  filtrarCuentas,
   ordenarFilas,
   proporcion,
   resumenCobranza,
+  TOP_DEUDORES,
   topDeudores,
+  tramoDeEtiqueta,
   TRAMOS_VENCIMIENTO,
 } from '@/lib/cobranza'
 import { MS_DESPLIEGUE, MS_PLEGADO } from '@/features/recibo/usePlegable'
@@ -130,7 +133,23 @@ chequear(
   'columnas',
   'los cinco tramos son las cinco etiquetas del tablero, en orden de gravedad',
   TRAMOS_VENCIMIENTO.map((t) => t.label).join(' | ') ===
-    'No vencido | Vencido 0 a 15 Dias | Vencido 15 a 30 dias | Vencido + 30 - 60  Dias | Vencido + 60',
+    'No vencido | Vencido 0 a 15 Dias | Vencido 15 a 30 dias | Vencido 30 a 60  Dias | Vencido +60 dias',
+)
+/* Los colores son los que publica la propia columna en su `labels_colors`, copiados uno por uno:
+   una factura se ve del mismo color en la app y en Monday. La única excepción es "No vencido",
+   que el tablero pinta de verde y acá va en el negro del texto común. */
+chequear(
+  'columnas',
+  'cada tramo lleva el color que el tablero le da a su etiqueta',
+  TRAMOS_VENCIMIENTO.map((t) => `${t.valor}=${t.color}`).join() ===
+    'noVencido=#1f2937,vencido0a15=#fdab3d,vencido15a30=#ff7575,vencido30a60=#bb3354,vencidoMas60=#df2f4a',
+)
+chequear(
+  'columnas',
+  'y la etiqueta del tablero encuentra su tramo, para pintarla donde sólo se tiene el texto',
+  tramoDeEtiqueta('Vencido +60 dias')?.valor === 'vencidoMas60' &&
+    tramoDeEtiqueta('VENCIDO 30 A 60  DIAS')?.valor === 'vencido30a60' &&
+    tramoDeEtiqueta('Cancelada') === null,
 )
 chequear(
   'columnas',
@@ -343,6 +362,49 @@ chequear(
 )
 chequear(
   'ranking',
+  'y lista las TRES primeras, no todas: para eso está la tabla',
+  TOP_DEUDORES === 3 &&
+    resumen.cuentasConFacturas > TOP_DEUDORES &&
+    topDeudores(filas, TOP_DEUDORES).length === TOP_DEUDORES,
+)
+chequear(
+  'ranking',
+  'ordena por lo VENCIDO y no por la deuda total: no es lo mismo deber 1.7M al día que vencidos',
+  (() => {
+    const cuenta = (id: string, pendiente: number, vencido: number) => ({
+      ...filas[0],
+      cuenta: { ...filas[0].cuenta, id, cliente: id },
+      pendiente,
+      vencido,
+    })
+    const top = topDeudores(
+      [
+        cuenta('al-día', 1_700_000, 0),
+        cuenta('vencida', 1_700_000, 900_000),
+        cuenta('chica-vencida', 800_000, 800_000),
+      ],
+      3,
+    )
+    return top.map((f) => f.cuenta.id).join() === 'vencida,chica-vencida,al-día'
+  })(),
+)
+chequear(
+  'ranking',
+  'con todo al día manda la deuda total, que es el desempate',
+  (() => {
+    const cuenta = (id: string, pendiente: number) => ({
+      ...filas[0],
+      cuenta: { ...filas[0].cuenta, id, cliente: id },
+      pendiente,
+      vencido: 0,
+    })
+    return topDeudores([cuenta('chica', 100), cuenta('grande', 900)], 2)
+      .map((f) => f.cuenta.id)
+      .join() === 'grande,chica'
+  })(),
+)
+chequear(
+  'ranking',
   'el semáforo del uso de línea del detalle es el MISMO de la ficha del cliente',
   semaforoDeCredito(93.33).clase === 'v-red' &&
     semaforoDeCredito(60).clase === 'v-orange' &&
@@ -431,26 +493,34 @@ chequear(
   tablero.includes('<option value="TODOS" selected="">Todos los estados de vencimiento</option>'),
 )
 
-/* Orden de la pantalla: la tabla va pegada a la búsqueda, y los widgets DEBAJO de la tabla. */
+/* Orden de la pantalla: de lo general a lo particular. Los números y los gráficos van arriba, y el
+   listado de cuentas cierra. */
 const ordenEnPantalla = [
   'Obtener cuentas corrientes por',
-  'Cuentas corrientes alcanzadas',
-  'Deuda pendiente',
+  'Total deuda pendiente',
   'Deuda por estado de vencimiento',
   'Cuentas que más deben',
+  'Cuentas corrientes alcanzadas',
 ].map((t) => tablero.indexOf(t))
 chequear(
   'pantalla',
-  'primero la búsqueda, después el listado de cuentas y recién debajo los widgets',
+  'primero la búsqueda, después los números y los gráficos, y el listado al final',
   ordenEnPantalla.every((i, n) => i >= 0 && (n === 0 || i > ordenEnPantalla[n - 1])),
 )
 chequear(
   'pantalla',
-  'los tres indicadores son A vencer, Vencido y Deuda pendiente',
-  tablero.includes('A vencer (al día)') &&
-    tablero.includes('Deuda pendiente') &&
+  'los tres indicadores son el total, lo no vencido y lo vencido, en ese orden',
+  tablero.indexOf('Total deuda pendiente') < tablero.indexOf('Total no vencido') &&
+    tablero.indexOf('Total no vencido') < tablero.indexOf('Vencido<') &&
+    !tablero.includes('A vencer (al día)') &&
     !tablero.includes('Cuentas alcanzadas') &&
     !tablero.includes('FACTURAS PENDIENTES'),
+)
+chequear(
+  'batería',
+  'la leyenda tiene cinco renglones: lo que el tablero no clasificó no se lista',
+  !tablero.includes('Sin estado cargado') &&
+    TRAMOS_VENCIMIENTO.every((t) => tablero.includes(t.corto)),
 )
 chequear(
   'pantalla',
@@ -482,8 +552,9 @@ chequear(
 )
 chequear(
   'pantalla',
-  'dice que es sólo lectura: el módulo no modifica Monday',
-  tablero.includes('nada de lo que') && tablero.includes('modifica Monday'),
+  'la bajada dice qué contesta el tablero: el saldo de la cuenta y el vencimiento de lo que debe',
+  tablero.includes('por el estado de su saldo') &&
+    tablero.includes('facturas pends de cancelar por vencimiento'),
 )
 chequear(
   'pantalla',
@@ -498,7 +569,7 @@ chequear(
   enBlanco.includes('Cuentas corrientes alcanzadas') &&
     enBlanco.includes('Deuda por estado de vencimiento') &&
     enBlanco.includes('Cuentas que más deben') &&
-    enBlanco.includes('Deuda pendiente') &&
+    enBlanco.includes('Total deuda pendiente') &&
     enBlanco.includes('Anticipos a favor'),
 )
 chequear(
@@ -535,6 +606,40 @@ chequear(
   'con datos',
   'con el resultado a la vista ya no queda ningún bloque gris',
   !tablero.includes('cbz-skel'),
+)
+
+/* ===== Buscador del listado ===== */
+
+chequear(
+  'buscador',
+  'encuentra por razón social, sin distinguir mayúsculas ni tildes',
+  filtrarCuentas(filas, 'batea').length === 1 &&
+    filtrarCuentas(filas, 'BATEA').length === 1 &&
+    filtrarCuentas(filas, 'agro norte').length === 1,
+)
+chequear(
+  'buscador',
+  'y también por número de cuenta o por código de cliente',
+  filtrarCuentas(filas, 'CTACTE-018').length === 1 &&
+    filtrarCuentas(filas, '4192').length === 1,
+)
+chequear(
+  'buscador',
+  'sin término devuelve la lista tal cual, sin copiarla',
+  filtrarCuentas(filas, '') === filas && filtrarCuentas(filas, '   ') === filas,
+)
+chequear(
+  'buscador',
+  'lo que no coincide con nada deja el listado vacío, no la lista entera',
+  filtrarCuentas(filas, 'no existe esta cuenta').length === 0,
+)
+chequear(
+  'buscador',
+  'la card del listado lo ofrece, debajo del título',
+  tablero.indexOf('Cuentas corrientes alcanzadas') <
+    tablero.indexOf('Buscar por cliente, cuenta corriente o código') &&
+  tablero.indexOf('Buscar por cliente, cuenta corriente o código') <
+    tablero.indexOf('Cuenta / Cliente'),
 )
 
 /* ===== Paginado del listado ===== */

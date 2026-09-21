@@ -109,56 +109,96 @@ export const estadoSaldoDeLabel = (label: string): EstadoSaldo | null => {
 
 /**
  * Los cinco tramos de "🤖Estado de Vencimiento" (`color_mm6symyx`), en orden de GRAVEDAD y con la
- * etiqueta tal como la publica el tablero.
+ * etiqueta y el COLOR tal como los publica el tablero.
  *
- * El `color` es el de la franja en la batería del tablero y el de su punto en la leyenda: un
- * degradé del verde de lo que todavía no venció al rojo profundo de lo que lleva más de sesenta
- * días. Sale de los tokens de la app (ver `base.css`), así que el tablero no introduce una paleta
- * nueva.
+ * Los colores NO son una paleta inventada acá: son los que devuelve la propia columna en su
+ * `labels_colors`, copiados uno por uno. Es lo que hace que una factura se vea del mismo color en la
+ * app y en Monday, que es donde el usuario la vio primero:
+ *
+ *   0 · "Vencido 0 a 15 Dias"   · orange       · #fdab3d
+ *   1 · "No vencido"            · green-shadow · #00c875
+ *   2 · "Vencido 15 a 30 dias"  · sunset       · #ff7575
+ *   3 · "Vencido +60 dias"      · red-shadow   · #df2f4a
+ *   4 · "Vencido 30 a 60  Dias" · dark-red     · #bb3354
+ *
+ * La ÚNICA excepción es "No vencido": el tablero lo pinta de verde y acá va en el negro del texto
+ * común. Lo que todavía no venció no es un logro que haya que destacar —es el estado normal de una
+ * factura—, y el verde le robaba atención a los tramos que sí hay que mirar.
  *
  * El `tono` es el MISMO de la pastilla de vencimiento del RESUMEN DE CTA CTE
- * (`FacturaAdeudada.tonoVencimiento`), para que una factura no se vea de un color en una pantalla y
- * de otro en la otra.
+ * (`FacturaAdeudada.tonoVencimiento`) y lo sigue usando el reparto vencido / al día.
  */
 export const TRAMOS_VENCIMIENTO: readonly {
   valor: TramoVencimiento
-  /** Etiqueta del tablero. Es la que se muestra en el chip del filtro y en la tabla. */
+  /** Etiqueta del tablero. Es la que se muestra en el select del criterio y en la tabla. */
   label: string
   /** Versión corta, para la leyenda de la batería y los ejes. */
   corto: string
   tono: 'ok' | 'alerta' | 'vencida'
+  /** Relleno: el color de la etiqueta en Monday (la franja de la batería, el punto, la pastilla). */
   color: string
 }[] = [
-  { valor: 'noVencido', label: 'No vencido', corto: 'No vencido', tono: 'ok', color: '#00c875' },
+  {
+    valor: 'noVencido',
+    label: 'No vencido',
+    corto: 'No vencido',
+    tono: 'ok',
+    /* El negro del texto de la app, no el verde del tablero (ver arriba). */
+    color: '#1f2937',
+  },
   {
     valor: 'vencido0a15',
     label: 'Vencido 0 a 15 Dias',
     corto: '0 a 15 días',
     tono: 'alerta',
-    color: '#ffcb00',
+    color: '#fdab3d',
   },
   {
     valor: 'vencido15a30',
     label: 'Vencido 15 a 30 dias',
     corto: '15 a 30 días',
     tono: 'alerta',
-    color: '#fdab3d',
+    color: '#ff7575',
   },
   {
     valor: 'vencido30a60',
-    label: 'Vencido + 30 - 60  Dias',
+    label: 'Vencido 30 a 60  Dias',
     corto: '30 a 60 días',
     tono: 'vencida',
-    color: '#e2445c',
+    color: '#bb3354',
   },
   {
     valor: 'vencidoMas60',
-    label: 'Vencido + 60',
+    label: 'Vencido +60 dias',
     corto: '+ 60 días',
     tono: 'vencida',
-    color: '#9c2334',
+    color: '#df2f4a',
   },
 ]
+
+/**
+ * Cómo se pinta la pastilla de un tramo: rellena con su color, y el texto en blanco o en negro
+ * según cuál de los dos se lea encima (ningún color fijo sirve para los cinco).
+ *
+ * "No vencido" es la excepción: va NEUTRA, con el fondo gris de la app y el texto en negro. Su
+ * color es el del texto común, y una pastilla negra rellena terminaba gritando más que las
+ * vencidas —justo al revés de lo que hay que mirar—.
+ */
+export const pastillaDeTramo = (tramo: (typeof TRAMOS_VENCIMIENTO)[number]) =>
+  tramo.valor === 'noVencido'
+    ? { background: '#f1f3f8', color: '#1f2937' }
+    : { background: tramo.color, color: textoClaroSobre(tramo.color) ? '#fff' : '#1f2937' }
+
+/**
+ * El tramo al que pertenece una etiqueta del tablero, para pintarla con SU color. `null` si no es
+ * ninguna de las cinco.
+ *
+ * Va por la etiqueta y no por el índice porque lo usan pantallas que ya tienen el texto y no el
+ * índice —la tabla de facturas se comparte con el RESUMEN DE CTA CTE—. Donde hay índice se usa
+ * aquél, que es más firme (ver `services/monday/cobranza`).
+ */
+export const tramoDeEtiqueta = (etiqueta: string) =>
+  TRAMOS_VENCIMIENTO.find((t) => norm(t.label) === norm(etiqueta)) ?? null
 
 
 /**
@@ -439,17 +479,49 @@ export function ordenarFilas(
 }
 
 /**
- * Las cuentas que más deben, para el ranking. Se dejan afuera las que no deben nada: una barra en
- * cero no dice nada y le roba lugar a las que sí.
+ * Las cuentas a las que hay que reclamarles primero, para el ranking.
+ *
+ * NO es "las que más deben": manda lo VENCIDO y la deuda total desempata. Dos cuentas que deben
+ * 1.700.000 no son el mismo problema si una lo tiene todo al día y la otra 900.000 vencidos —a la
+ * primera no hay nada que reclamarle todavía—, así que ordenar por el total dejaba arriba a quien
+ * no había que llamar. Con lo vencido adelante, el primero de la lista es siempre el que más plata
+ * tiene fuera de término, y entre dos con lo mismo vencido sube el que más debe en total.
+ *
+ * Se dejan afuera las que no deben nada: una barra en cero no dice nada y le roba lugar a las que
+ * sí.
  */
 export const topDeudores = (filas: readonly FilaCobranza[], cuantas: number): FilaCobranza[] =>
-  ordenarFilas(filas, 'pendiente', true)
+  [...filas]
     .filter((f) => f.pendiente > 0)
+    .sort((a, b) => b.vencido - a.vencido || b.pendiente - a.pendiente)
     .slice(0, cuantas)
+
+/**
+ * Las cuentas que coinciden con lo tecleado en el buscador del listado. Se busca en las TRES cosas
+ * con las que el usuario identifica una cuenta —la razón social, el número de la cuenta corriente y
+ * el código del cliente—, porque cualquiera de las tres es lo que puede tener a mano.
+ *
+ * La comparación va normalizada (sin tildes ni mayúsculas) y por "contiene": el que teclea "bate"
+ * está buscando "La Batea S.A", y exigirle el nombre exacto convertiría el buscador en un filtro.
+ * Sin término se devuelve la lista tal cual, sin copiarla.
+ */
+export function filtrarCuentas(
+  filas: readonly FilaCobranza[],
+  termino: string,
+): readonly FilaCobranza[] {
+  const t = norm(termino)
+  if (!t) return filas
+  return filas.filter((f) =>
+    norm(`${f.cuenta.cliente} ${f.cuenta.nro} ${f.cuenta.codigo}`).includes(t),
+  )
+}
 
 /** Cuántas cuentas se muestran por página en la tabla del tablero. */
 export const CUENTAS_POR_PAGINA = 10
 
-/** Cuántas cuentas entran en el ranking de deudores. */
-export const TOP_DEUDORES = 8
+/**
+ * Cuántas cuentas entran en el ranking de deudores. Tres: es una lista para decidir a quién
+ * llamar primero, no el listado de la deuda —ése es la tabla, que las trae todas—.
+ */
+export const TOP_DEUDORES = 3
 

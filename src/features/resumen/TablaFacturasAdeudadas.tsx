@@ -1,3 +1,7 @@
+/* La paleta de vencimiento no es del módulo de cobranza: es la de la COLUMNA del tablero, y vive
+   ahí porque ahí se declaran sus cinco tramos (ver `TRAMOS_VENCIMIENTO`). Esta tabla la usan las
+   dos pantallas que listan facturas adeudadas, así que las dos pintan el mismo estado igual. */
+import { pastillaDeTramo, tramoDeEtiqueta } from '@/lib/cobranza'
 import { desdeIso } from '@/lib/dates'
 import { money } from '@/lib/format'
 import type { FacturaAdeudada } from '@/types'
@@ -15,11 +19,16 @@ const COLUMNAS: readonly ColumnaTabla[] = [
   { titulo: 'Estado de Vencimiento', centrada: true },
 ]
 
-/** Tono de la pastilla de vencimiento → clase de `fact-estado` (la de la tabla de facturas de COBROS). */
-const CLASE_TONO: Record<NonNullable<FacturaAdeudada['tonoVencimiento']>, string> = {
-  ok: 'is-ok',
-  alerta: 'is-parcial',
-  vencida: 'is-pendiente',
+/**
+ * Cómo se pinta la pastilla del estado de vencimiento: con el color que la etiqueta tiene EN EL
+ * TABLERO, como se la ve en Monday (ver `pastillaDeTramo`).
+ *
+ * Una etiqueta que no sea ninguno de los cinco tramos se dibuja sin color: el tablero no dijo de
+ * qué color es, y elegirlo acá sería inventarlo.
+ */
+const pastillaDe = (etiqueta: string) => {
+  const tramo = tramoDeEtiqueta(etiqueta)
+  return tramo ? pastillaDeTramo(tramo) : undefined
 }
 
 /**
@@ -60,8 +69,9 @@ export function TablaFacturasAdeudadas({
           <td className="ant-col-cen">{desdeIso(f.vencimiento) || guion}</td>
           <td className="ant-col-cen">
             {f.estadoVencimiento ? (
-              <span className={`fact-estado ${f.tonoVencimiento ? CLASE_TONO[f.tonoVencimiento] : ''}`}>
-                <span className="fact-estado-dot" />
+              /* Con el color pleno de la etiqueta, el punto de color sobra: era lo que distinguía
+                 un estado de otro cuando la pastilla iba en un tono suave. */
+              <span className="fact-estado" style={pastillaDe(f.estadoVencimiento)}>
                 {f.estadoVencimiento}
               </span>
             ) : (

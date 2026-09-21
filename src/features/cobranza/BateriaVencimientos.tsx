@@ -15,6 +15,10 @@ import { Esqueleto } from './Esqueleto'
  * Los tramos en cero NO se dibujan en la barra pero SÍ se listan en la leyenda, en gris: que un tramo
  * no tenga deuda es un dato tan útil como que la tenga, y esconderlo haría que la leyenda cambiara de
  * alto con cada búsqueda.
+ *
+ * La leyenda tiene CINCO renglones y ninguno más: lo que el tablero no clasificó no se lista. Cuando
+ * hay facturas sin estado de vencimiento cargado, las franjas no llegan a cubrir la barra entera y el
+ * hueco que queda lo dice sin necesidad de un renglón que casi siempre marcaba cero.
  */
 export function BateriaVencimientos({
   porTramo,
@@ -34,14 +38,9 @@ export function BateriaVencimientos({
     importe: porTramo[t.valor],
     pct: proporcion(porTramo[t.valor], pendiente),
   }))
-  /* Lo que la barra no puede repartir: facturas pendientes sin estado de vencimiento cargado en el
-     tablero. Se muestra como resto en gris en vez de estirar los otros tramos. */
-  const repartido = franjas.reduce((acc, f) => acc + f.importe, 0)
-  const sinTramo = Math.max(pendiente - repartido, 0)
-  const pctSinTramo = proporcion(sinTramo, pendiente)
 
   return (
-    <div className="cbz-widget">
+    <div className="cbz-widget cbz-widget--bateria">
       <div className="cbz-widget-head">
         <h3 className="cbz-widget-title">
           <i className="fas fa-layer-group" /> Deuda por estado de vencimiento
@@ -85,13 +84,6 @@ export function BateriaVencimientos({
                 )}
               </span>
             ))}
-        {listo && sinTramo > 0 && (
-          <span
-            className="cbz-bateria-franja cbz-bateria-franja--sin"
-            style={{ width: `${pctSinTramo}%` }}
-            title={`Sin estado de vencimiento: ${money(sinTramo)} (${pctSinTramo}%)`}
-          />
-        )}
       </div>
 
       <ul className="cbz-leyenda">
@@ -115,14 +107,6 @@ export function BateriaVencimientos({
             )}
           </li>
         ))}
-        {listo && sinTramo > 0 && (
-          <li className="cbz-leyenda-item">
-            <span className="cbz-leyenda-punto cbz-leyenda-punto--sin" />
-            <span className="cbz-leyenda-lbl">Sin estado cargado</span>
-            <span className="cbz-leyenda-num">{money(sinTramo)}</span>
-            <span className="cbz-leyenda-pct">{pctSinTramo}%</span>
-          </li>
-        )}
       </ul>
     </div>
   )
