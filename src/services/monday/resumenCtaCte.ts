@@ -18,7 +18,6 @@ import {
   comprobanteDeMovimiento,
   dentroDelPeriodo,
   nroDeFactura,
-  periodoDeRango,
   reciboEn,
   type ClaseMovimiento,
 } from '@/lib/resumenCtaCte'
@@ -29,7 +28,8 @@ import type {
   MedioEnvio,
   MovimientoCtaCte,
   MovimientosDelPeriodo,
-  RangoResumen,
+  PeriodoResumen,
+  TramoVencimiento,
 } from '@/types'
 import {
   BOARDS,
@@ -319,10 +319,8 @@ async function getDatosFacturas(ids: readonly string[]): Promise<Map<string, Dat
  */
 export async function getMovimientosCtaCte(
   cliente: Pick<Cliente, 'id' | 'codigo' | 'name'>,
-  rango: RangoResumen,
+  periodo: PeriodoResumen,
 ): Promise<MovimientosDelPeriodo> {
-  const periodo = periodoDeRango(rango)
-
   if (!mondayHabilitado()) return movimientosMock(cliente, periodo)
 
   const ctaCteId = await getCtaCteDeCliente(cliente.id)
@@ -439,6 +437,15 @@ function movimientosMock(
 /** Cuántas facturas se piden por página de la consulta (el máximo que acepta `items_page`). */
 const FACTURAS_POR_CONSULTA = 500
 
+/**
+ * Índice de "🤖Estado de Vencimiento" → tramo. Es `ESTADO_VENCIMIENTO_INDEX` dado vuelta, y vive acá
+ * —donde se mapea la factura— para que el resumen y la GESTIÓN DE COBRANZA lean el mismo tramo de la
+ * misma columna.
+ */
+export const TRAMO_DE_INDICE: Record<number, TramoVencimiento> = Object.fromEntries(
+  Object.entries(ESTADO_VENCIMIENTO_INDEX).map(([tramo, indice]) => [indice, tramo]),
+) as Record<number, TramoVencimiento>
+
 /** Índice de "🤖Estado de Vencimiento" → tono con el que se colorea en la tabla. */
 const TONO_DE_VENCIMIENTO: Record<number, FacturaAdeudada['tonoVencimiento']> = {
   [ESTADO_VENCIMIENTO_INDEX.noVencido]: 'ok',
@@ -499,6 +506,7 @@ export function mapFacturaAdeudada(
     estadoVencimiento: vencimiento?.text?.trim() ?? '',
     tonoVencimiento:
       vencimiento?.index != null ? (TONO_DE_VENCIMIENTO[vencimiento.index] ?? null) : null,
+    tramo: vencimiento?.index != null ? (TRAMO_DE_INDICE[vencimiento.index] ?? null) : null,
   }
 }
 
@@ -572,6 +580,7 @@ function facturasAdeudadasMock(cliente: Pick<Cliente, 'codigo' | 'name'>): Factu
       pendiente: fp.pendiente,
       estadoVencimiento: vencida ? 'Vencido + 60' : 'No vencido',
       tonoVencimiento: vencida ? 'vencida' : 'ok',
+      tramo: vencida ? 'vencido30a60' : 'noVencido',
     }
   }).sort(porVencimiento)
 }

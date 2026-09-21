@@ -1,13 +1,11 @@
 import { money } from '@/lib/format'
-import { detalleDeMovimientos, estadoDeCuenta, periodoDeRango, rotuloRango } from '@/lib/resumenCtaCte'
+import { detalleDeMovimientos, estadoDeCuenta } from '@/lib/resumenCtaCte'
 import { hoyIso } from '@/lib/dates'
 import type {
-  Cliente,
   FacturaAdeudada,
   FaseEmision,
   FormatoResumen,
   MovimientoCtaCte,
-  RangoResumen,
 } from '@/types'
 import { CardDocumentoCtaCte } from './CardDocumentoCtaCte'
 import { ComprobantesPendientes } from './ComprobantesPendientes'
@@ -17,13 +15,16 @@ import { DetalleMovimientos } from './DetalleMovimientos'
 const BADGE_DOCUMENTO = 'Documento Cta Cte'
 
 interface ResumenCtaCteAGenerarProps {
-  cliente: Cliente
   movimientos: readonly MovimientoCtaCte[]
-  rango: RangoResumen | null
+  /** Cómo se nombra el período elegido en el paso 1 ("Últimos 30 días · 01/01/2025 al 01/07/2025"). */
+  rotuloPeriodo: string
+  /** Primer día del período, en ISO: es la fecha de la fila de SALDO INICIAL del documento. */
+  desde: string
   formato: FormatoResumen | null
-  mercaderiaPendFacturar: number
   /** El usuario declaró en el paso 1 que el resumen va CON el estado de la cuenta corriente. */
   incluyeEstado: boolean
+  /** La lectura de la cuenta todavía está en vuelo: el documento se muestra en blanco, no en cero. */
+  cargandoMovimientos: boolean
   facturas: readonly FacturaAdeudada[]
   cargandoFacturas: boolean
   fase: FaseEmision
@@ -42,12 +43,12 @@ interface ResumenCtaCteAGenerarProps {
  * Las dos llevan la pastilla "Documento Cta Cte" y, si ya se eligió, la del formato.
  */
 export function ResumenCtaCteAGenerar({
-  cliente,
   movimientos,
-  rango,
+  rotuloPeriodo,
+  desde,
   formato,
-  mercaderiaPendFacturar,
   incluyeEstado,
+  cargandoMovimientos,
   facturas,
   cargandoFacturas,
   fase,
@@ -67,19 +68,18 @@ export function ResumenCtaCteAGenerar({
         titulo="Resumen de Cta Cte"
         badges={badges}
         datos={[
-          { rotulo: 'Movimientos', valor: movimientos.length },
-          { rotulo: 'Período', valor: rango ? rotuloRango(rango) : '--' },
-          { rotulo: 'Saldo final', valor: money(detalle.saldo), fuerte: true },
+          { rotulo: 'Movimientos', valor: cargandoMovimientos ? '--' : movimientos.length },
+          { rotulo: 'Período', valor: rotuloPeriodo || '--' },
+          {
+            rotulo: 'Saldo final',
+            valor: cargandoMovimientos ? '--' : money(detalle.saldo),
+            fuerte: true,
+          },
         ]}
         fase={fase}
         estado={estado}
       >
-        <DetalleMovimientos
-          movimientos={movimientos}
-          desde={rango ? periodoDeRango(rango).desde : ''}
-          cliente={cliente}
-          mercaderiaPendFacturar={mercaderiaPendFacturar}
-        />
+        <DetalleMovimientos movimientos={movimientos} desde={desde} cargando={cargandoMovimientos} />
       </CardDocumentoCtaCte>
 
       {incluyeEstado && (

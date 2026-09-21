@@ -1,13 +1,291 @@
 /**
- * RESUMEN DE CTA CTE. Las vistas heredan el marco de `.cobro-v2` (paso 2 y 3) y de `.recibo-v2`
- * (paso 4); acá vive sólo lo propio: la caja del estado de cuenta en rojo, el selector del período,
- * el campo de formato y la tabla de movimientos.
+ * RESUMEN DE CTA CTE. Las vistas heredan el marco de `.cliente-v2` (paso 1) y de `.recibo-v2`
+ * (paso 2); acá vive sólo lo propio: el formulario que define qué movimientos entran, el campo de
+ * formato y las tablas de los documentos.
  */
 
-/* ===== Paso 1 · "Estado de Cta Cte" sin elegir al intentar avanzar ===== */
-.cliente-v2 .cfgbox--error {
+/* ===== Paso 2 · el formulario de "Configurar Emisión de Resumen de Cuenta" =====
+   La card lleva encabezado gris con su ícono y el cuerpo en blanco, como las demás cards con título
+   de la app. Los dos filtros —la ventana de días y el rango de fechas— van en la MISMA línea: son
+   dos maneras de acotar lo mismo. */
+.resumen-v2 .res-form {
+  padding: 0;
+  margin-bottom: 0;
+  overflow: hidden;
+}
+.resumen-v2 .res-form-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border, #e6e9ef);
+  background: var(--tint-neutral, #f7f8fa);
+  color: var(--primary-blue, #0073ea);
+}
+.resumen-v2 .res-form-head-tit {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-dark, #323338);
+}
+.resumen-v2 .res-form-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px;
+  /* En blanco aunque la card de la etapa venga tintada: es lo que hace que el encabezado gris se
+     lea como encabezado y no como una franja más. */
+  background: #fff;
+}
+
+.resumen-v2 .res-form-fila {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 32px;
+}
+.resumen-v2 .res-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.resumen-v2 .res-campo--ancho {
+  flex: 0 1 340px;
+}
+.resumen-v2 .res-campo-lbl {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dark, #323338);
+}
+.resumen-v2 .res-campo-req {
+  margin-left: 3px;
+  color: var(--red);
+}
+.resumen-v2 .res-campo-in {
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border, #e6e9ef);
+  border-radius: 8px;
+  background: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text-dark, #323338);
+}
+.resumen-v2 select.res-campo-in {
+  cursor: pointer;
+}
+/* Sin elegir: el placeholder se ve como tal y no como una opción ya tomada. */
+.resumen-v2 .res-campo-in--ph {
+  color: var(--text-gray, #676879);
+}
+.resumen-v2 .res-campo-in:focus-visible {
+  outline: none;
+  border-color: var(--primary-blue, #0073ea);
+  box-shadow: 0 0 0 3px rgba(0, 115, 234, 0.16);
+}
+.resumen-v2 .res-campo-in:disabled {
+  cursor: not-allowed;
+  background: var(--tint-neutral, #f7f8fa);
+  color: var(--text-gray, #676879);
+}
+.resumen-v2 .res-campo-in--error,
+.resumen-v2 .res-campo-in--error:focus {
   border-color: var(--red);
   box-shadow: 0 0 0 3px rgba(226, 68, 92, 0.14);
+}
+
+/* Las dos fechas y, a su derecha, el atajo para vaciarlas. */
+.resumen-v2 .res-fechas {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.resumen-v2 .res-fechas .res-campo-in {
+  width: 180px;
+}
+.resumen-v2 .res-fechas-nexo {
+  font-size: 13px;
+  color: var(--text-gray, #676879);
+}
+.resumen-v2 .res-form-limpiar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--primary-blue, #0073ea);
+  cursor: pointer;
+}
+.resumen-v2 .res-form-limpiar:hover {
+  text-decoration: underline;
+}
+
+/* Lo que quedó mal cargado. Es lo único que el formulario escribe de más. */
+.resumen-v2 .res-form-nota {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: -8px 0 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--red);
+  font-weight: 600;
+}
+.resumen-v2 .res-form-nota i {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+/* La última pregunta y el botón que dispara la consulta, en el mismo renglón. */
+.resumen-v2 .res-form-cierre {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+}
+.resumen-v2 .res-form-pregunta {
+  /* Ocupa lo que necesitan sus dos cajas, no el ancho entero: el botón va PEGADO a ellas, con la
+     misma separación que hay entre una y otra. */
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+.resumen-v2 .res-form-pregunta > legend {
+  padding: 0;
+  margin-bottom: 5px;
+}
+.resumen-v2 .res-opciones {
+  display: flex;
+  /* Las dos cajas van SIEMPRE en la misma línea: si se parten, el botón que las sigue queda
+     colgado en el medio del formulario. En pantallas angostas se permite el corte (más abajo). */
+  flex-wrap: nowrap;
+  gap: 16px;
+}
+.resumen-v2 .res-opcion {
+  flex: 0 0 200px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1.5px solid var(--border, #e6e9ef);
+  border-radius: 10px;
+  background: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+/* La respuesta elegida se marca por el BORDE: verde la que suma el estado de cuenta al documento,
+   gris la que no. Sin tildes: son dos opciones a la vista, y el color ya dice cuál está tomada. */
+.resumen-v2 .res-opcion--incluir {
+  border-color: var(--green);
+  background: rgba(0, 200, 117, 0.06);
+}
+.resumen-v2 .res-opcion--no_incluir {
+  border-color: var(--text-gray, #676879);
+  background: var(--tint-neutral, #f7f8fa);
+}
+.resumen-v2 .res-opcion--error {
+  border-color: var(--red);
+}
+.resumen-v2 .res-opcion--off {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+/* El radio real se esconde pero sigue ahí: es lo que teclado y lector de pantalla usan, y de su
+   foco sale el anillo de la caja. */
+.resumen-v2 .res-opcion-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.resumen-v2 .res-opcion:focus-within {
+  box-shadow: 0 0 0 3px rgba(0, 115, 234, 0.16);
+}
+.resumen-v2 .res-opcion-ic {
+  font-size: 15px;
+  color: var(--text-gray, #676879);
+}
+.resumen-v2 .res-opcion--incluir .res-opcion-ic {
+  color: var(--green);
+}
+.resumen-v2 .res-opcion-txt {
+  font-weight: 600;
+  color: var(--text-dark, #323338);
+}
+
+/* El botón que dispara la consulta: el MISMO del buscador de clientes del paso 1. */
+.resumen-v2 .btn-buscar {
+  flex-shrink: 0;
+  height: 44px;
+  padding: 0 24px;
+  border: none;
+  border-radius: 8px;
+  background: var(--c-badge-blue-text, #0073ea);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.2s;
+}
+.resumen-v2 .btn-buscar:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+.resumen-v2 .btn-buscar:disabled {
+  background: #9dbdf5;
+  cursor: not-allowed;
+}
+/* Mismo alto que las cajas de la pregunta, para que los tres queden en una sola línea. */
+.resumen-v2 .res-buscar {
+  height: 46px;
+}
+
+/* El pie de la etapa respira lo mismo que en el paso 1. `.cobro-v2` le da 24px de margen y
+   `.paso-body` —que en ese marco es una columna flex— suma su gap de 16: juntos dejaban 40, contra
+   los 24 del paso 1, donde el cuerpo es un bloque y los márgenes colapsan. Se descuenta el gap. */
+.resumen-v2 .actions-footer {
+  margin-top: 8px;
+}
+
+/* En qué anda la consulta: centrado al pie del formulario. El spinner se vuelve tilde al terminar.
+   El renglón RESERVA su alto desde el principio —`min-height`—, así la card mide lo mismo antes y
+   después de buscar y nada salta cuando la consulta arranca. */
+.resumen-v2 .res-busqueda {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 16px;
+  border-top: 1px solid var(--border, #e6e9ef);
+  font-size: 14px;
+  color: var(--text-gray, #676879);
+}
+.resumen-v2 .res-busqueda--buscando {
+  color: var(--text-gray, #676879);
+  font-weight: 600;
+}
+.resumen-v2 .res-busqueda--listo {
+  color: var(--text-dark, #323338);
+  font-weight: 600;
+}
+.resumen-v2 .res-busqueda--listo i {
+  color: var(--green);
+}
+.resumen-v2 .res-busqueda--fallo {
+  color: var(--red);
+  font-weight: 600;
 }
 
 /* ===== Selectores obligatorios (rango y formato) ===== */
@@ -28,46 +306,6 @@
 .resumen-v2 select.full:disabled {
   cursor: not-allowed;
   background: var(--tint-neutral);
-}
-
-/* ===== Paso 2 · período ===== */
-.resumen-v2 .res-rango {
-  display: flex;
-  align-items: flex-end;
-  gap: 20px;
-  flex-wrap: wrap;
-  margin: -4px 0 18px;
-}
-.resumen-v2 .res-rango-campo {
-  margin-bottom: 0;
-}
-.resumen-v2 .res-rango-sel {
-  width: 240px;
-}
-.resumen-v2 .res-periodo {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  min-height: 38px;
-  font-size: 13px;
-  color: var(--c-text-secondary, var(--text-gray));
-}
-
-/* Movimientos que quedaron afuera por no tener fecha: hay que mirarlo, no es un error de la app. */
-.resumen-v2 .res-sin-fecha {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 14px 0 0;
-  font-size: 13px;
-  line-height: 18px;
-  color: #8a5a00;
-}
-.resumen-v2 .res-sin-fecha i {
-  flex: 0 0 auto;
-  margin-top: 2px;
-  color: var(--orange);
 }
 
 /* ===== Tabla de movimientos =====
@@ -122,20 +360,35 @@
 .resumen-v2 .res-formato-sel {
   width: 100%;
 }
-.resumen-v2 .res-vacio {
-  margin: 0;
-  font-size: 13px;
-  color: var(--r-text-label, var(--text-gray));
-}
-/* El aviso de movimientos sin fecha, entre el documento y el envío. */
-.recibo-v2.resumen-v2 .res-sin-fecha {
-  margin: 0;
-}
-
 /* Botones que cierran la operación, en MAYÚSCULAS por clase: el lector de pantalla sigue leyendo el
    texto normal (en mayúsculas lo deletrearía como una sigla). */
 .btn-mayus {
   text-transform: uppercase;
+}
+
+/* ===== "Estado de Cta Cte": cada fila VENCIDA con el color de su tramo =====
+   Las cuatro columnas que hablan del vencimiento —comprobante, pendiente, fecha y estado— se pintan
+   con el color del tramo, el mismo con el que el tablero etiqueta la factura (ver
+   `TRAMOS_VENCIMIENTO`), todas con el MISMO tono y el mismo grosor. Los colores son los de esa
+   escala, oscurecidos lo necesario para que el texto se lea sobre blanco: el amarillo del tablero,
+   tal cual, no se lee.
+
+   Lo que todavía no venció no lleva color: queda en el negro de la tabla. */
+.recibo-v2 .doc-tabla .doc-venc .doc-venc-txt {
+  color: var(--doc-venc);
+  font-weight: 400;
+}
+.recibo-v2 .doc-tabla .doc-venc--vencido0a15 {
+  --doc-venc: #a35a00;
+}
+.recibo-v2 .doc-tabla .doc-venc--vencido15a30 {
+  --doc-venc: #d97706;
+}
+.recibo-v2 .doc-tabla .doc-venc--vencido30a60 {
+  --doc-venc: #e2445c;
+}
+.recibo-v2 .doc-tabla .doc-venc--vencidoMas60 {
+  --doc-venc: #9c2334;
 }
 
 /* ===== Paginador de la tabla de movimientos ===== */
@@ -199,12 +452,6 @@
   color: var(--c-text-secondary);
 }
 
-/* Pastilla de "Estado de Vencimiento" sin vencer: la misma `fact-estado` de la tabla de facturas de
-   COBROS (que trae los tonos rojo y naranja), en verde. */
-.fact-estado.is-ok {
-  background: #e7f8ef;
-  color: #067647;
-}
 
 /* ===== Documentos de Cta Cte (Comprobante a generar) =====
    Las tablas son las del recibo (`comp-table rec-tabla`: banda gris en el encabezado, rótulos en
@@ -278,4 +525,14 @@
 }
 .recibo-v2 .doc-metrica-val--rojo {
   color: #dc2626;
+}
+
+/* En pantallas angostas las cajas de la pregunta pueden partirse, y el botón baja con ellas. */
+@media (max-width: 900px) {
+  .resumen-v2 .res-opciones {
+    flex-wrap: wrap;
+  }
+  .resumen-v2 .res-opcion {
+    flex: 1 1 180px;
+  }
 }

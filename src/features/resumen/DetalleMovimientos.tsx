@@ -1,51 +1,41 @@
-import { creditoCliente, usoDeLinea } from '@/lib/selectors'
 import { desdeIso, desdeIsoCorta, desdeIsoDiaMes } from '@/lib/dates'
 import { money } from '@/lib/format'
 import { detalleDeMovimientos } from '@/lib/resumenCtaCte'
-import type { Cliente, MovimientoCtaCte } from '@/types'
-import { MetricasDocumento, type MetricaDocumento } from './MetricasDocumento'
+import type { MovimientoCtaCte } from '@/types'
 
 interface DetalleMovimientosProps {
   movimientos: readonly MovimientoCtaCte[]
   /** Primer día del período, en ISO: es la fecha de la fila de SALDO INICIAL. */
   desde: string
-  /** De acá salen el límite, la línea utilizada y el disponible: los mismos que muestra su ficha. */
-  cliente: Cliente
-  /** "🤖Remito Pends de Facturar" de la cuenta. */
-  mercaderiaPendFacturar: number
+  /** La lectura de la cuenta está en vuelo: se avisa en vez de mostrar un documento vacío. */
+  cargando?: boolean
 }
 
 /** Un importe que la fila no mueve se deja vacío, como en el documento. */
 const importeOVacio = (n: number) => (n === 0 ? '' : money(n))
 
-/** Color de "Uso de línea": el mismo semáforo que la ficha del cliente usa para el crédito. */
-const TONO_CREDITO: Record<ReturnType<typeof creditoCliente>['clase'], MetricaDocumento['tono']> = {
-  'v-green': 'verde',
-  'v-orange': 'naranja',
-  'v-red': 'rojo',
-}
-
 /**
- * El cuerpo del documento RESUMEN DE CTA CTE: el "Detalle de Movimientos" del período y, al pie, la
- * situación de crédito de la cuenta.
+ * El cuerpo del documento RESUMEN DE CTA CTE: el "Detalle de Movimientos" del período.
  *
- *   · FECHA · COMPROBANTE · VENCIMIENTO · DEBE $ · HABER $ · SALDO $
+ *   · FECHA · COMPROBANTE · VENCIMIENTO · SALDO INICIAL $ · DEBE $ · HABER $ · SALDO $
+ *   · el SALDO INICIAL de cada fila ("🤖Saldo Inicial", numeric_mm58aacc) es con cuánto venía la
+ *     cuenta ANTES de ese movimiento: el valor sobre el que después opera su debe o su haber.
  *   · abre con la fila de SALDO INICIAL (con la fecha en que empieza el período) y cierra con la de
  *     TOTAL: lo que sumó el debe, lo que sumó el haber y el saldo con el que termina.
- *   · al pie: LÍMITE DE CRÉDITO, LÍNEA UTILIZADA, CRÉDITO DISPONIBLE, USO DE LÍNEA y MERCADERÍA PEND.
- *     FACTURAR.
  *
  * El DEBE es lo que el movimiento suma a la cuenta (sus ventas) y el HABER lo que resta (sus cobros).
  * El vencimiento sólo lo tienen las ventas pendientes de cobro.
+ *
+ * La situación de CRÉDITO de la cuenta —límite, línea utilizada, disponible— no va en el documento:
+ * el resumen dice qué se movió en el período, y el crédito es una foto de hoy que el cliente ya ve
+ * en su ficha.
  */
 export function DetalleMovimientos({
   movimientos,
   desde,
-  cliente,
-  mercaderiaPendFacturar,
+  cargando = false,
 }: DetalleMovimientosProps) {
   const detalle = detalleDeMovimientos(movimientos)
-  const uso = usoDeLinea(cliente.limit, cliente.lineaUtilizada)
 
   return (
     <>
@@ -56,23 +46,31 @@ export function DetalleMovimientos({
             <th>Fecha</th>
             <th>Comprobante</th>
             <th className="ta-c">Vencimiento</th>
+            <th className="ta-r">Saldo Inicial $</th>
             <th className="ta-r">Debe $</th>
             <th className="ta-r">Haber $</th>
             <th className="ta-r">Saldo $</th>
           </tr>
         </thead>
         <tbody>
-          <tr className="doc-fila-inicial">
-            <td>{desdeIso(desde)}</td>
-            <td>Saldo Inicial</td>
-            <td />
-            <td />
-            <td />
-            <td className="ta-r">{money(detalle.saldoInicial)}</td>
-          </tr>
-          {movimientos.length === 0 ? (
+          {!cargando && (
+            <tr className="doc-fila-inicial">
+              <td>{desdeIso(desde)}</td>
+              <td>Saldo Inicial</td>
+              <td />
+              <td />
+              <td />
+              <td />
+              <td className="ta-r">{money(detalle.saldoInicial)}</td>
+            </tr>
+          )}
+          {cargando ? (
             <tr className="rec-vacia">
-              <td colSpan={6}>La cuenta corriente no tiene movimientos en este período.</td>
+              <td colSpan={7}>Buscando los movimientos de la cuenta corriente...</td>
+            </tr>
+          ) : movimientos.length === 0 ? (
+            <tr className="rec-vacia">
+              <td colSpan={7}>La cuenta corriente no tiene movimientos en este período.</td>
             </tr>
           ) : (
             movimientos.map((m) => (
@@ -82,6 +80,7 @@ export function DetalleMovimientos({
                 <td className="ta-c">
                   {m.esVentaPendiente && m.vencimiento ? desdeIsoDiaMes(m.vencimiento) : ''}
                 </td>
+                <td className="ta-r">{money(m.saldoInicial)}</td>
                 <td className="ta-r">{importeOVacio(m.ventas)}</td>
                 <td className="ta-r">{importeOVacio(m.cobros)}</td>
                 <td className="ta-r">{money(m.saldoFinal)}</td>
@@ -91,27 +90,14 @@ export function DetalleMovimientos({
         </tbody>
         <tfoot>
           <tr>
-            <td colSpan={3}>TOTAL</td>
-            <td className="ta-r">{money(detalle.debe)}</td>
-            <td className="ta-r">{money(detalle.haber)}</td>
-            <td className="ta-r">{money(detalle.saldo)}</td>
+            {/* El saldo inicial no se totaliza: cada fila trae el suyo, el de ANTES de moverse. */}
+            <td colSpan={4}>TOTAL</td>
+            <td className="ta-r">{cargando ? '--' : money(detalle.debe)}</td>
+            <td className="ta-r">{cargando ? '--' : money(detalle.haber)}</td>
+            <td className="ta-r">{cargando ? '--' : money(detalle.saldo)}</td>
           </tr>
         </tfoot>
       </table>
-
-      <MetricasDocumento
-        metricas={[
-          { rotulo: 'Límite de crédito', valor: money(cliente.limit) },
-          { rotulo: 'Línea utilizada', valor: money(cliente.lineaUtilizada) },
-          { rotulo: 'Crédito disponible', valor: money(cliente.disponible) },
-          {
-            rotulo: 'Uso de línea',
-            valor: uso === null ? '—' : `${uso.toFixed(2).replace('.', ',')}%`,
-            tono: uso === null ? undefined : TONO_CREDITO[creditoCliente(cliente).clase],
-          },
-          { rotulo: 'Mercadería pend. facturar', valor: money(mercaderiaPendFacturar) },
-        ]}
-      />
     </>
   )
 }

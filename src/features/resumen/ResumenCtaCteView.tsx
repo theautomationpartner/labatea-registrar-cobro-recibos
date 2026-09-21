@@ -5,7 +5,8 @@ import { RESUMEN_CTA_CTE_EMISIBLE } from '@/features/shared/emisiones'
 import { EnviarDocumento } from '@/features/shared/EnviarDocumento'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
 import { descripcionDePaso, etiquetaDePaso, numeroDePaso, pasoAnterior } from '@/lib/pasos'
-import { periodoDeRango } from '@/lib/resumenCtaCte'
+import { periodoDelCriterio, rotuloCriterio } from '@/lib/resumenCtaCte'
+import { criterioResumen } from '@/state/appState'
 import { useApp, useDispatch } from '@/state/hooks'
 import { FichaResumenCtaCte } from './FichaResumenCtaCte'
 import { ResumenCtaCteAGenerar } from './ResumenCtaCteAGenerar'
@@ -13,42 +14,52 @@ import { useFacturasAdeudadas } from './useFacturasAdeudadas'
 import { useMovimientosCtaCte } from './useMovimientosCtaCte'
 
 /** Qué ventana está abierta, si hay una. */
-type Aviso = 'sin-formato' | 'sin-periodo' | 'sin-cuenta' | 'sin-emitir'
+type Aviso = 'sin-formato' | 'sin-periodo' | 'cargando' | 'fallo' | 'sin-cuenta' | 'sin-emitir'
 
 /**
- * RESUMEN DE CTA CTE · paso 4: emitir el resumen y enviárselo al cliente. Misma grilla que la
- * emisión del recibo —la ficha con el botón a la izquierda, el documento y su envío a la derecha—.
+ * RESUMEN DE CTA CTE · paso 2 y último: emitir el resumen y enviárselo al cliente. Misma grilla que
+ * la emisión del recibo —la ficha con el botón a la izquierda, el documento y su envío a la derecha—.
  *
- * Emitir NO crea un ítem: deja escrito el formato en la cuenta corriente del cliente y le pide al
+ * ACÁ se consulta la cuenta: al entrar a esta etapa salen las dos lecturas que arman los documentos
+ * —los movimientos del período y, si el resumen lleva el estado de la cuenta, las facturas que el
+ * cliente debe—, con lo elegido en el paso 1. Los resultados se ven en las cards "Resumen de Cta
+ * Cte" y "Estado de Cta Cte", que es donde tienen sentido: ya con la forma del documento.
+ *
+ * Emitir NO crea un ítem: deja escrito el pedido en la cuenta corriente del cliente y le pide al
  * tablero que genere el archivo, y se sigue esa generación hasta que cierre (ver
  * `RESUMEN_CTA_CTE_EMISIBLE`). El envío se habilita recién con el archivo generado.
  */
 export function ResumenCtaCteView() {
+  const state = useApp()
   const {
     cliente,
     tipoOperacion,
     movimientosCtaCte,
     mercaderiaPendFacturar,
     ctaCteId,
-    resumenRango,
     resumenFormato,
     resumenEstadoCtaCte,
     facturasAdeudadas,
-  } = useApp()
+  } = state
   const dispatch = useDispatch()
-  /* Si se llega por el stepper sin haber pasado por el período —o la lista quedó de otro—, se lee
-     acá: la ficha y el documento necesitan los movimientos. */
-  const { cargando, listo } = useMovimientosCtaCte()
-  /* Las facturas del estado de cuenta: ya leídas en la etapa anterior (caché), o se leen acá. */
-  const facturasLeidas = useFacturasAdeudadas()
+
+  const criterio = criterioResumen(state)
+  const { periodo } = periodoDelCriterio(criterio)
   const incluyeEstado = resumenEstadoCtaCte === 'INCLUIR'
+  /* Las dos lecturas de la etapa. Las facturas SÓLO si el resumen las va a mostrar: sin el estado de
+     la cuenta no hay documento que las liste. */
+  const lectura = useMovimientosCtaCte()
+  const facturas = useFacturasAdeudadas(incluyeEstado)
+
   const { fase, estado, error, puedeReintentar, emitir } = useEmision(RESUMEN_CTA_CTE_EMISIBLE)
   const [aviso, setAviso] = useState<Aviso | null>(null)
   const [marcarFormato, setMarcarFormato] = useState(false)
 
-  const anterior = pasoAnterior('resumenCtaCte', tipoOperacion, incluyeEstado)
-  const movimientos = listo ? movimientosCtaCte : []
+  const anterior = pasoAnterior('resumenCtaCte', tipoOperacion)
+  const movimientos = lectura.listo ? movimientosCtaCte : []
   const saldoFinal = movimientos.length > 0 ? movimientos[movimientos.length - 1].saldoFinal : 0
+  /* La cuenta se leyó y el cliente no tiene ninguna asignada: no hay sobre qué emitir. */
+  const sinCuenta = lectura.listo && ctaCteId === null
 
   const emitirResumen = () => {
     /* El formato primero: es el único dato de ESTA etapa, y el que la ficha marca en rojo. */
@@ -57,21 +68,24 @@ export function ResumenCtaCteView() {
       setAviso('sin-formato')
       return
     }
-    if (!resumenRango || cargando) {
+    /* Después, lo que se trae del paso 1 y de su lectura, en el orden en que puede faltar. */
+    if (!periodo) {
       setAviso('sin-periodo')
+      return
+    }
+    if (lectura.cargando) {
+      setAviso('cargando')
+      return
+    }
+    if (lectura.fallo) {
+      setAviso('fallo')
       return
     }
     if (!ctaCteId) {
       setAviso('sin-cuenta')
       return
     }
-    /* El período se calcula AL EMITIR, contra la fecha de hoy: es el mismo que muestra la ficha. */
-    void emitir({
-      ctaCteId,
-      formato: resumenFormato,
-      periodo: periodoDeRango(resumenRango),
-      incluyeEstado,
-    })
+    void emitir({ ctaCteId, formato: resumenFormato, periodo, incluyeEstado })
   }
 
   /* Cierra la operación y deja la app lista para la próxima. Sin el resumen emitido el botón sigue
@@ -90,7 +104,7 @@ export function ResumenCtaCteView() {
 
       <div className="paso-body">
         <PasoTitulo
-          numero={numeroDePaso('resumenCtaCte', tipoOperacion, incluyeEstado)}
+          numero={numeroDePaso('resumenCtaCte', tipoOperacion)}
           titulo={etiquetaDePaso('resumenCtaCte', tipoOperacion)}
           descripcion={descripcionDePaso('resumenCtaCte', tipoOperacion)}
         />
@@ -104,8 +118,9 @@ export function ResumenCtaCteView() {
           <div className="recibo-grid">
             <FichaResumenCtaCte
               cliente={cliente}
+              rotuloPeriodo={rotuloCriterio(criterio)}
               saldoFinal={saldoFinal}
-              mercaderiaPendFacturar={listo ? mercaderiaPendFacturar : 0}
+              mercaderiaPendFacturar={lectura.listo ? mercaderiaPendFacturar : 0}
               fase={fase}
               error={error}
               puedeReintentar={puedeReintentar}
@@ -114,15 +129,34 @@ export function ResumenCtaCteView() {
             />
 
             <div className="recibo-col-der">
+              {/* La lectura falló: el documento no se puede armar, y se ofrece volver a intentarla
+                  sin salir de la etapa. */}
+              {lectura.fallo && (
+                <div className="card rec-vacio">
+                  <i className="fas fa-triangle-exclamation" /> No se pudieron leer los movimientos
+                  de la cuenta corriente.{' '}
+                  <button type="button" className="cobro-reintentar" onClick={lectura.reintentar}>
+                    Reintentar
+                  </button>
+                </div>
+              )}
+              {sinCuenta && (
+                <div className="card rec-vacio">
+                  <i className="fas fa-circle-exclamation" /> <strong>{cliente.name}</strong> no
+                  tiene una cuenta corriente asignada en el tablero de Personas, así que no hay
+                  movimientos que resumir.
+                </div>
+              )}
+
               <ResumenCtaCteAGenerar
-                cliente={cliente}
                 movimientos={movimientos}
-                rango={resumenRango}
+                rotuloPeriodo={rotuloCriterio(criterio)}
+                desde={periodo?.desde ?? ''}
                 formato={resumenFormato}
-                mercaderiaPendFacturar={listo ? mercaderiaPendFacturar : 0}
                 incluyeEstado={incluyeEstado}
-                facturas={facturasLeidas.listo ? facturasAdeudadas : []}
-                cargandoFacturas={facturasLeidas.cargando}
+                cargandoMovimientos={lectura.cargando}
+                facturas={facturas.listo ? facturasAdeudadas : []}
+                cargandoFacturas={facturas.cargando}
                 fase={fase}
                 estado={estado}
               />
@@ -156,9 +190,20 @@ export function ResumenCtaCteView() {
       )}
       {aviso === 'sin-periodo' && (
         <AvisoModal titulo="Falta el período del resumen" onClose={() => setAviso(null)}>
-          Todavía no están los movimientos del período. Volvé al paso{' '}
-          {numeroDePaso('rangoFechas', tipoOperacion, incluyeEstado)} para elegir el rango de fechas,
-          terminen de cargar.
+          No hay un período definido para el resumen. Volvé al paso{' '}
+          {numeroDePaso('cliente', tipoOperacion)} e indicá qué movimientos de la cuenta corriente
+          entran.
+        </AvisoModal>
+      )}
+      {aviso === 'cargando' && (
+        <AvisoModal titulo="Los movimientos todavía se están cargando" onClose={() => setAviso(null)}>
+          Esperá a que terminen de cargarse los movimientos del período y volvé a intentar.
+        </AvisoModal>
+      )}
+      {aviso === 'fallo' && (
+        <AvisoModal titulo="No se pudieron leer los movimientos" onClose={() => setAviso(null)}>
+          Sin los movimientos de la cuenta corriente no se puede armar el resumen. Usá
+          <strong> Reintentar</strong> y, cuando carguen, emitilo.
         </AvisoModal>
       )}
       {aviso === 'sin-cuenta' && (

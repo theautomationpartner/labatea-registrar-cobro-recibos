@@ -1,18 +1,14 @@
 import { Avatar } from '@/components/ui/Avatar'
 import { Fila } from '@/features/recibo/ResumenRecibo'
-import { desdeIso } from '@/lib/dates'
 import { money } from '@/lib/format'
-import {
-  FORMATOS_RESUMEN,
-  OPCIONES_ESTADO_CTA_CTE,
-  periodoDeRango,
-  rotuloRango,
-} from '@/lib/resumenCtaCte'
+import { FORMATOS_RESUMEN, OPCIONES_ESTADO_CTA_CTE } from '@/lib/resumenCtaCte'
 import { useApp, useDispatch } from '@/state/hooks'
 import type { Cliente, ErrorEmision, FaseEmision, FormatoResumen } from '@/types'
 
 interface FichaResumenCtaCteProps {
   cliente: Pick<Cliente, 'name' | 'cuit'>
+  /** El período elegido en el paso 1, ya nombrado (ver `rotuloCriterio`). Vacío = sin período. */
+  rotuloPeriodo: string
   /** Con qué saldo termina la cuenta en el período: el del último movimiento. */
   saldoFinal: number
   /** "🤖Remito Pends de Facturar" de la cuenta corriente (numeric_mm5f2npa). */
@@ -33,6 +29,7 @@ interface FichaResumenCtaCteProps {
  */
 export function FichaResumenCtaCte({
   cliente,
+  rotuloPeriodo,
   saldoFinal,
   mercaderiaPendFacturar,
   fase,
@@ -41,10 +38,9 @@ export function FichaResumenCtaCte({
   marcarFormato,
   onEmitir,
 }: FichaResumenCtaCteProps) {
-  const { usuario, resumenRango, resumenEstadoCtaCte, resumenFormato } = useApp()
+  const { usuario, resumenEstadoCtaCte, resumenFormato } = useApp()
   const dispatch = useDispatch()
   const enCurso = fase === 'creando' || fase === 'emitiendo'
-  const periodo = resumenRango ? periodoDeRango(resumenRango) : null
   const formatoEnFalta = marcarFormato && !resumenFormato
 
   return (
@@ -68,11 +64,7 @@ export function FichaResumenCtaCte({
       <hr className="rsep" />
 
       <div className="rgroup">
-        <Fila label="Período">
-          {resumenRango && periodo
-            ? `${rotuloRango(resumenRango)} (${desdeIso(periodo.desde)} al ${desdeIso(periodo.hasta)})`
-            : '--'}
-        </Fila>
+        <Fila label="Período">{rotuloPeriodo || '--'}</Fila>
         <Fila label="Estado de Cta Cte">
           {OPCIONES_ESTADO_CTA_CTE.find((o) => o.valor === resumenEstadoCtaCte)?.label ?? '--'}
         </Fila>

@@ -46,13 +46,23 @@ export function ComprobantesPendientes({ facturas, cargando }: ComprobantesPendi
             </tr>
           ) : (
             facturas.map((f) => (
-              <tr key={f.id}>
-                <td>{f.comprobante}</td>
-                <td className="ta-c">{desdeIso(f.vencimiento)}</td>
+              /* Las cuatro columnas que hablan del vencimiento —qué comprobante es, cuánto
+                 queda, cuándo vence y en qué estado está— van en el MISMO color y el mismo grosor:
+                 es una sola señal repartida en la fila, no cuatro énfasis distintos. El importe y
+                 lo pagado quedan en negro: son lo que la factura dice, no su urgencia.
+
+                 Lo que NO venció no se pinta: la fila en negro ya dice que está al día, y teñirla
+                 de verde le daría un énfasis que no necesita. */
+              <tr
+                key={f.id}
+                className={f.tramo && f.tramo !== 'noVencido' ? `doc-venc doc-venc--${f.tramo}` : ''}
+              >
+                <td className="doc-venc-txt">{f.comprobante}</td>
+                <td className="ta-c doc-venc-txt">{desdeIso(f.vencimiento)}</td>
                 <td className="ta-r">{money(f.importe)}</td>
                 <td className="ta-r">{money(f.cobrado)}</td>
-                <td className="ta-r doc-fuerte">{money(f.pendiente)}</td>
-                <td className="ta-c">{f.estadoVencimiento}</td>
+                <td className="ta-r doc-venc-txt">{money(f.pendiente)}</td>
+                <td className="ta-c doc-venc-txt">{f.estadoVencimiento}</td>
               </tr>
             ))
           )}

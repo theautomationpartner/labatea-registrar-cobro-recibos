@@ -3,8 +3,15 @@
  * nombra un movimiento dentro del resumen. Puras —sin React ni servicios—, así las comparten la
  * consulta, las dos pantallas que muestran los movimientos y los tests, sin poder discrepar.
  */
+import { desdeIso } from '@/lib/dates'
 import { round2 } from '@/lib/format'
-import type { EstadoCtaCteResumen, FormatoResumen, RangoResumen } from '@/types'
+import type {
+  CriterioResumen,
+  EstadoCtaCteResumen,
+  FormatoResumen,
+  PeriodoResumen,
+  RangoResumen,
+} from '@/types'
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
@@ -39,7 +46,7 @@ export const rotuloRango = (rango: RangoResumen): string =>
  * `hoy` se recibe para que la regla sea testeable; en la app es la fecha del día. Se trabaja sobre
  * un `Date` local a medianoche, así los cambios de mes y de año los resuelve el calendario.
  */
-export function periodoDeRango(rango: RangoResumen, hoy: Date = new Date()): { desde: string; hasta: string } {
+export function periodoDeRango(rango: RangoResumen, hoy: Date = new Date()): PeriodoResumen {
   const opcion = RANGOS_RESUMEN.find((r) => r.valor === rango)
   const hasta = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate())
   const desde = new Date(hasta)
@@ -48,11 +55,86 @@ export function periodoDeRango(rango: RangoResumen, hoy: Date = new Date()): { d
   return { desde: aIsoLocal(desde), hasta: aIsoLocal(hasta) }
 }
 
+/* ===== El criterio: la ventana de días, las fechas, o las dos ===== */
+
+/** Texto con forma de fecha ISO (yyyy-MM-dd). Lo que no la tiene se ignora como si estuviera vacío. */
+export const esIsoFecha = (v: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(v)
+
+/**
+ * Sin punta inferior declarada el período arranca acá: cubre toda la cuenta, porque ningún
+ * movimiento es anterior. Se usa una fecha y no el vacío para que las dos puntas siempre existan y
+ * la comparación del filtro sea una sola regla.
+ */
+export const INICIO_DE_LA_CUENTA = '1900-01-01'
+
+/** Por qué el criterio no define un período. Cada motivo tiene su mensaje (ver `MSG_PERIODO`). */
+export type ProblemaPeriodo = 'sin-criterio' | 'fechas-invertidas' | 'sin-cruce'
+
+/**
+ * El período que sale del criterio, o por qué no sale ninguno.
+ *
+ * Los dos filtros se combinan punta por punta, y la FECHA cargada manda sobre la ventana: la ventana
+ * ("Últimos 30 días") es el valor por defecto de la punta que no se cargó a mano. Así "el último
+ * año, del 01/01/2025 al 01/07/2025" son exactamente esas dos fechas —que es lo que se pidió— y
+ * "últimos 30 días, hasta el 01/07" arranca hace 30 días y corta el 01/07.
+ *
+ * Con las dos puntas vacías y sin ventana no hay nada que filtrar: la fecha "desde" que falta y no
+ * tiene ventana arranca en el principio de la cuenta, y la "hasta" que falta llega hasta hoy.
+ *
+ * Lo que NO se admite es un criterio vacío ni uno imposible: fechas al revés, o una punta de la
+ * ventana que cae después de la fecha con la que se la combinó.
+ *
+ * `hoy` se recibe para que la regla sea testeable; en la app es la fecha del día.
+ */
+export function periodoDelCriterio(
+  criterio: CriterioResumen,
+  hoy: Date = new Date(),
+): { periodo: PeriodoResumen | null; problema: ProblemaPeriodo | null } {
+  const desdeManual = esIsoFecha(criterio.desde) ? criterio.desde : ''
+  const hastaManual = esIsoFecha(criterio.hasta) ? criterio.hasta : ''
+  const ventana = criterio.rango ? periodoDeRango(criterio.rango, hoy) : null
+
+  if (!ventana && !desdeManual && !hastaManual) return { periodo: null, problema: 'sin-criterio' }
+  if (desdeManual && hastaManual && desdeManual > hastaManual) {
+    return { periodo: null, problema: 'fechas-invertidas' }
+  }
+
+  const desde = desdeManual || ventana?.desde || INICIO_DE_LA_CUENTA
+  const hasta = hastaManual || ventana?.hasta || aIsoLocal(hoy)
+  if (desde > hasta) return { periodo: null, problema: 'sin-cruce' }
+  return { periodo: { desde, hasta }, problema: null }
+}
+
+/**
+ * Cómo se nombra el criterio en la ficha y en la card del documento: la ventana, las fechas, o las
+ * dos separadas por "·". Sin criterio, vacío.
+ */
+export function rotuloCriterio(criterio: CriterioResumen): string {
+  const partes: string[] = []
+  if (criterio.rango) partes.push(rotuloRango(criterio.rango))
+  const desde = esIsoFecha(criterio.desde) ? desdeIso(criterio.desde) : ''
+  const hasta = esIsoFecha(criterio.hasta) ? desdeIso(criterio.hasta) : ''
+  if (desde && hasta) partes.push(`${desde} al ${hasta}`)
+  else if (desde) partes.push(`desde el ${desde}`)
+  else if (hasta) partes.push(`hasta el ${hasta}`)
+  return partes.join(' · ')
+}
+
+/** Lo que se le dice al usuario cuando el criterio no define un período. */
+export const MSG_PERIODO: Record<ProblemaPeriodo, string> = {
+  'sin-criterio':
+    'Para continuar tenés que indicar qué movimientos entran en el resumen: elegí un período de la cuenta corriente, un rango de fechas, o los dos.',
+  'fechas-invertidas':
+    'El rango de fechas está al revés: la fecha "desde" es posterior a la fecha "hasta". Corregilas y volvé a intentar.',
+  'sin-cruce':
+    'El período elegido y la fecha cargada no se cruzan: el período empieza después de la fecha hasta la que se pidieron los movimientos. Ampliá el período o corregí la fecha.',
+}
+
 /**
  * ¿La fecha cae dentro del período? Las fechas ISO se comparan como texto: con el formato fijo
  * yyyy-MM-dd el orden alfabético ES el cronológico. Sin fecha, no cae en ninguno.
  */
-export const dentroDelPeriodo = (iso: string, periodo: { desde: string; hasta: string }): boolean =>
+export const dentroDelPeriodo = (iso: string, periodo: PeriodoResumen): boolean =>
   /^\d{4}-\d{2}-\d{2}$/.test(iso) && iso >= periodo.desde && iso <= periodo.hasta
 
 /** Normaliza para comparar: sin tildes, sin mayúsculas y sin espacios de más. */
@@ -328,4 +410,4 @@ export const FORMATOS_RESUMEN: readonly FormatoResumen[] = ['Excel', 'PDF', 'Amb
  * ventana y el pie del paso: es el mismo hueco.
  */
 export const MSG_SIN_ESTADO_CTA_CTE =
-  'Para continuar tenés que especificar en "Estado de Cta Cte" si el resumen de cuenta corriente se emite con el estado de la cuenta corriente (INCLUIR) o sin él (NO INCLUIR).'
+  'Para continuar tenés que contestar si el resumen de cuenta corriente se emite CON el estado de la cuenta corriente (INCLUIR) o sin él (NO INCLUIR).'

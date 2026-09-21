@@ -3,8 +3,9 @@ import { ladoInicialDePase, puedeOperar, puedePasarEntre } from '@/lib/permisos'
 import { hoy } from '@/lib/dates'
 import { totalACancelar, totalAplicado } from '@/lib/cobros'
 import { round2 } from '@/lib/format'
-import { indiceDePaso, pasosDe } from '@/lib/pasos'
+import { indiceDePaso } from '@/lib/pasos'
 import { descontarRetencion, esCajaCheque, esRetencionGAN } from '@/lib/pagosProveedor'
+import { periodoDelCriterio } from '@/lib/resumenCtaCte'
 import type { RolPersona } from '@/lib/personas'
 import { indiceDePasoPago } from '@/lib/pasosPago'
 import type {
@@ -12,6 +13,7 @@ import type {
   ChequeEnCartera,
   Cliente,
   CriterioCobranza,
+  CriterioResumen,
   OperacionApp,
   CobroState,
   Contacto,
@@ -32,6 +34,7 @@ import type {
   Paso,
   PasoPago,
   Proveedor,
+  PeriodoResumen,
   RangoResumen,
   ResultadoCobranza,
   SaldosCliente,
@@ -237,15 +240,28 @@ export interface AppState {
      Cobros —se elige con el mismo buscador y la misma ficha—, y lo demás es de este recorrido. */
 
   /**
-   * Si el resumen va con el estado de la cuenta corriente. Se declara en el paso 1, ANTES del
-   * buscador, y `null` = todavía no se eligió: es lo que ese paso reclama para dejar avanzar.
+   * Si el resumen va con el estado de la cuenta corriente. Se declara en el paso 1, en el mismo
+   * formulario que el período, y `null` = todavía no se eligió: es lo que ese paso reclama para
+   * dejar avanzar.
    */
   resumenEstadoCtaCte: EstadoCtaCteResumen | null
-  /** El período del resumen. `null` = todavía no se eligió, y por eso no se consulta nada. */
+  /**
+   * La ventana de días del criterio ("Últimos 30 días"). `null` = no se eligió ninguna, que es
+   * válido mientras haya fechas: los dos filtros del criterio son independientes (ver
+   * `periodoDelCriterio`).
+   */
   resumenRango: RangoResumen | null
+  /** Fecha DESDE del criterio, en ISO. Vacía = esa punta no acota. */
+  resumenDesde: string
+  /** Fecha HASTA del criterio, en ISO. Vacía = esa punta no acota. */
+  resumenHasta: string
   /** Los movimientos del período, leídos de la cuenta corriente del cliente. */
   movimientosCtaCte: MovimientoCtaCte[]
-  /** Movimientos de la cuenta que no entraron en la lista por no tener fecha de emisión. */
+  /**
+   * Movimientos de la cuenta que no entraron en la lista por no tener fecha de emisión. Se guarda
+   * aunque HOY ninguna pantalla lo muestre: el aviso que lo decía vivía en la etapa del período,
+   * que ya no existe. El dato sigue llegando con la lectura, listo para volver a mostrarse.
+   */
   movimientosSinFecha: number
   /** Mercadería entregada y sin facturar de la cuenta, leída junto con los movimientos. */
   mercaderiaPendFacturar: number
@@ -256,6 +272,15 @@ export interface AppState {
    * No depende del período —la deuda es la de hoy—, así que cambiar el rango no las vuelve a leer.
    */
   facturasAdeudadasClienteId: string | null
+  /**
+   * La búsqueda que se PIDIÓ con el botón "Buscar movimientos", con la misma clave de caché que la
+   * lectura (cliente + período). Mientras no coincida con la clave vigente no hay nada consultando:
+   * cambiar el criterio deja el pedido viejo sin efecto, y la etapa vuelve a esperar el botón.
+   *
+   * Existe por el mismo motivo que `cobranzaPedida`: la consulta NO sale sola al completar el
+   * formulario, la dispara el usuario.
+   */
+  resumenBusquedaPedida: string | null
   /**
    * Clave de caché de esa lectura: de QUÉ cliente y de QUÉ período son los movimientos. Si coincide
    * con los del estado, la lista ya está leída y navegar entre etapas no vuelve a consultar. Va en
@@ -403,7 +428,10 @@ export const initialState: AppState = {
   /* RESUMEN DE CTA CTE. Nada viene preseleccionado: el estado de la cuenta, el período y el formato
      los decide el usuario, y cada etapa reclama el suyo. */
   resumenEstadoCtaCte: null,
+  resumenBusquedaPedida: null,
   resumenRango: null,
+  resumenDesde: '',
+  resumenHasta: '',
   movimientosCtaCte: [],
   movimientosSinFecha: 0,
   mercaderiaPendFacturar: 0,
@@ -462,9 +490,24 @@ export const hayOperacionEnCurso = (state: AppState): boolean =>
       : state.reciboId === null)) ||
   (state.proveedor !== null && state.ordenPagoId === null)
 
-/** Clave de caché de los movimientos del resumen: son de UN cliente y de UN período. */
-export const claveMovimientosCtaCte = (clienteId: string, rango: RangoResumen): string =>
-  `${clienteId}·${rango}`
+/**
+ * Clave de caché de los movimientos del resumen: son de UN cliente y de UN período. Va por las dos
+ * PUNTAS y no por el criterio: dos criterios distintos que resuelven al mismo período piden lo
+ * mismo, y volver a consultar no traería nada nuevo.
+ */
+export const claveMovimientosCtaCte = (clienteId: string, periodo: PeriodoResumen): string =>
+  `${clienteId}·${periodo.desde}·${periodo.hasta}`
+
+/** Los dos filtros del paso 1, juntos: es lo que define qué movimientos entran (ver `types`). */
+export const criterioResumen = (state: AppState): CriterioResumen => ({
+  rango: state.resumenRango,
+  desde: state.resumenDesde,
+  hasta: state.resumenHasta,
+})
+
+/** El período que ese criterio define, o `null` si todavía no define ninguno. */
+export const periodoResumen = (state: AppState): PeriodoResumen | null =>
+  periodoDelCriterio(criterioResumen(state)).periodo
 
 export type Action =
   | { type: 'setOperacionApp'; operacion: OperacionApp }
@@ -504,7 +547,13 @@ export type Action =
   | { type: 'setSaldosDestino'; saldos: SaldosCliente | null; clienteId: string | null }
   /* RESUMEN DE CTA CTE. El estado de la cuenta, el período con sus movimientos y la emisión. */
   | { type: 'setResumenEstadoCtaCte'; estado: EstadoCtaCteResumen }
-  | { type: 'setResumenRango'; rango: RangoResumen }
+  /** El botón "Buscar movimientos": pide la lectura de ESA clave (cliente + período). */
+  | { type: 'pedirBusquedaResumen'; clave: string }
+  /** `null` limpia la ventana: el criterio puede ser sólo fechas. */
+  | { type: 'setResumenRango'; rango: RangoResumen | null }
+  /** Las dos puntas del criterio, en ISO. Vacías = esa punta no acota. */
+  | { type: 'setResumenDesde'; fecha: string }
+  | { type: 'setResumenHasta'; fecha: string }
   /**
    * Llegaron los movimientos. `clave` es de QUÉ cliente y período son (ver
    * `claveMovimientosCtaCte`), y va en `null` cuando la lectura FALLÓ: la lista se vacía sin darla
@@ -599,6 +648,9 @@ const recorridoDe = (operacion: OperacionApp | null): TipoOperacion | null =>
  */
 const resumenSinEmitir = (state: AppState): AppState => ({
   ...state,
+  /* Cambió lo que se iba a buscar: el pedido anterior ya no vale y hay que volver a apretar el
+     botón. Sin esto, tocar una fecha dispararía sola la consulta siguiente. */
+  resumenBusquedaPedida: null,
   resumenCtaCteId: null,
   emisionResumen: EMISION_INICIAL,
   documentoEnviado: false,
@@ -645,11 +697,7 @@ export function reducer(state: AppState, action: Action): AppState {
       /* Al ir a un paso se recuerda el índice MÁS AVANZADO alcanzado: volver atrás no lo baja, así
          el stepper deja volver a saltar hacia adelante a las etapas ya completadas. El índice es el
          de ESTE recorrido: el del anticipo tiene una etapa menos que el del cobro. */
-      const idx = indiceDePaso(
-        action.paso,
-        state.tipoOperacion,
-        state.resumenEstadoCtaCte === 'INCLUIR',
-      )
+      const idx = indiceDePaso(action.paso, state.tipoOperacion)
       return { ...state, paso: action.paso, pasoMaxIdx: Math.max(state.pasoMaxIdx, idx) }
     }
 
@@ -841,6 +889,7 @@ export function reducer(state: AppState, action: Action): AppState {
            sobre la persona, y la lista se vuelve a leer sola para el cliente nuevo. */
         movimientosCtaCte: [],
         movimientosSinFecha: 0,
+        resumenBusquedaPedida: null,
         mercaderiaPendFacturar: 0,
         facturasAdeudadas: [],
         facturasAdeudadasClienteId: null,
@@ -1074,38 +1123,40 @@ export function reducer(state: AppState, action: Action): AppState {
 
     /* Con o sin el estado de la cuenta. Cambia lo que el documento dice, así que un resumen ya
        emitido deja de valer. Reelegir lo MISMO no toca nada. */
-    case 'setResumenEstadoCtaCte': {
+    case 'setResumenEstadoCtaCte':
       if (state.resumenEstadoCtaCte === action.estado) return state
       if (generacionResumenEnVuelo(state)) return state
-      /* Elegir NO INCLUIR saca "Facturas que debe" del recorrido. Si el avance quedó apuntando a
-         esa etapa —se venía de un resumen CON estado—, se lo trae al último paso que sí existe:
-         quedarse parado en una etapa que ya no está deja la navegación sin destino. */
-      const recorrido = pasosDe(state.tipoOperacion, action.estado === 'INCLUIR')
-      const paso = recorrido.includes(state.paso) ? state.paso : 'rangoFechas'
-      return {
-        ...resumenSinEmitir(state),
-        resumenEstadoCtaCte: action.estado,
-        paso,
-        pasoMaxIdx: Math.min(state.pasoMaxIdx, recorrido.length - 1),
-      }
-    }
+      return { ...resumenSinEmitir(state), resumenEstadoCtaCte: action.estado }
 
-    /* El período. La lista anterior NO se borra acá: la clave de caché deja de coincidir y el paso la
-       vuelve a leer, así la tabla no parpadea vacía entre una consulta y otra. Lo que sí deja de
-       valer es un resumen ya emitido: era de otro período. */
+    /* El criterio: la ventana de días y las dos fechas. La lista anterior NO se borra acá —la clave
+       de caché deja de coincidir y la etapa de emisión la vuelve a leer—, pero un resumen ya emitido
+       deja de valer: era de otro período. */
+    /* Se pidió la búsqueda: de acá en adelante los hooks consultan (ver `useMovimientosCtaCte`). */
+    case 'pedirBusquedaResumen':
+      return { ...state, resumenBusquedaPedida: action.clave }
+
     case 'setResumenRango':
       if (state.resumenRango === action.rango) return state
       if (generacionResumenEnVuelo(state)) return state
       return { ...resumenSinEmitir(state), resumenRango: action.rango }
 
+    case 'setResumenDesde':
+      if (state.resumenDesde === action.fecha) return state
+      if (generacionResumenEnVuelo(state)) return state
+      return { ...resumenSinEmitir(state), resumenDesde: action.fecha }
+
+    case 'setResumenHasta':
+      if (state.resumenHasta === action.fecha) return state
+      if (generacionResumenEnVuelo(state)) return state
+      return { ...resumenSinEmitir(state), resumenHasta: action.fecha }
+
     /* Llegaron los movimientos. Se aceptan SÓLO si siguen siendo del cliente y el período en curso:
        con dos consultas en vuelo —el usuario cambió de rango antes de que la primera volviera—, la
        que llega tarde traería la lista de un período que ya no es el elegido. */
     case 'setMovimientosCtaCte': {
+      const periodo = periodoResumen(state)
       const vigente =
-        state.cliente && state.resumenRango
-          ? claveMovimientosCtaCte(state.cliente.id, state.resumenRango)
-          : null
+        state.cliente && periodo ? claveMovimientosCtaCte(state.cliente.id, periodo) : null
       if (action.clave !== null && action.clave !== vigente) return state
       return {
         ...state,

@@ -20,8 +20,7 @@ import { PaseDestinoView } from '@/features/pases/PaseDestinoView'
 import { ChequeRechazadoView } from '@/features/rechazos/ChequeRechazadoView'
 import { ProveedorAcreedorView } from '@/features/rechazos/ProveedorAcreedorView'
 import { ReciboView } from '@/features/recibo/ReciboView'
-import { EstadoCtaCteView } from '@/features/resumen/EstadoCtaCteView'
-import { RangoFechasView } from '@/features/resumen/RangoFechasView'
+import { ConfigResumenView } from '@/features/resumen/ConfigResumenView'
 import { ResumenCtaCteView } from '@/features/resumen/ResumenCtaCteView'
 import { useApp, useDispatch } from '@/state/hooks'
 import type { Paso } from '@/types'
@@ -44,8 +43,7 @@ const VISTAS: Record<Paso, () => JSX.Element | null> = {
   chequeRechazado: ChequeRechazadoView,
   proveedorAcreedor: ProveedorAcreedorView,
   /* Etapas propias del RESUMEN DE CTA CTE. Mismo criterio: sólo aparecen en ese recorrido. */
-  rangoFechas: RangoFechasView,
-  estadoCtaCte: EstadoCtaCteView,
+  configResumen: ConfigResumenView,
   resumenCtaCte: ResumenCtaCteView,
 }
 

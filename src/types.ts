@@ -52,10 +52,9 @@ export type Paso =
      clave propia. */
   | 'chequeRechazado'
   | 'proveedorAcreedor'
-  /* Sólo RESUMEN DE CTA CTE: el período que abarca el resumen (con sus movimientos a la vista), el
-     estado de la cuenta que acompaña al documento y la emisión con su envío. */
-  | 'rangoFechas'
-  | 'estadoCtaCte'
+  /* Sólo RESUMEN DE CTA CTE: cómo se obtienen los movimientos de la cuenta —el período y si el
+     documento lleva el estado de la cuenta— y la emisión del resumen con su envío. */
+  | 'configResumen'
   | 'resumenCtaCte'
 
 /**
@@ -755,8 +754,8 @@ export interface PagoState {
 /* ===== MÓDULO DE RESUMEN DE CTA CTE ===== */
 
 /**
- * Si el resumen va acompañado del ESTADO de la cuenta corriente. Se declara en el paso 1, antes de
- * buscar al cliente, y es obligatorio: sin él no se sale de esa etapa.
+ * Si el resumen va acompañado del ESTADO de la cuenta corriente. Se declara en el paso 1, en el
+ * mismo formulario en el que se elige qué movimientos entran, y es obligatorio: sin él no se avanza.
  */
 export type EstadoCtaCteResumen = 'INCLUIR' | 'NO_INCLUIR'
 
@@ -765,6 +764,28 @@ export type EstadoCtaCteResumen = 'INCLUIR' | 'NO_INCLUIR'
  * estado; los días y el rótulo salen de `lib/resumenCtaCte`.
  */
 export type RangoResumen = 'ultimos15' | 'ultimos30' | 'ultimos45' | 'ultimos60' | 'ultimoAnio'
+
+/** Las dos puntas de un período, en ISO (yyyy-MM-dd) y AMBAS inclusive. */
+export interface PeriodoResumen {
+  desde: string
+  hasta: string
+}
+
+/**
+ * Con qué se eligen los movimientos que entran en el resumen. Son DOS filtros independientes que se
+ * pueden usar sueltos o juntos, y cuando van juntos se CRUZAN (ver `periodoDelCriterio`):
+ *
+ *   · `rango` · una ventana contada hacia atrás desde hoy ("Últimos 30 días").
+ *   · `desde` / `hasta` · fechas concretas, en ISO. Vacías = esa punta no acota nada.
+ *
+ * Así se puede pedir "el último año, pero del 01/01/2025 al 01/07/2025": el rango pone el techo de
+ * antigüedad y las fechas recortan dentro de él.
+ */
+export interface CriterioResumen {
+  rango: RangoResumen | null
+  desde: string
+  hasta: string
+}
 
 /**
  * En qué formato se genera el archivo del resumen. Obligatorio antes de emitir. "Ambos" genera los
@@ -807,7 +828,7 @@ export interface MovimientoCtaCte {
 }
 
 /**
- * Una factura que el cliente todavía debe, para la etapa "Facturas que debe" del RESUMEN DE CTA CTE.
+ * Una factura que el cliente todavía debe: lo que lista el documento "Estado de Cta Cte" del RESUMEN.
  * Sale de "💰Fact Vtas Pends de Cobro" (18421035508): las del cliente que NO están "Cancelada 100%".
  * Es SÓLO lectura.
  */
@@ -835,6 +856,14 @@ export interface FacturaAdeudada {
    * días, `vencida` 30 días o más. `null` sin estado.
    */
   tonoVencimiento: 'ok' | 'alerta' | 'vencida' | null
+  /**
+   * En cuál de los CINCO tramos de vencimiento cae, resuelto por el ÍNDICE de la columna y no por su
+   * texto (ver `ESTADO_VENCIMIENTO_INDEX`). `null` = el tablero todavía no le puso el estado.
+   *
+   * Es más fino que `tonoVencimiento` —que agrupa de a dos— y es con lo que el documento "Estado de
+   * Cta Cte" pinta cada fila con el color de su etiqueta.
+   */
+  tramo: TramoVencimiento | null
 }
 
 /** Lo que devuelve la lectura de la cuenta para un cliente y un período. */
@@ -949,14 +978,6 @@ export interface CuentaCobranza {
 export interface FacturaCobranza extends FacturaAdeudada {
   /** ID del cliente conectado en "🤖Personas" (`board_relation_mm5zaxck`). */
   clienteId: string
-  /**
-   * En qué tramo de vencimiento cae, resuelto por el ÍNDICE de la columna y no por su texto (ver
-   * `ESTADO_VENCIMIENTO_INDEX`). `null` = el tablero todavía no le puso el estado.
-   *
-   * Viaja con la factura para que el reparto de la deuda por tramo —la batería del tablero— no
-   * tenga que volver a interpretar la etiqueta que la tabla ya muestra.
-   */
-  tramo: TramoVencimiento | null
 }
 
 /** Lo que devuelve una búsqueda del tablero de cobranza. */

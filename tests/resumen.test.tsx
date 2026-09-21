@@ -1,45 +1,50 @@
 /**
- * Humo del módulo de RESUMEN DE CTA CTE: renderiza las cuatro etapas contra el estado real (el
- * reducer, no un mock) y fija las reglas que la operación no puede perder —el período, la limpieza
- * del nombre de un movimiento, la caché de la lista y qué invalida un resumen ya emitido—. Mismo
- * criterio que `rechazos.test.tsx`: no reemplaza probar la app en Monday.
+ * Humo del módulo de RESUMEN DE CTA CTE: renderiza las dos etapas contra el estado real (el reducer,
+ * no un mock) y fija las reglas que la operación no puede perder —el criterio con el que se eligen
+ * los movimientos, la limpieza del nombre de un movimiento, la caché de la lista y qué invalida un
+ * resumen ya emitido—. Mismo criterio que `rechazos.test.tsx`: no reemplaza probar la app en Monday.
  */
 import { renderToString } from 'react-dom/server'
 import { createElement, type ComponentType } from 'react'
 import { DispatchContext, StateContext } from '@/state/context'
 import {
   claveMovimientosCtaCte,
+  criterioResumen,
   hayOperacionEnCurso,
   initialState,
+  periodoResumen,
   reducer,
   type Action,
   type AppState,
 } from '@/state/appState'
 import { ClienteView } from '@/features/cliente/ClienteView'
-import { EstadoCtaCteConfig } from '@/features/resumen/EstadoCtaCteConfig'
+import { ConfigResumenCtaCte } from '@/features/resumen/ConfigResumenCtaCte'
+import { ConfigResumenView } from '@/features/resumen/ConfigResumenView'
 import { ComprobantesPendientes } from '@/features/resumen/ComprobantesPendientes'
 import { DetalleMovimientos } from '@/features/resumen/DetalleMovimientos'
-import { EstadoCtaCteView } from '@/features/resumen/EstadoCtaCteView'
-import { RangoFechasView } from '@/features/resumen/RangoFechasView'
 import { ResumenCtaCteView } from '@/features/resumen/ResumenCtaCteView'
 import { comprobanteEnviable } from '@/features/shared/comprobantesEnviables'
 import { RESUMEN_CTA_CTE_EMISIBLE } from '@/features/shared/emisiones'
 import { CLIENTES } from '@/data/mock'
-import { etiquetasDe, numeroDePaso, pasoAnterior, siguientePaso } from '@/lib/pasos'
+import { etiquetaDePaso, etiquetasDe, numeroDePaso, pasoAnterior, siguientePaso } from '@/lib/pasos'
 import { operacionesPermitidas } from '@/lib/permisos'
 import {
   comprobanteDeMovimiento,
   dentroDelPeriodo,
   detalleDeMovimientos,
   estadoDeCuenta,
+  INICIO_DE_LA_CUENTA,
   nombreSinCliente,
   nroDeFactura,
   paginar,
   paginasVisibles,
   periodoDeRango,
+  periodoDelCriterio,
+  rotuloCriterio,
   totalesDeFacturas,
   totalesDelPeriodo,
 } from '@/lib/resumenCtaCte'
+import { money } from '@/lib/format'
 import { usoDeLinea } from '@/lib/selectors'
 import {
   columnasDatosResumen,
@@ -55,7 +60,7 @@ import {
   FORMATO_RESUMEN_IDS,
   MEDIO_ENVIO_RESUMEN_IDS,
 } from '@/services/monday/columns'
-import type { MovimientosDelPeriodo } from '@/types'
+import type { CriterioResumen, MovimientosDelPeriodo } from '@/types'
 
 const aplicar = (estado: AppState, acciones: Action[]): AppState =>
   acciones.reduce((acc, a) => reducer(acc, a), estado)
@@ -89,70 +94,159 @@ chequear('módulo', 'lo ve cualquier usuario', operacionesPermitidas(AJENO).incl
 chequear('módulo', 'abre con su recorrido', enResumen.operacionApp === 'RESUMEN' && enResumen.tipoOperacion === 'resumen')
 chequear(
   'recorrido',
-  'CON estado: cuatro etapas, con "Facturas que debe" antes de emitir',
-  etiquetasDe('resumen', true).join('|') ===
-    'Seleccionar Cliente|Seleccionar Rango de Fechas|Facturas que debe|Emitir y Enviar',
+  'TRES etapas: el cliente, la configuración del resumen y la emisión',
+  etiquetasDe('resumen').length === 3 &&
+    etiquetaDePaso('configResumen', 'resumen') === 'Configurar Emisión de Resumen de Cuenta',
 )
-/* "Facturas que debe" es una etapa opcional: sin el estado de cuenta no hay facturas que listar,
-   así que del período se va derecho a la emisión. */
+/* En el stepper va abreviada: el nombre completo ocuparía cuatro renglones del encabezado. */
 chequear(
   'recorrido',
-  'SIN estado: tres etapas, del período a la emisión',
-  etiquetasDe('resumen').join('|') ===
-    'Seleccionar Cliente|Seleccionar Rango de Fechas|Emitir y Enviar',
-)
-chequear(
-  'recorrido',
-  'SIN estado: el paso que sigue al período es la emisión',
-  siguientePaso('rangoFechas', 'resumen') === 'resumenCtaCte' &&
-    siguientePaso('rangoFechas', 'resumen', true) === 'estadoCtaCte',
+  'el stepper la nombra corta, sin tocar el título de la etapa',
+  etiquetasDe('resumen').join('|') === 'Seleccionar Cliente|Configurar Emisión|Emitir y Enviar',
 )
 chequear(
   'recorrido',
-  'SIN estado: volver desde la emisión lleva al período',
-  pasoAnterior('resumenCtaCte', 'resumen') === 'rangoFechas' &&
-    pasoAnterior('resumenCtaCte', 'resumen', true) === 'estadoCtaCte',
+  'del cliente se va a configurar, y de ahí a emitir',
+  siguientePaso('cliente', 'resumen') === 'configResumen' &&
+    siguientePaso('configResumen', 'resumen') === 'resumenCtaCte' &&
+    pasoAnterior('resumenCtaCte', 'resumen') === 'configResumen' &&
+    numeroDePaso('resumenCtaCte', 'resumen') === 3,
 )
+/* El estado de cuenta ya no ramifica el recorrido: es un dato del documento, no una etapa. */
 chequear(
   'recorrido',
-  'SIN estado: la emisión es el paso 3',
-  numeroDePaso('resumenCtaCte', 'resumen') === 3 &&
-    numeroDePaso('resumenCtaCte', 'resumen', true) === 4,
+  'pedir el estado de cuenta NO agrega etapas',
+  aplicar(enResumen, [{ type: 'setResumenEstadoCtaCte', estado: 'INCLUIR' }]).paso === 'cliente' &&
+    etiquetasDe('resumen').length === 3,
 )
-/* Pasar de INCLUIR a NO INCLUIR estando parado en "Facturas que debe" no puede dejar la
-   navegación en una etapa que ya no existe. */
-{
-  const conEstado = reducer(
-    reducer(enResumen, { type: 'setResumenEstadoCtaCte', estado: 'INCLUIR' }),
-    { type: 'goto', paso: 'estadoCtaCte' },
-  )
-  const sinEstado = reducer(conEstado, { type: 'setResumenEstadoCtaCte', estado: 'NO_INCLUIR' })
-  chequear(
-    'recorrido',
-    'sacar el estado saca la etapa y trae el avance al período',
-    conEstado.paso === 'estadoCtaCte' && sinEstado.paso === 'rangoFechas' && sinEstado.pasoMaxIdx <= 2,
-  )
-}
 
-/* ===== Paso 1 · "Estado de Cta Cte" ===== */
+/* ===== Paso 1 · sólo el cliente ===== */
 
 const paso1 = pintar(enResumen, ClienteView)
-chequear('paso 1', 'muestra "Estado de Cta Cte" arriba del buscador', paso1.indexOf('Estado de Cta Cte') > -1 && paso1.indexOf('Estado de Cta Cte') < paso1.indexOf('unified-toolbar'))
-chequear('paso 1', 'sin elegir, el pie reclama el estado de cuenta', paso1.includes('Indicá si el resumen incluye el estado de la cuenta corriente'))
+chequear('paso 1', 'la bajada manda a buscar el cliente', paso1.includes('Buscá el cliente al cual se le va a generar el resumen de cuenta.'))
+chequear('paso 1', 'el formulario NO vive acá', !paso1.includes('res-form'))
+chequear('paso 1', 'sin cliente, el pie reclama el cliente', paso1.includes('Buscá y confirmá un cliente para continuar'))
 chequear('paso 1', 'NO muestra "¿Qué vas a cobrar?"', !paso1.includes('¿Qué vas a cobrar?'))
 
-const pintarConfig = (estado: AppState, marcar: boolean) =>
-  pintar(estado, () => createElement(EstadoCtaCteConfig, { marcarFaltante: marcar }))
-chequear('paso 1', 'intentar avanzar sin elegir deja la caja en rojo', pintarConfig(enResumen, true).includes('cfgbox--error'))
+/* ===== Paso 2 · Configurar Emisión de Resumen de Cuenta ===== */
+
+const conClienteSolo = aplicar(enResumen, [{ type: 'setCliente', cliente }])
+const config = pintar(conClienteSolo, ConfigResumenView)
+chequear('paso 2', 'se llama "Configurar Emisión de Resumen de Cuenta"', config.includes('Configurar Emisión de Resumen de Cuenta'))
+chequear('paso 2', 'y su bajada dice para qué es', config.includes('Indicá cómo se van a obtener los movimientos de la cuenta del cliente para generar el resumen.'))
 chequear(
-  'paso 1',
-  'con una opción elegida el rojo se va solo',
-  !pintarConfig(aplicar(enResumen, [{ type: 'setResumenEstadoCtaCte', estado: 'INCLUIR' }]), true).includes('cfgbox--error'),
+  'paso 2',
+  'sus tres preguntas: período, rango de fechas y estado de cuenta',
+  config.includes('Buscar movimientos en la cuenta corriente') &&
+    config.includes('Seleccionar rango de fechas') &&
+    config.includes('¿Desea incluir el estado de cuenta corriente?'),
+)
+chequear('paso 2', 'ofrece las ventanas de días y poder no elegir ninguna', config.includes('>Seleccionar...<') && config.includes('>Últimos 15 días<') && config.includes('>Último año<'))
+chequear('paso 2', 'el estado de cuenta son dos cajas, no un selector', (config.match(/res-opcion /g) ?? []).length === 2 && config.includes('type="radio"'))
+chequear('paso 2', 'las fechas son dos campos de fecha', (config.match(/type="date"/g) ?? []).length === 2)
+chequear('paso 2', 'ofrece INCLUIR y NO INCLUIR', config.includes('>INCLUIR<') && config.includes('>NO INCLUIR<'))
+chequear('paso 2', 'el rango de fechas va DEBAJO del período', config.indexOf('Buscar movimientos en la cuenta corriente') < config.indexOf('Seleccionar rango de fechas'))
+chequear('paso 2', 'el pie reclama qué movimientos entran', config.includes('Indicá qué movimientos de la cuenta corriente entran en el resumen'))
+
+/* La consulta la dispara el BOTÓN, y hasta que contesta no se avanza. */
+chequear(
+  'paso 2',
+  'el botón "Confirmar" cierra el formulario, después de la última pregunta',
+  config.includes('Confirmar') &&
+    config.indexOf('¿Desea incluir el estado de cuenta corriente?') < config.indexOf('res-buscar'),
+)
+const completo = aplicar(conClienteSolo, [
+  { type: 'setResumenRango', rango: 'ultimos60' },
+  { type: 'setResumenEstadoCtaCte', estado: 'INCLUIR' },
+])
+chequear(
+  'paso 2',
+  'con el formulario completo pero sin buscar, no hay consulta en curso',
+  !pintar(completo, ConfigResumenView).includes('Buscando movimientos'),
+)
+/* El renglón de la búsqueda está desde el principio: reserva su alto para que la card no crezca
+   —y el pie no salte— al apretar Confirmar. */
+chequear(
+  'paso 2',
+  'el lugar de la animación se reserva antes de buscar',
+  pintar(completo, ConfigResumenView).includes('res-busqueda res-busqueda--idle'),
+)
+chequear('paso 2', 'y el pie manda a buscar', pintar(completo, ConfigResumenView).includes('Buscá los movimientos de la cuenta corriente para continuar'))
+
+const pedida = aplicar(completo, [
+  { type: 'pedirBusquedaResumen', clave: claveMovimientosCtaCte(cliente.id, periodoDeRango('ultimos60')) },
+])
+const buscando = pintar(pedida, ConfigResumenView)
+chequear('paso 2', 'pedida la búsqueda, se ve la animación', buscando.includes('Buscando movimientos en la cuenta') && buscando.includes('fa-spin'))
+chequear('paso 2', 'y el pie dice que hay que esperarla', buscando.includes('Esperá a que termine la búsqueda de los movimientos'))
+chequear(
+  'paso 2',
+  'cambiar el criterio descarta el pedido: vuelve a hacer falta el botón',
+  aplicar(pedida, [{ type: 'setResumenRango', rango: 'ultimos30' }]).resumenBusquedaPedida === null,
+)
+chequear(
+  'paso 2',
+  'y con el período elegido, el estado de cuenta',
+  pintar(
+    aplicar(conClienteSolo, [{ type: 'setResumenRango', rango: 'ultimos30' }]),
+    ConfigResumenView,
+  ).includes('Indicá si el resumen incluye el estado de la cuenta corriente'),
 )
 
-/* ===== El período ===== */
+/* La búsqueda se prueba desde la etapa (arriba); acá se la deja sin disparar para mirar sólo los
+   campos del formulario. */
+const SIN_BUSCAR = {
+  estado: 'idle' as const,
+  movimientos: 0,
+  comprobantes: null,
+  sinCuenta: false,
+  onBuscar: () => undefined,
+  onReintentar: () => undefined,
+}
+const pintarForm = (estado: AppState, marcarPeriodo: boolean, marcarEstado: boolean) =>
+  pintar(estado, () =>
+    createElement(ConfigResumenCtaCte, { marcarPeriodo, marcarEstado, busqueda: SIN_BUSCAR }),
+  )
+chequear(
+  'paso 2',
+  'la elegida se marca por el borde, sin tilde',
+  !config.includes('res-opcion-caja') &&
+    pintarForm(aplicar(enResumen, [{ type: 'setResumenEstadoCtaCte', estado: 'INCLUIR' }]), false, false).includes('res-opcion--incluir') &&
+    pintarForm(aplicar(enResumen, [{ type: 'setResumenEstadoCtaCte', estado: 'NO_INCLUIR' }]), false, false).includes('res-opcion--no_incluir'),
+)
+chequear(
+  'paso 2',
+  'sin intentar avanzar, nada está en rojo',
+  !pintarForm(enResumen, false, false).includes('--error'),
+)
+chequear(
+  'paso 2',
+  'intentar avanzar sin contestar deja el período y el estado en rojo',
+  pintarForm(enResumen, true, true).includes('res-campo-in--error') &&
+    pintarForm(enResumen, true, true).includes('res-opcion--error'),
+)
+const conCriterio = aplicar(enResumen, [
+  { type: 'setResumenRango', rango: 'ultimos30' },
+  { type: 'setResumenEstadoCtaCte', estado: 'INCLUIR' },
+])
+chequear('paso 2', 'con el formulario completo el rojo se va solo', !pintarForm(conCriterio, true, true).includes('--error'))
+/* Fechas al revés: es un dato mal cargado, así que se marca en cuanto pasa. */
+const fechasAlReves = aplicar(enResumen, [
+  { type: 'setResumenDesde', fecha: '2026-07-01' },
+  { type: 'setResumenHasta', fecha: '2026-01-01' },
+])
+chequear('paso 2', 'fechas al revés: rojo sin esperar a que se intente avanzar', pintarForm(fechasAlReves, false, false).includes('res-campo-in--error'))
+chequear('paso 2', 'el formulario NO narra el período que quedó', !pintarForm(conCriterio, false, false).includes('Entran los movimientos'))
+
+/* ===== El criterio: la ventana, las fechas, o las dos ===== */
 
 const HOY = new Date(2026, 8, 14)
+const criterio = (c: Partial<CriterioResumen>): CriterioResumen => ({
+  rango: null,
+  desde: '',
+  hasta: '',
+  ...c,
+})
 chequear('período', 'últimos 15 días', JSON.stringify(periodoDeRango('ultimos15', HOY)) === '{"desde":"2026-08-30","hasta":"2026-09-14"}')
 chequear('período', 'último año es desde la misma fecha del año pasado', periodoDeRango('ultimoAnio', HOY).desde === '2025-09-14')
 const p = periodoDeRango('ultimos30', HOY)
@@ -160,14 +254,66 @@ chequear('período', 'las dos puntas entran', dentroDelPeriodo(p.desde, p) && de
 chequear('período', 'un día antes no entra', !dentroDelPeriodo('2026-08-14', p))
 chequear('período', 'sin fecha no entra en ninguno', !dentroDelPeriodo('', p))
 
+chequear('criterio', 'sin nada elegido, no hay período', periodoDelCriterio(criterio({}), HOY).problema === 'sin-criterio')
+chequear(
+  'criterio',
+  'sólo la ventana: el período es el de la ventana',
+  JSON.stringify(periodoDelCriterio(criterio({ rango: 'ultimos15' }), HOY).periodo) ===
+    JSON.stringify(periodoDeRango('ultimos15', HOY)),
+)
+chequear(
+  'criterio',
+  'sólo fechas: las fechas mandan',
+  JSON.stringify(periodoDelCriterio(criterio({ desde: '2025-01-01', hasta: '2025-07-01' }), HOY).periodo) ===
+    '{"desde":"2025-01-01","hasta":"2025-07-01"}',
+)
+/* El caso que pidió el usuario: "el último año, pero del 01/01/2025 al 01/07/2025". La FECHA manda
+   sobre la ventana, punta por punta, así que el período es el de las fechas. */
+chequear(
+  'criterio',
+  'ventana + fechas: la fecha manda (último año, del 01/01/2025 al 01/07/2025)',
+  JSON.stringify(
+    periodoDelCriterio(criterio({ rango: 'ultimoAnio', desde: '2025-01-01', hasta: '2025-07-01' }), HOY).periodo,
+  ) === '{"desde":"2025-01-01","hasta":"2025-07-01"}',
+)
+chequear(
+  'criterio',
+  'ventana + UNA fecha: la otra punta la pone la ventana',
+  JSON.stringify(periodoDelCriterio(criterio({ rango: 'ultimos30', hasta: '2026-09-05' }), HOY).periodo) ===
+    `{"desde":"${periodoDeRango('ultimos30', HOY).desde}","hasta":"2026-09-05"}`,
+)
+chequear(
+  'criterio',
+  'sólo la fecha desde: el período llega hasta hoy',
+  JSON.stringify(periodoDelCriterio(criterio({ desde: '2026-09-01' }), HOY).periodo) ===
+    '{"desde":"2026-09-01","hasta":"2026-09-14"}',
+)
+chequear(
+  'criterio',
+  'sólo la fecha hasta: arranca en el principio de la cuenta',
+  periodoDelCriterio(criterio({ hasta: '2026-09-01' }), HOY).periodo?.desde === INICIO_DE_LA_CUENTA,
+)
+chequear('criterio', 'fechas al revés: no hay período', periodoDelCriterio(criterio({ desde: '2026-09-10', hasta: '2026-09-01' }), HOY).problema === 'fechas-invertidas')
+chequear(
+  'criterio',
+  'una ventana que arranca después de la fecha hasta: tampoco',
+  periodoDelCriterio(criterio({ rango: 'ultimos15', hasta: '2020-02-01' }), HOY).problema === 'sin-cruce',
+)
+chequear(
+  'criterio',
+  'se nombra con la ventana y las fechas',
+  rotuloCriterio(criterio({ rango: 'ultimos30', desde: '2025-01-01', hasta: '2025-07-01' })) ===
+    'Últimos 30 días · 01/01/2025 al 01/07/2025' &&
+    rotuloCriterio(criterio({ hasta: '2025-07-01' })) === 'hasta el 01/07/2025' &&
+    rotuloCriterio(criterio({})) === '',
+)
+
 /* ===== El nombre de un movimiento, sin el cliente ===== */
 
 const titular = { codigo: '7001', name: 'La Batea S.A TEST' }
 chequear('nombre', 'quita código y razón social', nombreSinCliente('Movimiento - VTA-108 - 7001 - La Batea S.A', titular) === 'Movimiento - VTA-108')
 chequear('nombre', 'deja intacto un nombre sin el cliente', nombreSinCliente('Anticipo - RECIBO-074', titular) === 'Anticipo - RECIBO-074')
 chequear('nombre', 'nunca queda vacío', nombreSinCliente('7001 - La Batea S.A TEST', titular) === '7001 - La Batea S.A TEST')
-
-/* ===== La lectura (modo local) ===== */
 
 /* ===== El "Nro de Comprobante" de cada clase de movimiento ===== */
 
@@ -185,7 +331,9 @@ chequear('comprobante', 'venta: el número de la factura', nombrar({ clase: 'ven
 
 /* ===== La lectura (modo local) ===== */
 
-const sesenta = await getMovimientosCtaCte(cliente, 'ultimos60')
+/* La consulta ya no recibe una ventana sino el PERÍODO: es lo que sale del criterio del paso 1. */
+const periodo60 = periodoDeRango('ultimos60')
+const sesenta = await getMovimientosCtaCte(cliente, periodo60)
 chequear('lectura', 'filtra por período', sesenta.movimientos.map((m) => m.id).join() === 'm-2,m-3,m-4,m-5,m-6,m-7')
 chequear('lectura', 'cuenta los que no tienen fecha', sesenta.sinFecha === 1)
 const venta = sesenta.movimientos.find((m) => m.id === 'm-3')
@@ -193,9 +341,12 @@ chequear('lectura', 'la venta pendiente se identifica por su factura, con vencim
 const cobro = sesenta.movimientos.find((m) => m.id === 'm-2')
 chequear('lectura', 'el cobro, por su recibo y sin vencimiento', cobro?.comprobante === 'RECIBO-061' && cobro.vencimiento === '' && cobro.tipo === 'Cobro')
 chequear('lectura', 'el anticipo, con su ID', sesenta.movimientos.find((m) => m.id === 'm-4')?.comprobante === 'Pago por Anticipo - ANTICIPO-015')
-const anio = await getMovimientosCtaCte(cliente, 'ultimoAnio')
+const anio = await getMovimientosCtaCte(cliente, periodoDeRango('ultimoAnio'))
 chequear('lectura', 'el último año incluye el movimiento viejo', anio.movimientos.some((m) => m.id === 'm-1'))
 chequear('lectura', 'y el saldo inicial', anio.movimientos.find((m) => m.id === 'm-0')?.comprobante === 'Saldo Inicial')
+/* Un tramo de fechas recorta lo mismo que la ventana: el filtro es UNO, el del período. */
+const recortado = await getMovimientosCtaCte(cliente, { desde: periodo60.desde, hasta: periodo60.desde })
+chequear('lectura', 'un período de un solo día trae, como mucho, los de ese día', recortado.movimientos.length <= sesenta.movimientos.length)
 
 /* ===== Caché y qué invalida un resumen emitido ===== */
 
@@ -204,13 +355,17 @@ const conCliente = aplicar(enResumen, [
   { type: 'setCliente', cliente },
   { type: 'setResumenRango', rango: 'ultimos60' },
 ])
-const clave = claveMovimientosCtaCte(cliente.id, 'ultimos60')
+chequear('criterio', 'el estado arma el criterio del paso 1', JSON.stringify(criterioResumen(conCliente)) === '{"rango":"ultimos60","desde":"","hasta":""}')
+chequear('criterio', 'y de ahí sale el período que se consulta', JSON.stringify(periodoResumen(conCliente)) === JSON.stringify(periodo60))
+
+const clave = claveMovimientosCtaCte(cliente.id, periodo60)
 const conLista = aplicar(conCliente, [{ type: 'setMovimientosCtaCte', resultado: sesenta, clave }])
 chequear('caché', 'la lista vigente se guarda con su clave', conLista.movimientosCtaCteClave === clave && conLista.ctaCteId === 'ctacte-mock')
+chequear('caché', 'la clave son las dos puntas del período, no el criterio', clave === `${cliente.id}·${periodo60.desde}·${periodo60.hasta}`)
 
 const tardia: MovimientosDelPeriodo = { ctaCteId: 'x', movimientos: [], sinFecha: 0, mercaderiaPendFacturar: 0 }
 const conTardia = aplicar(conLista, [
-  { type: 'setMovimientosCtaCte', resultado: tardia, clave: claveMovimientosCtaCte(cliente.id, 'ultimos15') },
+  { type: 'setMovimientosCtaCte', resultado: tardia, clave: claveMovimientosCtaCte(cliente.id, periodoDeRango('ultimos15')) },
 ])
 chequear('caché', 'una respuesta de OTRO período que llega tarde se descarta', conTardia.movimientosCtaCte.length === sesenta.movimientos.length)
 
@@ -227,18 +382,22 @@ chequear('emisión', 'emitido, el formato no se cambia', aplicar(emitido, [{ typ
 const otroPeriodo = aplicar(emitido, [{ type: 'setResumenRango', rango: 'ultimos30' }])
 chequear(
   'emisión',
-  'cambiar el período deja el resumen sin emitir y el envío por hacer',
+  'cambiar la ventana deja el resumen sin emitir y el envío por hacer',
   otroPeriodo.emisionResumen.fase === 'idle' && otroPeriodo.resumenCtaCteId === null && !otroPeriodo.documentoEnviado,
 )
+const otrasFechas = aplicar(emitido, [{ type: 'setResumenDesde', fecha: '2026-01-01' }])
+chequear('emisión', 'y cambiar una fecha, también', otrasFechas.emisionResumen.fase === 'idle' && otrasFechas.resumenCtaCteId === null)
+chequear('emisión', 'sacar la ventana deja el criterio sólo con fechas', aplicar(conLista, [{ type: 'setResumenRango', rango: null }]).resumenRango === null)
 
 const generando = aplicar(conLista, [{ type: 'setEmisionResumen', emision: { fase: 'emitiendo' } }])
 chequear('emisión', 'generándose, no se cambia el período', aplicar(generando, [{ type: 'setResumenRango', rango: 'ultimos15' }]).resumenRango === 'ultimos60')
-chequear('emisión', 'generándose, no se cambia de cliente', aplicar(generando, [{ type: 'setCliente', cliente: CLIENTES[1] }]).cliente?.id === cliente.id)
+chequear('emisión', 'ni las fechas', aplicar(generando, [{ type: 'setResumenHasta', fecha: '2026-01-01' }]).resumenHasta === '')
+chequear('emisión', 'ni se cambia de cliente', aplicar(generando, [{ type: 'setCliente', cliente: CLIENTES[1] }]).cliente?.id === cliente.id)
 
 const otroCliente = aplicar(conLista, [{ type: 'setCliente', cliente: CLIENTES[1] }])
 chequear(
   'cliente',
-  'cambiar de cliente descarta la lista pero conserva estado de cuenta y período',
+  'cambiar de cliente descarta la lista pero conserva el criterio',
   otroCliente.movimientosCtaCteClave === null && otroCliente.resumenRango === 'ultimos60' && otroCliente.resumenEstadoCtaCte === 'NO_INCLUIR',
 )
 
@@ -255,21 +414,7 @@ chequear(
   JSON.stringify(FORMATO_RESUMEN_IDS) === '{"PDF":[1],"Excel":[2],"Ambos":[1,2]}' && ESTADO_RESUMEN_INDEX.generar === 3,
 )
 
-/* ===== Las vistas no revientan ===== */
-
-const paso2 = pintar(conLista, RangoFechasView)
-chequear('paso 2', 'muestra la tabla con sus columnas', ['Nro de Comprobante', 'Fecha de Emisión', 'Fecha de Vencimiento', 'Saldo Inicial', 'Ventas', 'Cobros', 'Saldo Final'].every((c) => paso2.includes(c)))
-const tabla = paso2.slice(paso2.indexOf('anticipos-v2 mov-ctacte'), paso2.indexOf('</table>'))
-chequear('paso 2', 'usa las clases de la tabla de anticipos', paso2.indexOf('mov-ctacte') > -1 && ['anticipos-v2', 'ant-tabla', 'ant-row', 'ant-nro', 'ant-detalle', 'ant-col-cen', 'ant-num'].every((c) => tabla.includes(c)))
-chequear('paso 2', 'la tabla no tiene nada editable ni clickeable', !/<(input|a|button|select)\b/.test(tabla))
-chequear('paso 2', 'avisa los movimientos sin fecha', paso2.includes('no tiene fecha de emisión cargada'))
-chequear(
-  'paso 2',
-  'sin rango, pide elegirlo',
-  pintar(aplicar(enResumen, [{ type: 'setCliente', cliente }]), RangoFechasView).includes('Elegí un rango de fechas'),
-)
-
-/* ===== Paginado y totales del paso 2 ===== */
+/* ===== Paginado y totales (los usan las tablas de cobranza y del estado de cuenta) ===== */
 
 const lista23 = Array.from({ length: 23 }, (_, i) => i + 1)
 const p1 = paginar(lista23, 1, 10)
@@ -279,6 +424,7 @@ chequear('paginado', 'última página: lo que queda', p3.items.join() === '21,22
 chequear('paginado', 'una página que ya no existe se acota a la última', paginar(lista23, 9, 10).pagina === 3)
 chequear('paginado', 'pocas páginas: todas como botón', paginasVisibles(2, 3).join() === '1,2,3')
 chequear('paginado', 'muchas páginas: puntas, vecinas y saltos', paginasVisibles(6, 12).join() === '1,…,5,6,7,…,12')
+chequear('alto fijo', 'la última página incompleta pide filas de relleno', p3.vacias === 7 && p1.vacias === 0)
 
 const base23 = sesenta.movimientos[0]
 const movimientos23 = Array.from({ length: 23 }, (_, i) => ({
@@ -289,46 +435,10 @@ const movimientos23 = Array.from({ length: 23 }, (_, i) => ({
   cobros: 40,
   saldoFinal: 1000 + i,
 }))
-const clave23 = claveMovimientosCtaCte(cliente.id, 'ultimos60')
-const con23 = aplicar(conCliente, [
-  { type: 'setMovimientosCtaCte', resultado: { ...sesenta, movimientos: movimientos23 }, clave: clave23 },
-])
-const paso2Largo = pintar(con23, RangoFechasView)
-chequear('paso 2', 'más de 10 movimientos: muestra 10 filas', (paso2Largo.match(/mov-fila/g) ?? []).length === 10)
-chequear('paso 2', 'y el paginador debajo de la tabla', paso2Largo.indexOf('mov-paginador') > paso2Largo.indexOf('</table>') && paso2Largo.includes('Página siguiente'))
-chequear('paso 2', 'dice qué filas se ven', /Mostrando <strong>1<\/strong>–<strong>10<\/strong> de <strong>23<\/strong>/.test(paso2Largo))
-chequear('paso 2', 'hasta 10 movimientos, sin paginador', !paso2.includes('mov-paginador'))
-
 const tot = totalesDelPeriodo(movimientos23)
-chequear('totales', 'suman TODO el período, no la página', tot.ventas === 2300 && tot.cobros === 920 && tot.saldoFinal === 1022)
-chequear(
-  'paso 2',
-  'TOTAL VENTAS, TOTAL COBRADO y SALDO FINAL debajo de la tabla',
-  ['TOTAL VENTAS', 'TOTAL COBRADO', 'SALDO FINAL'].every((r) => paso2Largo.indexOf(r) > paso2Largo.indexOf('mov-paginador')) &&
-    paso2Largo.includes('$ 2.300,00') &&
-    paso2Largo.includes('$ 920,00'),
-)
-chequear(
-  'paso 2',
-  'los totales son el panel del destino del pase, cerrando la card',
-  paso2Largo.includes('pases-v2') &&
-    paso2Largo.includes('cobro-card--cierre') &&
-    ['entrega-panel cobro-imp-panel', 'entrega-panel-head', 'cobro-imp-row', 'cobro-imp-met', 'cobro-cab-sep', 'cobro-imp-num--total'].every((c) => paso2Largo.includes(c)) &&
-    paso2Largo.lastIndexOf('cobro-imp-panel') > paso2Largo.lastIndexOf('mov-paginador'),
-)
-chequear('paso 2', 'sin tabla la card conserva su relleno', !pintar(aplicar(enResumen, [{ type: 'setCliente', cliente }]), RangoFechasView).includes('cobro-card--cierre'))
+chequear('totales', 'suman TODO el período', tot.ventas === 2300 && tot.cobros === 920 && tot.saldoFinal === 1022)
 
-/* ===== Alto fijo de la tabla al paginar ===== */
-
-chequear('alto fijo', 'la última página incompleta pide filas de relleno', p3.vacias === 7 && p1.vacias === 0)
-chequear('alto fijo', 'la primera página, completa, no rellena', (paso2Largo.match(/mov-relleno/g) ?? []).length === 0)
-const con13 = aplicar(conCliente, [
-  { type: 'setMovimientosCtaCte', resultado: { ...sesenta, movimientos: movimientos23.slice(0, 13) }, clave: clave23 },
-])
-chequear('alto fijo', 'paginada, la tabla siempre reserva 10 filas', paginar(con13.movimientosCtaCte, 2, 10).items.length + paginar(con13.movimientosCtaCte, 2, 10).vacias === 10)
-chequear('alto fijo', 'sin paginado no hay relleno', !paso2.includes('mov-relleno'))
-
-/* ===== Paso 3 · Facturas que debe ===== */
+/* ===== Las facturas que debe el cliente (documento "Estado de Cta Cte") ===== */
 
 chequear('facturas', 'número desde el nombre del ítem', nroDeFactura('VTA-111 - 7001 - La Batea S.A TEST', titular) === 'VTA-111')
 chequear('facturas', 'sin VTA en el nombre: el nombre sin el cliente', nroDeFactura('Factura manual - 7001 - La Batea S.A TEST', titular) === 'Factura manual')
@@ -347,12 +457,7 @@ chequear('facturas', 'el cobrado de varios subelementos se SUMA', sumaMirror({ i
 const adeudadas = await getFacturasAdeudadas(cliente)
 chequear('facturas', 'lectura (modo local): ordenadas por vencimiento', adeudadas.length > 0 && adeudadas.every((f, i) => i === 0 || !f.vencimiento || (!!adeudadas[i - 1].vencimiento && f.vencimiento >= adeudadas[i - 1].vencimiento)))
 
-const paso3SinLeer = pintar(conLista, EstadoCtaCteView)
-chequear('paso 3', 'se llama "Facturas que debe"', paso3SinLeer.includes('Facturas que debe'))
-chequear('paso 3', 'la bajada nombra al cliente', paso3SinLeer.includes(`A continuación se listarán las facturas que ${cliente.name} te debe y con qué vencimiento:`))
-chequear('paso 3', 'mientras lee, lo dice', paso3SinLeer.includes('Buscando las facturas'))
-
-const facturas23 = Array.from({ length: 13 }, (_, i) => ({
+const facturas13 = Array.from({ length: 13 }, (_, i) => ({
   ...adeudadas[0],
   id: `fa-${i}`,
   comprobante: `VTA-${200 + i}`,
@@ -362,49 +467,75 @@ const facturas23 = Array.from({ length: 13 }, (_, i) => ({
   estadoVencimiento: 'Vencido + 60',
   tonoVencimiento: 'vencida' as const,
 }))
-const conFacturas = aplicar(conLista, [{ type: 'setFacturasAdeudadas', facturas: facturas23, clienteId: cliente.id }])
-const paso3 = pintar(conFacturas, EstadoCtaCteView)
+const conFacturas = aplicar(conLista, [{ type: 'setFacturasAdeudadas', facturas: facturas13, clienteId: cliente.id }])
+chequear('facturas', 'otro cliente descarta las facturas', aplicar(conFacturas, [{ type: 'setCliente', cliente: CLIENTES[1] }]).facturasAdeudadasClienteId === null)
+chequear('facturas', 'una respuesta de otro cliente se ignora', aplicar(conLista, [{ type: 'setFacturasAdeudadas', facturas: facturas13, clienteId: 'otro' }]).facturasAdeudadas.length === 0)
+
+/* Con la lectura ya en el estado y la búsqueda pedida, la configuración deja avanzar y muestra el
+   tilde con lo que trajo. */
+const contestada = aplicar(conLista, [
+  { type: 'pedirBusquedaResumen', clave },
+  { type: 'goto', paso: 'configResumen' },
+])
+chequear(
+  'paso 2',
+  'con la búsqueda contestada, el pie anuncia la etapa siguiente',
+  /* SSR mete un `<!-- -->` entre el texto y el valor interpolado: se acepta. */
+  /Siguiente: (<!-- -->)?Emitir y Enviar/.test(pintar(contestada, ConfigResumenView)),
+)
+chequear(
+  'paso 2',
+  'y el spinner se vuelve tilde, con cuántos movimientos trajo',
+  pintar(contestada, ConfigResumenView).includes('fa-circle-check') &&
+    pintar(contestada, ConfigResumenView).includes(`${sesenta.movimientos.length}`),
+)
+
+/* ===== Paso 3 · emitir y enviar ===== */
+
+const paso2 = pintar(conLista, ResumenCtaCteView)
+chequear('paso 3', 'es la última etapa del recorrido', paso2.includes('>3<'))
+chequear('paso 3', 'el campo Formato va antes del botón de emitir', paso2.indexOf('Formato') > -1 && paso2.indexOf('Formato') < paso2.indexOf('Emitir Resumen Cta Cte'))
+chequear('paso 3', 'ofrece Excel, PDF y Ambos', paso2.includes('>Excel<') && paso2.includes('>PDF<') && paso2.includes('>Ambos<'))
+chequear('paso 3', 'muestra el comprobante a generar y el envío con WhatsApp opcional', paso2.includes('Comprobante a generar') && paso2.includes('envío por WhatsApp'))
+chequear('paso 3', 'la card del comprobante nace cerrada', paso2.includes('aria-expanded="false"'))
+chequear('paso 3', 'la ficha nombra el período elegido', paso2.includes(rotuloCriterio(criterioResumen(conLista))))
+chequear('paso 3', 'la bajada no nombra a Monday', paso2.includes('Emití el resumen de cuenta corriente y enviáselo al cliente.'))
+chequear('paso 3', 'la ficha ya no muestra la fecha de emisión', !paso2.includes('Fecha de Emisión'))
 chequear(
   'paso 3',
-  'la tabla tiene sus 7 columnas',
-  ['Nro Comprobante', 'Fecha de Emisión', 'Importe', 'Total Pagado', 'Pend de Pagar', 'Fecha de Vencimiento', 'Estado de Vencimiento'].every((c) => paso3.includes(`>${c}<`)),
+  '"Mercaderia Pend de Facturar" va debajo del saldo final, con el importe de la cuenta',
+  paso2.indexOf('Mercaderia Pend de Facturar') > paso2.indexOf('Saldo final del período') &&
+    conLista.mercaderiaPendFacturar === 286_621.81 &&
+    paso2.includes('286.621,81'),
 )
-const tabla3 = paso3.slice(paso3.indexOf('anticipos-v2 mov-ctacte'), paso3.indexOf('</table>'))
-chequear('paso 3', 'misma tabla que el paso 2: mismas clases y nada clickeable', ['ant-tabla', 'ant-row', 'mov-fila', 'ant-nro', 'ant-col-cen'].every((c) => tabla3.includes(c)) && !/<(input|a|button|select)\b/.test(tabla3))
-chequear('paso 3', 'mismo paginado de a 10', (paso3.match(/mov-fila/g) ?? []).length === 10 && /de <strong>13<\/strong> (<!-- -->)?facturas/.test(paso3))
-chequear('paso 3', 'el estado de vencimiento va en su pastilla', paso3.includes('fact-estado is-pendiente'))
-chequear(
-  'paso 3',
-  'TOTAL DEUDA, TOTAL COBRADO y DEUDA PENDIENTE en el panel del pase, de TODAS las facturas',
-  ['TOTAL DEUDA', 'TOTAL COBRADO', 'DEUDA PENDIENTE'].every((r) => paso3.indexOf(r) > paso3.indexOf('mov-paginador')) &&
-    paso3.includes('entrega-panel cobro-imp-panel') &&
-    paso3.includes('cobro-card--cierre') &&
-    paso3.includes('$ 13.000,00') &&
-    paso3.includes('$ 11.700,00'),
+/* Sin la lista leída todavía, la card no inventa números: los muestra en "--". */
+const leyendo = pintar(conCliente, ResumenCtaCteView)
+chequear('paso 3', 'mientras la cuenta se lee, la card no muestra números', leyendo.includes('>--<'))
+const detalleCargando = renderToString(
+  createElement(DetalleMovimientos, {
+    movimientos: [],
+    desde: '',
+    cliente,
+    mercaderiaPendFacturar: 0,
+    cargando: true,
+  }),
 )
-chequear('paso 3', 'otro cliente descarta las facturas', aplicar(conFacturas, [{ type: 'setCliente', cliente: CLIENTES[1] }]).facturasAdeudadasClienteId === null)
-chequear('paso 3', 'una respuesta de otro cliente se ignora', aplicar(conLista, [{ type: 'setFacturasAdeudadas', facturas: facturas23, clienteId: 'otro' }]).facturasAdeudadas.length === 0)
+chequear('paso 3', 'y el documento dice que está buscando los movimientos', detalleCargando.includes('Buscando los movimientos de la cuenta corriente'))
 
-const paso4 = pintar(conLista, ResumenCtaCteView)
-chequear('paso 4', 'el campo Formato va antes del botón de emitir', paso4.indexOf('Formato') > -1 && paso4.indexOf('Formato') < paso4.indexOf('Emitir Resumen Cta Cte'))
-chequear('paso 4', 'ofrece Excel, PDF y Ambos', paso4.includes('>Excel<') && paso4.includes('>PDF<') && paso4.includes('>Ambos<'))
-chequear('paso 4', 'muestra el comprobante a generar y el envío con WhatsApp opcional', paso4.includes('Comprobante a generar') && paso4.includes('envío por WhatsApp'))
-chequear('paso 4', 'la card del comprobante nace cerrada', paso4.includes('aria-expanded="false"') && !paso4.includes('mov-ctacte'))
-
-/* ===== Paso 4 · documentos a generar ===== */
+/* ===== Paso 3 · documentos a generar ===== */
 
 const cuenta = (html: string, texto: string) => html.split(texto).length - 1
-chequear('documentos', 'NO INCLUIR: sólo la card del resumen', cuenta(paso4, 'class="comp-card"') === 1 && !paso4.includes('class="comp-tit">Estado de Cta Cte'))
-const paso4Incluye = pintar(
+chequear('documentos', 'NO INCLUIR: sólo la card del resumen', cuenta(paso2, 'class="comp-card"') === 1 && !paso2.includes('class="comp-tit">Estado de Cta Cte'))
+const paso2Incluye = pintar(
   aplicar(conLista, [
     { type: 'setResumenEstadoCtaCte', estado: 'INCLUIR' },
-    { type: 'setFacturasAdeudadas', facturas: facturas23.slice(0, 3), clienteId: cliente.id },
+    { type: 'setFacturasAdeudadas', facturas: facturas13.slice(0, 3), clienteId: cliente.id },
   ]),
   ResumenCtaCteView,
 )
-chequear('documentos', 'INCLUIR: dos cards, resumen y estado de cuenta', cuenta(paso4Incluye, 'class="comp-card"') === 2 && paso4Incluye.includes('class="comp-tit">Estado de Cta Cte'))
-chequear('documentos', 'las dos llevan "Documento Cta Cte"', cuenta(paso4Incluye, '>Documento Cta Cte<') === 2)
-chequear('documentos', 'las dos nacen cerradas', cuenta(paso4Incluye, 'class="comp-toggle" aria-expanded="false"') === 2)
+chequear('documentos', 'INCLUIR: dos cards, resumen y estado de cuenta', cuenta(paso2Incluye, 'class="comp-card"') === 2 && paso2Incluye.includes('class="comp-tit">Estado de Cta Cte'))
+chequear('documentos', 'las dos llevan "Documento Cta Cte"', cuenta(paso2Incluye, '>Documento Cta Cte<') === 2)
+chequear('documentos', 'las dos nacen cerradas', cuenta(paso2Incluye, 'class="comp-toggle" aria-expanded="false"') === 2)
 
 const detalle = detalleDeMovimientos(sesenta.movimientos)
 chequear(
@@ -437,25 +568,58 @@ chequear(
 chequear('documentos', 'uso de línea con dos decimales; sin límite no hay porcentaje', usoDeLinea(15_000_000, 6_649_589.56) === 44.33 && usoDeLinea(0, 100) === null)
 
 const cuerpoResumen = renderToString(
-  createElement(DetalleMovimientos, {
-    movimientos: sesenta.movimientos,
-    desde: '2026-08-01',
-    cliente: { ...cliente, limit: 15_000_000, lineaUtilizada: 6_649_589.56, disponible: 8_350_410.44 },
-    mercaderiaPendFacturar: 1_430_000,
-  }),
+  createElement(DetalleMovimientos, { movimientos: sesenta.movimientos, desde: '2026-08-01' }),
 )
 chequear(
   'documentos',
-  'Detalle de Movimientos: mismas columnas, saldo inicial, TOTAL y franja de crédito',
-  ['Fecha', 'Comprobante', 'Vencimiento', 'Debe $', 'Haber $', 'Saldo $'].every((c) => cuerpoResumen.includes(`>${c}<`)) &&
+  'Detalle de Movimientos: mismas columnas, saldo inicial y TOTAL',
+  ['Fecha', 'Comprobante', 'Vencimiento', 'Saldo Inicial $', 'Debe $', 'Haber $', 'Saldo $'].every((c) => cuerpoResumen.includes(`>${c}<`)) &&
     cuerpoResumen.includes('>01/08/2026<') &&
     cuerpoResumen.includes('>Saldo Inicial<') &&
-    cuerpoResumen.includes('>TOTAL<') &&
-    ['Límite de crédito', 'Línea utilizada', 'Crédito disponible', 'Uso de línea', 'Mercadería pend. facturar'].every((c) => cuerpoResumen.includes(c)) &&
-    cuerpoResumen.includes('44,33%') &&
-    cuerpoResumen.includes('$ 1.430.000,00'),
+    cuerpoResumen.includes('>TOTAL<'),
 )
-const cuerpoEstado = renderToString(createElement(ComprobantesPendientes, { facturas: facturas23.slice(0, 3), cargando: false }))
+/* El saldo inicial de CADA fila es el de su movimiento: con cuánto venía la cuenta antes de moverse. */
+chequear(
+  'documentos',
+  'cada fila muestra su propio saldo inicial',
+  cuerpoResumen.includes(`>${money(sesenta.movimientos[1].saldoInicial)}<`),
+)
+/* El crédito de la cuenta NO es parte del resumen: es una foto de hoy, y ya está en la ficha. */
+chequear(
+  'documentos',
+  'el resumen NO lleva la franja de crédito',
+  ['Límite de crédito', 'Línea utilizada', 'Crédito disponible', 'Uso de línea'].every(
+    (c) => !cuerpoResumen.includes(c),
+  ),
+)
+const facturasPorTramo = [
+  { ...facturas13[0], id: 'tr-1', tramo: 'noVencido' as const, estadoVencimiento: 'A Vencer' },
+  { ...facturas13[1], id: 'tr-2', tramo: 'vencido0a15' as const },
+  { ...facturas13[2], id: 'tr-3', tramo: 'vencidoMas60' as const },
+]
+const cuerpoEstado = renderToString(createElement(ComprobantesPendientes, { facturas: facturasPorTramo, cargando: false }))
+chequear(
+  'documentos',
+  'cada fila VENCIDA lleva la clase de su tramo',
+  cuerpoEstado.includes('doc-venc doc-venc--vencido0a15') &&
+    cuerpoEstado.includes('doc-venc doc-venc--vencidoMas60'),
+)
+/* Lo que no venció no se pinta: es lo único que queda en el negro de la tabla. */
+chequear(
+  'documentos',
+  'la factura NO vencida no lleva color',
+  !cuerpoEstado.includes('doc-venc--noVencido'),
+)
+chequear(
+  'documentos',
+  'las columnas del vencimiento no se distinguen entre sí por el grosor',
+  !cuerpoEstado.includes('doc-fuerte doc-venc-txt'),
+)
+chequear(
+  'documentos',
+  'y pinta las CUATRO columnas del vencimiento (no el importe ni lo pagado)',
+  (cuerpoEstado.split('doc-venc-txt').length - 1) / facturasPorTramo.length === 4,
+)
 chequear(
   'documentos',
   'Comprobantes Pendientes de Pago: mismas columnas, TOTALES y franja de deuda',
@@ -463,16 +627,6 @@ chequear(
     cuerpoEstado.includes('>TOTALES<') &&
     ['Total a vencer (al día)', 'Total vencido', 'Deuda total pendiente'].every((c) => cuerpoEstado.includes(c)),
 )
-chequear('paso 4', 'la bajada no nombra a Monday', paso4.includes('Emití el resumen de cuenta corriente y enviáselo al cliente.'))
-chequear('paso 4', 'la ficha ya no muestra la fecha de emisión', !paso4.includes('Fecha de Emisión'))
-chequear(
-  'paso 4',
-  '"Mercaderia Pend de Facturar" va debajo del saldo final, con el importe de la cuenta',
-  paso4.indexOf('Mercaderia Pend de Facturar') > paso4.indexOf('Saldo final del período') &&
-    conLista.mercaderiaPendFacturar === 286_621.81 &&
-    paso4.includes('286.621,81'),
-)
-chequear('lectura', 'trae la mercadería pendiente de facturar de la cuenta', sesenta.mercaderiaPendFacturar === 286_621.81)
 
 /* ===== Columnas del envío ===== */
 
@@ -497,6 +651,18 @@ chequear(
   'NO INCLUIR destilda boolean_mm767m9h (null), no lo omite',
   JSON.stringify(columnasDatosResumen('PDF', periodoDeRango('ultimos15', HOY), false)) ===
     '{"dropdown_mm76p5gd":{"ids":[1]},"date_mm7643hk":{"date":"2026-08-30"},"date_mm76jbba":{"date":"2026-09-14"},"boolean_mm767m9h":null}',
+)
+/* Las fechas que se escriben en la cuenta son las del período CRUZADO, no las del rango suelto. */
+chequear(
+  'emisión',
+  'con ventana y fechas se escribe el período cruzado',
+  JSON.stringify(
+    columnasDatosResumen(
+      'PDF',
+      periodoDelCriterio(criterio({ rango: 'ultimoAnio', desde: '2026-01-01', hasta: '2026-03-01' }), HOY).periodo!,
+      false,
+    ),
+  ) === '{"dropdown_mm76p5gd":{"ids":[1]},"date_mm7643hk":{"date":"2026-01-01"},"date_mm76jbba":{"date":"2026-03-01"},"boolean_mm767m9h":null}',
 )
 
 if (fallas > 0) {
