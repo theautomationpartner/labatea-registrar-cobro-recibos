@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react'
 import { AvisoModal } from '@/components/ui/AvisoModal'
+import { ModalCargando } from '@/components/ui/ModalCargando'
 import { EnviarDocumento } from '@/features/shared/EnviarDocumento'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
 import { descripcionDePaso, etiquetaDePaso, numeroDePaso, pasoAnterior } from '@/lib/pasos'
 import { armarRecibo, pagosDeAnticipos, NRO_RECIBO } from '@/lib/recibo'
-import { pedirRegistro } from '@/services/monday'
+import { esperarRegistro, pedirRegistro, REGISTRO_COBROS } from '@/services/monday'
 import { useApp, useDispatch } from '@/state/hooks'
 import { ReciboAGenerar } from './ReciboAGenerar'
 import { ResumenRecibo } from './ResumenRecibo'
@@ -39,6 +40,9 @@ export function ReciboView() {
      escritura que impacta la cuenta corriente del cliente, y repetirla por un doble click la
      pediría dos veces. */
   const [registrando, setRegistrando] = useState(false)
+  /* El recibo quedó escrito y pedido, pero el tablero no confirmó su registro. NO se reinicia la
+     app: el ítem está en Monday y hay que mirarlo antes de tocar nada. */
+  const [avisoRegistro, setAvisoRegistro] = useState('')
   /* Todo el ciclo de la emisión —escritura, pedido al tablero y seguimiento del estado— vive en el
      hook. Acá sólo se lo dispara y se reparte su estado entre las dos cards. Ese estado lo guarda el
      hook en el estado GLOBAL, así que volver un paso y regresar reencuentra el recibo emitido en vez
@@ -130,7 +134,7 @@ export function ReciboView() {
    * última escritura de su operación y la que impacta la cuenta corriente, así que las dos se
    * confirman antes de dar la operación por cerrada.
    */
-  const finalizar = () => {
+  const finalizar = async () => {
     if (fase !== 'emitido') {
       setAviso(true)
       return
@@ -143,12 +147,31 @@ export function ReciboView() {
       return
     }
     setRegistrando(true)
-    pedirRegistro(reciboId)
-      .then(() => dispatch({ type: 'reset' }))
-      .catch(() => {
-        setRegistrando(false)
+    /* Marca el corte entre los DOS tiempos. Con el pedido ya escrito, un fallo posterior no se
+       puede comunicar como "no se pudo pedir el registro": el tablero ya lo tiene. */
+    let pedido = false
+    try {
+      await pedirRegistro(reciboId)
+      pedido = true
+      /* El tablero tiene que decir que lo registró: se sondea "🤖Estado Registro de Cobro" hasta
+         que llegue a "Registrado". Hasta entonces la pantalla sigue tapada, porque la que impacta
+         la cuenta corriente y marca las facturas como cobradas es la automatización, no la app. */
+      await esperarRegistro(reciboId, REGISTRO_COBROS)
+      /* Registro CONFIRMADO: ESO cierra la operación (mismo criterio que el pase de saldo). */
+      dispatch({ type: 'reset' })
+    } catch (e) {
+      setRegistrando(false)
+      if (!pedido) {
+        // No salió: se puede reintentar sin duplicar nada.
         dispatch({ type: 'errorMonday', accion: 'pedir el registro del cobro' })
-      })
+        return
+      }
+      setAvisoRegistro(
+        e instanceof Error && e.message.trim()
+          ? e.message
+          : 'El recibo quedó emitido en Monday, pero el tablero no confirmó el registro del cobro.',
+      )
+    }
   }
 
   return (
@@ -220,13 +243,31 @@ export function ReciboView() {
               type="button"
               className="btn btn-primary"
               disabled={registrando}
-              onClick={finalizar}
+              onClick={() => void finalizar()}
             >
               <i className="fas fa-flag-checkered" /> Finalizar Operación
             </button>
           </div>
         </div>
       </div>
+
+      {/* Tapa la pantalla desde que se pide el registro hasta que el tablero lo confirma. Es el
+          MISMO componente —y los mismos estilos— con los que la app de operaciones de venta
+          registra una venta, y con los que acá se registra un pase de saldo. */}
+      {registrando && (
+        <ModalCargando
+          titulo="Registrando cobro en el sistema"
+          detalle="Estamos registrando el cobro, espera unos segundos y no salgas de la app"
+        />
+      )}
+
+      {/* El cobro salió pero el tablero no lo confirmó. Se nombra así, sin prometer nada: lo único
+          seguro es que el ítem está escrito y que su registro no cerró. */}
+      {avisoRegistro && (
+        <AvisoModal titulo="El registro no se confirmó" onClose={() => setAvisoRegistro('')}>
+          {avisoRegistro} Revisá el recibo en Monday antes de volver a intentarlo.
+        </AvisoModal>
+      )}
 
       {aviso && (
         <AvisoModal titulo="Todavía no emitiste el recibo" onClose={() => setAviso(false)}>

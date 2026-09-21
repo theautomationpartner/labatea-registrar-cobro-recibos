@@ -1,5 +1,6 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { AvisoModal } from '@/components/ui/AvisoModal'
+import { ModalCargando } from '@/components/ui/ModalCargando'
 import { ReciboAGenerar, ROTULOS_DOC_OP } from '@/features/recibo/ReciboAGenerar'
 import { ResumenRecibo, ROTULOS_RESUMEN_OP } from '@/features/recibo/ResumenRecibo'
 import { useEmision } from '@/features/recibo/useEmisionRecibo'
@@ -16,6 +17,7 @@ import {
   pasoAnteriorPago,
 } from '@/lib/pasosPago'
 import type { DatosOrdenPago } from '@/services/monday'
+import { esperarRegistro, REGISTRO_PAGOS } from '@/services/monday'
 import { nombreAnticipoPago, pedirRegistroOP } from '@/services/monday/ordenPago'
 import { useApp, useDispatch } from '@/state/hooks'
 
@@ -93,13 +95,16 @@ export function OrdenPagoView() {
   const dispatch = useDispatch()
   // Aviso al intentar cerrar la operación sin haber emitido la orden.
   const [aviso, setAviso] = useState(false)
-  /* El pedido de registro está en vuelo. NO se muestra —el botón de cierre queda igual que
-     siempre—: sólo frena un segundo click, porque es una escritura que impacta la cuenta corriente
-     del proveedor y repetirla la pediría dos veces.
+  /* El registro está en vuelo: desde que se lo pide hasta que el tablero lo confirma. Tapa la
+     pantalla con `ModalCargando` y frena un segundo click, porque es la escritura que impacta la
+     cuenta corriente del proveedor y repetirla la pediría dos veces.
 
-     Es una ref y no estado: nada de la pantalla depende de esto, así que provocar un re-render
-     sería pedirle a React que redibuje para no cambiar nada. */
-  const registrando = useRef(false)
+     Es ESTADO y no una ref: la pantalla sí depende de esto —la ventana se muestra mientras dura—,
+     así que el re-render es exactamente lo que hace falta. */
+  const [registrando, setRegistrando] = useState(false)
+  /* La orden quedó escrita y pedida, pero el tablero no confirmó su registro. NO se reinicia la
+     app: el ítem está en Monday y hay que mirarlo antes de tocar nada. */
+  const [avisoRegistro, setAvisoRegistro] = useState('')
   /* Todo el ciclo de la emisión —escritura, pedido al tablero y seguimiento del estado— vive en el
      hook, con el adaptador de la orden. Su estado lo guarda en el estado GLOBAL, así que volver un
      paso y regresar reencuentra la orden emitida en vez de reofrecer la emisión. */
@@ -167,25 +172,43 @@ export function OrdenPagoView() {
    * usuario ya se fue a la pantalla siguiente, sin nada que le avise. Por eso el cierre sólo ocurre
    * cuando el pedido entró; si no, se avisa y el botón queda disponible para reintentar.
    */
-  const finalizar = () => {
+  const finalizar = async () => {
     if (fase !== 'emitido') {
       setAviso(true)
       return
     }
-    if (registrando.current) return
+    if (registrando) return
     /* Sin id no hay a quién pedirle el registro. No debería pasar —la orden emitida siempre dejó su
        ítem—, pero de darse, cerrar igual es mejor que dejar al usuario encerrado en la etapa. */
     if (!ordenPagoId) {
       dispatch({ type: 'reset' })
       return
     }
-    registrando.current = true
-    pedirRegistroOP(ordenPagoId)
-      .then(() => dispatch({ type: 'reset' }))
-      .catch(() => {
-        registrando.current = false
+    setRegistrando(true)
+    /* Marca el corte entre los DOS tiempos, igual que en el recibo: con el pedido ya escrito, un
+       fallo posterior no se puede comunicar como "no se pudo pedir el registro". */
+    let pedido = false
+    try {
+      await pedirRegistroOP(ordenPagoId)
+      pedido = true
+      /* El tablero tiene que decir que lo registró: se sondea "🤖Estado Registro de Pago" hasta que
+         llegue a "Registrado". La que impacta la cuenta corriente del proveedor y marca las
+         facturas como pagadas es la automatización, no la app. */
+      await esperarRegistro(ordenPagoId, REGISTRO_PAGOS)
+      dispatch({ type: 'reset' })
+    } catch (e) {
+      setRegistrando(false)
+      if (!pedido) {
+        // No salió: se puede reintentar sin duplicar nada.
         dispatch({ type: 'errorMonday', accion: 'pedir el registro del pago' })
-      })
+        return
+      }
+      setAvisoRegistro(
+        e instanceof Error && e.message.trim()
+          ? e.message
+          : 'La orden quedó emitida en Monday, pero el tablero no confirmó el registro del pago.',
+      )
+    }
   }
 
   return (
@@ -271,12 +294,34 @@ export function OrdenPagoView() {
           </button>
 
           <div className="actions-footer-fin">
-            <button type="button" className="btn btn-primary" onClick={finalizar}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={registrando}
+              onClick={() => void finalizar()}
+            >
               <i className="fas fa-flag-checkered" /> Finalizar Operación
             </button>
           </div>
         </div>
       </div>
+
+      {/* La MISMA ventana —y los mismos estilos— con los que se registra un cobro y con los que la
+          app de operaciones de venta registra una venta. */}
+      {registrando && (
+        <ModalCargando
+          titulo="Registrando pago en el sistema"
+          detalle="Estamos registrando el pago, espera unos segundos y no salgas de la app"
+        />
+      )}
+
+      {/* El pago salió pero el tablero no lo confirmó. Se nombra así, sin prometer nada: lo único
+          seguro es que el ítem está escrito y que su registro no cerró. */}
+      {avisoRegistro && (
+        <AvisoModal titulo="El registro no se confirmó" onClose={() => setAvisoRegistro('')}>
+          {avisoRegistro} Revisá la orden en Monday antes de volver a intentarlo.
+        </AvisoModal>
+      )}
 
       {aviso && (
         <AvisoModal titulo="Todavía no emitiste la orden de pago" onClose={() => setAviso(false)}>
