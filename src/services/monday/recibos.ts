@@ -178,9 +178,14 @@ function columnasAnticipo(
     [COL.cobroSub.importeCancelado]: round2(importe),
   }
   /* Cada campo se escribe sólo si tiene valor: vacío se OMITE en lugar de mandarse en blanco, igual
-     que en el resto del archivo. La columna de texto largo pide su valor envuelto en `text`. */
+     que en el resto del archivo.
+
+     El detalle va como STRING PLANO, igual que el del otro circuito (`COL.ordenPagoSub.detalleAnticipo`)
+     y que el resto de las columnas de texto de este archivo. Antes viajaba envuelto en `{ text }`
+     —la forma del valor que la API DEVUELVE al leer, no la que espera al escribir—: eso llega al
+     tablero como un objeto donde se espera texto, y la celda queda con el JSON crudo o vacía. */
   const texto = detalle?.trim()
-  if (texto) cv[COL.cobroSub.detalle] = { text: texto }
+  if (texto) cv[COL.cobroSub.detalle] = texto
   /* "🤖Fecha Venc" es la MISMA columna que usan el cheque y la tarjeta; acá es el vencimiento del
      anticipo. Nunca conviven en un mismo subítem. */
   const vence = fechaCol(vencimiento)
