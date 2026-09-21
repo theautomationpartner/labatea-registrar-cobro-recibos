@@ -269,7 +269,11 @@
   gap: 12px;
   align-items: start;
 }
+/* Los DOS widgets miden lo mismo, tengan datos o no: son dos cards lado a lado y una más baja
+   que la otra deja un escalón en el medio de la pantalla. El alto es el del ranking lleno, que
+   es su tope (ver `--cbz-widget-alto`). */
 .cobranza-v2 .cbz-widget {
+  min-height: var(--cbz-widget-alto);
   padding: 18px 20px;
   background: var(--c-bg-card);
   border: 1px solid var(--c-border);
@@ -311,13 +315,11 @@
   margin: 0;
 }
 
-/* La batería mide lo mismo que el ranking lleno (ver `--cbz-widget-alto`): son dos cards lado a
-   lado, y una más baja que la otra deja un escalón en el medio de la pantalla. El alto sobrante lo
-   reparte la leyenda entre sus cinco renglones, en vez de quedar como un hueco al pie. */
+/* En la batería, el alto que sobra lo reparte la leyenda entre sus cinco renglones, en vez de
+   quedar como un hueco al pie. */
 .cobranza-v2 .cbz-widget--bateria {
   display: flex;
   flex-direction: column;
-  min-height: var(--cbz-widget-alto);
 }
 .cobranza-v2 .cbz-widget--bateria .cbz-leyenda {
   flex: 1;

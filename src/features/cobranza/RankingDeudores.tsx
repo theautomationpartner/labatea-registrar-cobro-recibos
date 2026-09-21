@@ -46,23 +46,25 @@ export function RankingDeudores({
       </div>
 
       {!listo ? (
-        /* UNA sola barra en gris: el widget vacío mide lo mismo que con una cuenta cargada, y sólo
-           crece a partir de la segunda. Lleva sus TRES renglones —nombre, barra y pie— porque es el
-           alto de esos tres lo que tiene que quedar reservado. */
+        /* TANTAS barras en gris como cuentas puede llegar a listar: el widget mide de entrada lo
+           mismo que lleno, que es lo que mide la batería de al lado. Cada una lleva sus TRES
+           renglones —nombre, barra y pie—, así el gris tiene la forma de lo que va a llegar. */
         <ol className="cbz-ranking">
-          <li className="cbz-rank-item cbz-rank-item--gris">
-            <span className="cbz-rank-cab">
-              <Esqueleto ancho="180px" pulso={cargando} />
-              <Esqueleto ancho="90px" pulso={cargando} />
-            </span>
-            <span className="cbz-rank-barra" />
-            <span className="cbz-rank-pie">
-              <Esqueleto ancho="150px" alto={10} pulso={cargando} />
-            </span>
-          </li>
+          {Array.from({ length: TOP_DEUDORES }, (_, i) => (
+            <li key={i} className="cbz-rank-item cbz-rank-item--gris">
+              <span className="cbz-rank-cab">
+                <Esqueleto ancho="180px" pulso={cargando} />
+                <Esqueleto ancho="90px" pulso={cargando} />
+              </span>
+              <span className="cbz-rank-barra" />
+              <span className="cbz-rank-pie">
+                <Esqueleto ancho="150px" alto={10} pulso={cargando} />
+              </span>
+            </li>
+          ))}
         </ol>
       ) : top.length === 0 ? (
-        /* Mismo alto que una barra: que la búsqueda no traiga deudores no puede encoger el widget. */
+        /* El widget ya tiene su alto: el mensaje sólo ocupa el lugar de la primera barra. */
         <p className="cobro-vacio cbz-widget-vacio cbz-rank-vacio">
           <i className="fas fa-circle-check" /> Ninguna de las cuentas alcanzadas tiene deuda
           pendiente con este criterio.
