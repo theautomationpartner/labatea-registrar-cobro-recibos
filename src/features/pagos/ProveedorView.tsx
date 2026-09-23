@@ -19,7 +19,7 @@ import {
   numeroDePasoPago,
   siguientePasoPago,
 } from '@/lib/pasosPago'
-import { buscarProveedores, getSaldosCliente } from '@/services/monday'
+import { getSaldosCliente } from '@/services/monday'
 import { useApp, useDispatch } from '@/state/hooks'
 import type { Cliente, Proveedor, SaldosCliente } from '@/types'
 import { OperacionPagoConfig } from './OperacionPagoConfig'
@@ -190,14 +190,14 @@ export function ProveedorView() {
             <BuscarCliente
               estado={estadoBusqueda}
               onEstado={setEstadoBusqueda}
-              placeholder="Buscar proveedor por código, nombre o CUIT..."
-              mensajeVacio="Ingresá un nombre, código de proveedor o CUIT."
-              sujeto="el proveedor"
-              buscarPersonas={buscarProveedores}
+              /* El rol apunta el live search al padrón de PROVEEDORES, la relectura al elegir a
+                 `mapProveedor` y el botón Buscar a `buscarProveedores`. */
+              rol="proveedor"
               /* El proveedor NO es el cliente de la operación: va a su propia clave del estado,
                  así que se pasa el efecto en vez de dejar el `setCliente` por defecto. El casteo es
-                 seguro por construcción —`buscarProveedores` sólo devuelve `Proveedor`—, y es el
-                 precio de que el buscador hable el modelo común de las dos categorías. */
+                 seguro por construcción —con `rol="proveedor"` el buscador sólo entrega lo que
+                 devuelven `buscarProveedores` y `refrescarPersona('proveedor')`, que son
+                 `Proveedor`—, y es el precio de que el buscador hable el modelo común. */
               onElegir={(p: Cliente) => elegir(p as Proveedor)}
             />
           </div>

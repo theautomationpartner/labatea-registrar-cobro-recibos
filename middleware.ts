@@ -24,12 +24,19 @@
 
 export const config = {
   /* Sólo las rutas que gastan un recurso del servidor. El resto del sitio (index.html, assets) no
-     necesita portero: ahí el control es la CSP. */
+     necesita portero: ahí el control es la CSP.
+
+     `/api/cron/*` queda AFUERA a propósito, igual que en la app de ventas: a los crons los invoca
+     Vercel, no un navegador, así que llegan sin `Referer` y el portero los rechazaría con 403 en
+     cada corrida —las facturas cacheadas no se actualizarían nunca—. Su puerta es el `CRON_SECRET`
+     que Vercel manda en la Authorization (ver `api/cron/facturas-cobro.ts`). */
   matcher: [
     '/api/monday',
     '/api/monday-upload',
     '/api/make-comprobantes',
     '/api/usuario',
+    '/api/personas',
+    '/api/facturas-cobranza',
     '/api/mfa/:path*',
   ],
 }

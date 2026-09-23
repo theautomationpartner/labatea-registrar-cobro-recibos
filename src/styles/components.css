@@ -492,6 +492,22 @@
 .ritem:hover {
   background: #f3f4f6;
 }
+/* Fila resaltada por el teclado: la que carga el Enter. AZUL claro y no el gris del hover a
+   propósito —el hover es "el mouse está por acá" y esto es "Enter carga ésta"—, para que se
+   distingan cuando el mouse quedó quieto sobre otra fila mientras se navega con las flechas. Mismo
+   estilo que el buscador de la app de operaciones de venta. */
+.ritem--activo,
+.ritem--activo:hover {
+  background: #eaf2ff;
+  box-shadow: inset 3px 0 0 var(--primary-blue);
+}
+/* Envoltorio del buscador de personas (campo + botón Buscar). Existe SÓLO para que las teclas
+   apretadas en cualquiera de los dos lleguen al mismo manejador: son hermanos. `display: contents`
+   lo borra del layout —sus hijos siguen siendo los ítems flex de `.unified-toolbar`— pero lo deja
+   en el árbol de eventos. */
+.search-teclado {
+  display: contents;
+}
 .ritem-name {
   font-weight: 600;
   font-size: 13px;

@@ -51,7 +51,7 @@ const tieneCtaCteConectada = (item: MondayItem): boolean =>
  * módulos deciden si la persona sirve (ver `lib/personas`) y leerlas dos veces habría abierto la
  * puerta a que un lado las interpretara distinto del otro.
  */
-const mapProveedor = (item: MondayItem): Proveedor => ({
+export const mapProveedor = (item: MondayItem): Proveedor => ({
   ...mapPersona(item),
   tieneCtaCte: tieneCtaCteConectada(item),
 })

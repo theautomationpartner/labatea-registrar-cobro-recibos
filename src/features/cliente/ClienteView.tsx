@@ -11,7 +11,7 @@ import {
   numeroDePaso,
   siguientePaso,
 } from '@/lib/pasos'
-import { buscarProveedores, getSaldosCliente } from '@/services/monday'
+import { getSaldosCliente } from '@/services/monday'
 import { esContado, msgContadoOrigen } from '@/lib/pases'
 import { cumpleRol, rolDeOperacion, ROTULO_OPERACION, ROTULO_ROL } from '@/lib/personas'
 import { faltantesCliente } from '@/lib/validaciones'
@@ -111,7 +111,6 @@ export function ClienteView() {
   /* Cómo se lo nombra en pantalla. Sin rol elegido se usa el del cliente: es el texto que ya estaba,
      y con él sólo se rotula un buscador que todavía no puede cargar a nadie. */
   const rotulo = ROTULO_ROL[rol ?? ladosDePase(usuarioActual)[0]]
-  const buscaProveedores = rol === 'proveedor'
 
   /**
    * Qué pasa cuando la búsqueda devuelve a alguien.
@@ -250,15 +249,13 @@ export function ClienteView() {
               estado={estadoBusqueda}
               onEstado={setEstadoBusqueda}
               onElegir={elegir}
+              /* El rol decide todo lo que cambia entre los dos lados del mostrador: qué padrón
+                 recorre el live search, contra qué consulta el botón Buscar y los textos. */
               rol={rol ?? ladosDePase(usuarioActual)[0]}
-              {...(buscaProveedores
-                ? {
-                    buscarPersonas: buscarProveedores,
-                    placeholder: 'Buscar proveedor por código, nombre o CUIT...',
-                    mensajeVacio: 'Ingresá un nombre, código de proveedor o CUIT.',
-                    sujeto: 'el proveedor',
-                  }
-                : {})}
+              /* El RESUMEN sólo documenta la cuenta —sus movimientos se leen aparte—, así que la
+                 persona se carga con el dato del padrón sin releerla. Todo lo demás mueve plata
+                 contra esa cuenta y la relee de Monday al elegirla. */
+              conCredito={operacionApp !== 'RESUMEN'}
             />
           </div>
         </div>

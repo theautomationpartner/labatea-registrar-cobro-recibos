@@ -5,6 +5,17 @@
       "develop": false
     }
   },
+  "crons": [
+    {
+      "path": "/api/cron/facturas-cobro",
+      "schedule": "*/5 * * * *"
+    }
+  ],
+  "functions": {
+    "api/cron/facturas-cobro.ts": {
+      "maxDuration": 180
+    }
+  },
   "headers": [
     {
       "source": "/(.*)",

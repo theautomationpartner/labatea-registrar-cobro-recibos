@@ -39,8 +39,83 @@ export async function mondayServidor<T>(
 
   if (!res.ok) throw new ErrorMondayServidor('Monday respondió HTTP ' + res.status)
 
-  const json = (await res.json()) as { data?: T; errors?: { message: string }[] }
-  if (json.errors?.length) throw new ErrorMondayServidor(json.errors[0].message)
+  const json = (await res.json()) as { data?: T; errors?: ErrorGraphQL[] }
+  if (json.errors?.length) throw deError(json.errors[0])
   if (!json.data) throw new ErrorMondayServidor('Monday no devolvió datos')
   return json.data
+}
+
+/* ── Límite por minuto de un campo ───────────────────────────────────────────────────────────── */
+
+/** Un error de GraphQL con lo que Monday agrega cuando el que se agotó es el cupo de un campo. */
+interface ErrorGraphQL {
+  message: string
+  extensions?: { code?: string; retry_in_seconds?: number }
+}
+
+/**
+ * Cuántos segundos hay que esperar antes de reintentar, o `null` si el error no es un límite.
+ *
+ * Monday tiene un cupo POR CAMPO Y POR MINUTO aparte del límite general de la cuenta, y el que se
+ * agota primero acá es `display_value`: es el único que devuelve el valor calculado de una fórmula
+ * o una mirror, y cada factura pendiente de cobro trae dos columnas de ese tipo (el cobrado y el
+ * pendiente). Mismo helper que el cron del padrón en la app de ventas.
+ */
+function esperaPorLimite(e: ErrorGraphQL): number | null {
+  if (!e.extensions?.code?.includes('RATE_LIMIT')) return null
+  /* El `retry_in_seconds` viene del servidor; el default cubre el caso de que no lo mande. Se le
+     suma un segundo porque la ventana es de minuto redondo: reintentar en el borde exacto vuelve
+     a caer del lado equivocado. */
+  return (e.extensions.retry_in_seconds ?? 15) + 1
+}
+
+/**
+ * El error de GraphQL como excepción. El del cupo por minuto sale distinguible —y con su espera—
+ * para que `mondayServidorConEspera` lo pueda reintentar; todo lo demás es un fallo común.
+ */
+function deError(e: ErrorGraphQL): ErrorMondayServidor {
+  const segundos = esperaPorLimite(e)
+  return segundos === null
+    ? new ErrorMondayServidor(e.message)
+    : new ErrorLimiteCampo(e.message, segundos)
+}
+
+const dormir = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Como `mondayServidor`, pero esperando y reintentando cuando Monday contesta que se agotó el cupo
+ * por minuto de un campo.
+ *
+ * Es para el CRON y sólo para el cron: ahí nadie está esperando la respuesta, así que dormir veinte
+ * segundos y volver a pedir es gratis. En un endpoint que atiende al navegador sería al revés —el
+ * usuario se come la espera—, y por eso `mondayServidor` sigue fallando de una.
+ *
+ * `agotado` no se traga el error: si después de todos los intentos el cupo sigue cerrado, se
+ * propaga. La corrida falla, la marca NO avanza y la siguiente reintoma el mismo tramo.
+ */
+export async function mondayServidorConEspera<T>(
+  query: string,
+  variables: Record<string, unknown>,
+  intentos = 4,
+): Promise<T> {
+  for (let intento = 0; ; intento++) {
+    try {
+      return await mondayServidor<T>(query, variables)
+    } catch (e) {
+      const segundos = e instanceof ErrorLimiteCampo ? e.segundos : null
+      if (segundos === null || intento >= intentos) throw e
+      console.warn(`[monday] cupo por minuto agotado: se reintenta en ${segundos}s`)
+      await dormir(segundos * 1000)
+    }
+  }
+}
+
+/** El error que sí se puede reintentar: el cupo por minuto de un campo, con su espera. */
+export class ErrorLimiteCampo extends ErrorMondayServidor {
+  constructor(
+    message: string,
+    readonly segundos: number,
+  ) {
+    super(message)
+  }
 }

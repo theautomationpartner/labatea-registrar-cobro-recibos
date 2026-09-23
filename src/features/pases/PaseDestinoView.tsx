@@ -20,7 +20,6 @@ import { bloqueoDePases, esContado, MSG_CONTADO_DESTINO } from '@/lib/pases'
 import { cumpleRol, rolDeOperacion, ROTULO_OPERACION } from '@/lib/personas'
 import type { Cliente } from '@/types'
 import {
-  buscarProveedores,
   esperarRegistro,
   getSaldosCliente,
   registrarPaseDeSaldo,
@@ -245,16 +244,10 @@ export function PaseDestinoView() {
                 estado={estadoBusqueda}
                 onEstado={setEstadoBusqueda}
                 placeholder="Buscar cuenta destino por código, nombre o CUIT..."
-                rol={rol}
                 /* Se busca contra la MISMA categoría que el origen: un pase mueve saldo entre dos
-                   cuentas del mismo lado del mostrador. */
-                {...(rol === 'proveedor'
-                  ? {
-                      buscarPersonas: buscarProveedores,
-                      mensajeVacio: 'Ingresá un nombre, código de proveedor o CUIT.',
-                      sujeto: 'el proveedor',
-                    }
-                  : {})}
+                   cuentas del mismo lado del mostrador. El rol apunta el live search al padrón de
+                   esa categoría y el botón Buscar a su consulta. */
+                rol={rol}
                 /* La cuenta que RECIBE el saldo tiene que ser del mismo lado que la que lo entrega:
                    un pase entre cuentas de clientes no puede terminar acreditándole a un proveedor,
                    ni al revés. Se valida al elegir, antes de que la ficha muestre nada. */

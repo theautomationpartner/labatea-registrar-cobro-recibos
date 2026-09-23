@@ -1,6 +1,8 @@
 /** Punto único de importación de los servicios de Monday: las vistas nunca importan un archivo suelto. */
 export * from './usuarios'
 export * from './clientes'
+/* El padrón cacheado del live search de clientes y proveedores (lo mantiene el cron de ventas). */
+export * from './padronPersonas'
 export * from './facturas'
 /* ===== PAGOS ===== los tres servicios del módulo, todos de LECTURA. */
 export * from './proveedores'

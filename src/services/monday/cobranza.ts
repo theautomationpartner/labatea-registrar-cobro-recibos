@@ -17,6 +17,17 @@
  *
  * El segundo filtro, en cambio, va donde corresponde: `color_mm6symyx` es una status, así que el
  * tramo viaja como regla y el tablero devuelve sólo las facturas pedidas.
+ *
+ * ── Las facturas salen del CACHÉ, las cuentas no ──
+ * Las facturas pendientes las mantiene cacheadas en la base un Cron Job cada 5 minutos
+ * (`api/cron/facturas-cobro.ts`), así que la búsqueda sólo sale a Monday por las CUENTAS: son el
+ * criterio que el usuario está filtrando y "🤖 Estado del Saldo" tiene que ser el del momento. Con
+ * las cuentas en mano se piden al caché las facturas de esos clientes en los tramos elegidos, y se
+ * asocian a su cuenta acá, igual que antes.
+ *
+ * Si el caché no responde o está viejo (el cron dejó de correr), se vuelve SOLO a la consulta
+ * directa a Monday por lotes: la pantalla se degrada a como era antes del caché, no se rompe ni
+ * muestra deuda vieja como si fuera la de hoy.
  */
 import { CUENTAS_COBRANZA_MOCK } from '@/data/mock'
 import { estadoSaldoDeLabel, TRAMOS_VENCIMIENTO } from '@/lib/cobranza'
@@ -37,7 +48,14 @@ import {
   type ItemFactura,
   type ValorColumna,
 } from './resumenCtaCte'
-import { mondayApi, mondayHabilitado } from './sdk'
+import {
+  AccesoDenegado,
+  cabecerasPropias,
+  mondayApi,
+  mondayHabilitado,
+  SegundoFactorRequerido,
+  verificarRespuesta,
+} from './sdk'
 
 /**
  * El ÍNDICE de "🤖Estado de Vencimiento" con el que viaja cada tramo en la regla de la consulta.
@@ -260,6 +278,81 @@ async function getFacturasDeLote(
   return items
 }
 
+/**
+ * Hasta qué antigüedad se confía en el caché de facturas. El cron corre cada 5 minutos: pasados 20
+ * sin una corrida exitosa se perdieron cuatro seguidas, y eso ya no es una demora sino un cron roto.
+ * A partir de ahí la deuda cacheada puede no reflejar cobros recientes, y se consulta Monday.
+ */
+const CACHE_VIGENTE_MS = 20 * 60_000
+
+/**
+ * Las facturas pendientes de esos clientes en esos tramos, desde el caché del servidor. `null` =
+ * no se pudo usar el caché (no responde, nunca sincronizó o está viejo) y hay que ir a Monday.
+ *
+ * Los rechazos de SEGURIDAD no se tragan: un 401/403 acá es el mismo que tendría la consulta a
+ * Monday, levanta su ventana (`verificarRespuesta`) y se propaga. Cualquier otro fallo es del caché
+ * y sólo cambia de dónde se leen las facturas.
+ */
+async function getFacturasDelCache(
+  clienteIds: readonly string[],
+  tramos: readonly TramoVencimiento[],
+): Promise<ItemFacturaCobranza[] | null> {
+  /* En desarrollo no hay funciones serverless: `/api/*` no existe. */
+  if (import.meta.env.DEV) return null
+  try {
+    const res = await fetch('/api/facturas-cobranza', {
+      method: 'POST',
+      headers: await cabecerasPropias({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        clienteIds,
+        /* Con los CINCO tramos no se filtra —`null`—, igual que `reglaDeTramos`: así también entran
+           las facturas que el tablero todavía no tramificó, que sin cancelar siguen siendo deuda. */
+        tramos:
+          tramos.length >= TRAMOS_VENCIMIENTO.length ? null : tramos.map((t) => INDICE_DE_TRAMO[t]),
+      }),
+    })
+    /* Un 5xx del caché no es la app caída —Monday sigue ahí—: no pasa por `verificarRespuesta`,
+       que levantaría la ventana de error del servidor. */
+    if (res.status >= 500) throw new Error(`HTTP ${res.status}`)
+    await verificarRespuesta(res, 'Facturas pendientes cacheadas')
+    const data = (await res.json()) as {
+      facturas: ItemFacturaCobranza[]
+      sincronizado: string | null
+      error: string | null
+    }
+    const edad = data.sincronizado ? Date.now() - Date.parse(data.sincronizado) : Infinity
+    if (!(edad <= CACHE_VIGENTE_MS)) {
+      console.warn(
+        `[cobranza] el caché de facturas está viejo o nunca sincronizó (${data.sincronizado ?? 'nunca'}` +
+          `${data.error ? ` · ${data.error}` : ''}): se consulta Monday directo.`,
+      )
+      return null
+    }
+    return data.facturas
+  } catch (e) {
+    if (e instanceof AccesoDenegado || e instanceof SegundoFactorRequerido) throw e
+    console.warn('[cobranza] no se pudo leer el caché de facturas:', (e as Error).message)
+    return null
+  }
+}
+
+/**
+ * Las facturas de esos clientes: del caché si está vigente, y si no, de Monday por lotes de clientes
+ * EN PARALELO —son consultas independientes, y en serie tardaría la suma de todas—.
+ */
+async function getFacturas(
+  clienteIds: readonly string[],
+  tramos: readonly TramoVencimiento[],
+): Promise<ItemFacturaCobranza[]> {
+  if (clienteIds.length === 0) return []
+  const cacheadas = await getFacturasDelCache(clienteIds, tramos)
+  if (cacheadas) return cacheadas
+  const lotes = await Promise.all(
+    trozos(clienteIds, CLIENTES_POR_CONSULTA).map((lote) => getFacturasDeLote(lote, tramos)),
+  )
+  return lotes.flat()
+}
+
 /** El tramo de una factura, leído del ÍNDICE de su status y nunca de su texto. */
 const tramoDeFactura = (item: ItemFacturaCobranza): TramoVencimiento | null => {
   const cv = item.column_values.find((c) => c.id === COL.factPendiente.estadoVencimiento)
@@ -298,16 +391,13 @@ export async function buscarCobranza(criterio: CriterioCobranza): Promise<Result
   const porCliente = new Map<string, CuentaCobranza>()
   for (const c of cuentas) if (!porCliente.has(c.clienteId)) porCliente.set(c.clienteId, c)
 
-  /* Los lotes de clientes van EN PARALELO: son consultas independientes, y en serie el tablero
-     tardaría la suma de todas en vez de la más lenta. */
-  const lotes = await Promise.all(
-    trozos([...porCliente.keys()], CLIENTES_POR_CONSULTA).map((lote) =>
-      getFacturasDeLote(lote, criterio.tramos),
-    ),
-  )
+  /* Las facturas de las cuentas alcanzadas, en los tramos pedidos: del caché del cron, o de Monday
+     si el caché no está disponible (ver `getFacturas`). */
+  const items = await getFacturas([...porCliente.keys()], criterio.tramos)
 
+  /* Cada factura se asocia a la cuenta del cliente al que está conectada. */
   const facturas: FacturaCobranza[] = []
-  for (const item of lotes.flat()) {
+  for (const item of items) {
     const clienteId = String(item.personas?.[0]?.linked_item_ids?.[0] ?? '')
     const cuenta = porCliente.get(clienteId)
     /* Sin cuenta entre las pedidas la factura no es de este resultado. Puede pasar si el cliente
