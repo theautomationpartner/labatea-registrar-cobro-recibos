@@ -300,10 +300,6 @@
   gap: 8px;
   flex-shrink: 0;
 }
-/* Tilde en rojo: el tablero devolvió un error de emisión. */
-.recibo-v2 .comp-ok--err {
-  background: var(--r-danger);
-}
 /* Tilde de emisión: apagado hasta que el recibo se emite. */
 .recibo-v2 .comp-ok {
   width: 24px;
@@ -318,6 +314,18 @@
 }
 .recibo-v2 .comp-ok.on {
   background: var(--r-success);
+}
+/* Tilde en rojo: el tablero devolvió un error de emisión. Va DESPUÉS de la base y con las dos
+   clases: escrito antes y con la misma especificidad, el gris de `.comp-ok` lo pisaba. */
+.recibo-v2 .comp-ok.comp-ok--err {
+  background: var(--r-danger);
+}
+/* El documento NO salió (resumen de cta cte): cruz blanca sobre rojo pleno, simétrica al check
+   blanco sobre verde de la card que sí salió. */
+.recibo-v2 .comp-ok.comp-ok--x {
+  background: var(--r-danger);
+  color: #fff;
+  font-size: 12px;
 }
 
 /* --- Cuerpo: el documento --- */

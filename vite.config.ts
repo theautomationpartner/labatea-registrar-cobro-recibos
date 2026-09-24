@@ -27,6 +27,22 @@ export default defineConfig(({ mode }) => {
       }
     : {}
 
+  /* El escenario del RESUMEN DE CTA CTE, con el mismo criterio: en producción lo llama
+     `api/resumen-cta-cte.ts`; acá, el proxy. El escenario contesta recién al terminar de generar
+     los archivos, y Make espera un `Webhook Response` hasta 180 s: se le da ese margen. */
+  const webhookResumen = env.MAKE_WEBHOOK_RESUMEN_CTA_CTE?.trim()
+  const proxyResumen: Record<string, ProxyOptions> = webhookResumen
+    ? {
+        '/make-resumen-cta-cte': {
+          target: new URL(webhookResumen).origin,
+          changeOrigin: true,
+          rewrite: () => new URL(webhookResumen).pathname,
+          timeout: 190_000,
+          proxyTimeout: 190_000,
+        },
+      }
+    : {}
+
   return {
     plugins: [react()],
     resolve: {
@@ -56,6 +72,7 @@ export default defineConfig(({ mode }) => {
           rewrite: (path) => path.replace(/^\/monday-api/, '/v2'),
         },
         ...proxyMake,
+        ...proxyResumen,
       },
     },
   }

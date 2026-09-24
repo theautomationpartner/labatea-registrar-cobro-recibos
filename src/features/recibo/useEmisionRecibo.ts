@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { RECIBO_EMISIBLE, type Emisible } from '@/features/shared/emisiones'
+import { RECIBO_EMISIBLE, type Emisible, type ResultadoEmision } from '@/features/shared/emisiones'
 import type { DatosRecibo } from '@/services/monday'
 import { useApp, useDispatch } from '@/state/hooks'
 
@@ -68,6 +68,11 @@ export function useEmision<D>(documento: Emisible<D>) {
   /* La fase, leída desde `emitir` sin volver a crear el callback en cada avance del sondeo. */
   const faseRef = useRef(fase)
   faseRef.current = fase
+  /* Lo último que se escribió en el tablero, con qué datos. Un documento reemitible que falló al
+     EMITIR (no al escribir) se reintenta sin volver a escribirlo: los datos ya están en el ítem, y
+     lo único que hace falta repetir es el pedido. Vive en la ref —se pierde al salir de la etapa—
+     a propósito: al volver no se sabe si alguien tocó el ítem en Monday, y se escribe de nuevo. */
+  const escritoRef = useRef<{ firma: string; resultado: ResultadoEmision } | null>(null)
 
   /**
    * Escribe el recibo y le pide la emisión al tablero. Al volver deja la fase en `emitiendo`, que
@@ -80,13 +85,29 @@ export function useEmision<D>(documento: Emisible<D>) {
       if (enVueloRef.current) return
       if (idRef.current && !(documento.reemitibleTrasError && faseRef.current === 'error')) return
       enVueloRef.current = true
-      dispatch(documento.parchear({ fase: 'creando', error: null }))
+      // Se lee ANTES de pasar a `creando`: es la fase del intento anterior la que dice si es reintento.
+      const reintento = documento.reemitibleTrasError === true && faseRef.current === 'error'
+      /* Los documentos se limpian acá: un reintento no puede heredar las cards tildadas de la
+         emisión anterior. */
+      dispatch(documento.parchear({ fase: 'creando', error: null, documentos: null }))
       setIncompleto(null)
       try {
         /* 1) Cabecera → bulk de facturas → bulk de formas de pago → comprobantes, encadenados dentro
               del servicio. Se espera a que TODO termine: la automatización lee el ítem para armar el
               PDF, así que no se le puede pedir la emisión a un recibo a medio escribir. */
-        const resultado = await documento.crear(datos)
+        /* Un REINTENTO con los mismos datos que ya se escribieron no los vuelve a escribir: salta
+           directo al pedido de emisión. Si cambió algo —otro formato—, se escribe de nuevo. */
+        const firma = JSON.stringify(datos)
+        const previo = escritoRef.current
+        let resultado: ResultadoEmision
+        if (reintento && previo?.firma === firma) {
+          resultado = previo.resultado
+        } else {
+          // Si esta escritura falla, lo que haya en el ítem ya no es lo de la anterior.
+          escritoRef.current = null
+          resultado = await documento.crear(datos)
+          escritoRef.current = { firma, resultado }
+        }
         idRef.current = resultado.id
         /* El id va al estado global apenas existe: de ahí lo saca el envío, y es —junto con la
            fase— lo que hace que volver a esta etapa reencuentre el recibo ya creado. */
@@ -112,7 +133,27 @@ export function useEmision<D>(documento: Emisible<D>) {
         /* 3) Con el recibo entero escrito, se le pide la EMISIÓN: "🤖Estado de Emision" → "A
               emitir". Ese cambio es el disparador de la automatización que genera el PDF, y es la
               MISMA columna que el sondeo de abajo mira hasta que llegue a "Emitido". */
-        await documento.pedirEmision(resultado.id)
+        const cierre = await documento.pedirEmision(resultado.id, datos)
+        /* Quien contesta recién al terminar ya trae el desenlace: se aplica y no hay nada que
+           sondear. Mientras tanto la fase sigue en `creando`, que el botón muestra girando igual. */
+        if (cierre && cierre.fase !== 'en-curso') {
+          dispatch(
+            documento.parchear({
+              fase: cierre.fase,
+              estado: cierre.label,
+              documentos: cierre.documentos ?? null,
+              error:
+                cierre.fase === 'error'
+                  ? {
+                      estado: cierre.label || 'Error en emisión',
+                      mensaje: cierre.mensaje ?? `No se pudo generar ${documento.nombre}.`,
+                      ...(cierre.detalle ? { detalle: cierre.detalle } : {}),
+                    }
+                  : null,
+            }),
+          )
+          return
+        }
         dispatch(documento.parchear({ fase: 'emitiendo', estado: 'A emitir' }))
       } catch (e) {
         /* El mensaje del `catch` es lo que se muestra: dice qué rechazó Monday (columna inválida,
@@ -223,6 +264,8 @@ export function useEmision<D>(documento: Emisible<D>) {
     /** Etiqueta del estado de emisión que publica el tablero. */
     estado,
     error,
+    /** Cómo salió cada documento, cuando la emisión los informa por separado. */
+    documentos: emision.documentos ?? null,
     incompleto,
     emitir,
     /** El documento todavía no se creó, así que un intento fallido se puede repetir sin duplicar nada. */

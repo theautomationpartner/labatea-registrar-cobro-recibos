@@ -7,10 +7,11 @@
  * es sobre el ítem de la cuenta, para pedirle al tablero que genere el archivo:
  *
  *   1. "🤖Formato Archivo Resumen Cta Cte" con el formato elegido (Excel o PDF);
- *   2. "🤖Estado Resumen Cta Cte" en "Generar", que dispara la automatización;
- *   3. se sigue esa misma columna hasta que el tablero la cierre en "Generado" o "Error - Ver Update".
+ *   2. le pide el resumen DIRECTO al escenario de Make y espera su respuesta, que dice qué documento
+ *      salió (`emitirResumenPorApp`).
  *
- * Es el mismo esquema que la emisión del recibo: la app escribe una sola vez y después sólo mira.
+ * La app NO mueve "🤖Estado Resumen Cta Cte" a "Generar": ése es el disparador de la automatización
+ * de Monday, que llama al MISMO escenario, y moverlo generaría el resumen dos veces.
  */
 import { FACTURAS_PENDIENTES, MERCADERIA_PEND_FACTURAR_MOCK, MOVIMIENTOS_CTA_CTE_MOCK } from '@/data/mock'
 import { round2 } from '@/lib/format'
@@ -23,6 +24,8 @@ import {
 } from '@/lib/resumenCtaCte'
 import type {
   Cliente,
+  DocumentosEmision,
+  EstadoDocumentoEmision,
   FacturaAdeudada,
   FormatoResumen,
   MedioEnvio,
@@ -43,7 +46,16 @@ import {
   MOVIMIENTO_CTA_CTE_CLIENTE_INDEX,
 } from './columns'
 import { num, sumaMirror } from './parse'
-import { mondayApi, mondayHabilitado } from './sdk'
+import { cabecerasPropias, mondayApi, mondayHabilitado, verificarRespuesta } from './sdk'
+/* El armado del evento y la lectura de la respuesta son los MISMOS que usa la función de Vercel:
+   el módulo es puro, sin nada de Node, para que en desarrollo lo use el navegador. */
+import {
+  COL_ESTADO_RESUMEN,
+  comoJson,
+  CONSULTA_ITEM,
+  eventoDeResumen,
+  type ItemCtaCte,
+} from '../../../api/_eventoResumen'
 
 /* ===== Forma de las respuestas =====
    Tipos locales y no los de `parse`: acá los vinculados vienen SIN `column_values` (sólo interesa
@@ -631,26 +643,12 @@ export const columnasDatosResumen = (
   [COL.ctaCte.incluyeEstadoResumen]: incluyeEstado ? { checked: 'true' } : null,
 })
 
-/** Pone "🤖Estado Resumen Cta Cte" en "Generar". Ese cambio es el que dispara la automatización. */
-export async function pedirGeneracionResumen(ctaCteId: string): Promise<void> {
-  if (!mondayHabilitado()) return
-  await mondayApi(
-    `mutation ($id: ID!, $board: ID!, $cv: JSON!) {
-      change_multiple_column_values(item_id: $id, board_id: $board, column_values: $cv) { id }
-    }`,
-    {
-      id: ctaCteId,
-      board: BOARDS.ctaCte,
-      cv: JSON.stringify({ [COL.ctaCte.estadoResumen]: { index: ESTADO_RESUMEN_INDEX.generar } }),
-    },
-  )
-}
-
 /**
  * En qué anda la generación, según el tablero, reducida a lo que le importa a quien espera. Una
  * columna vacía o todavía en "Generar" cuenta como en curso: la automatización recién arranca.
  *
- * En modo local no hay tablero que genere nada, así que se responde "Generado" de una.
+ * Ya no la usa la emisión de la app —el escenario contesta con el desenlace—: queda como la lectura
+ * del estado para quien la necesite. En modo local sin token se responde "Generado" de una.
  */
 export async function getEstadoResumenCtaCte(
   ctaCteId: string,
@@ -669,6 +667,229 @@ export async function getEstadoResumenCtaCte(
   if (cv?.index === ESTADO_RESUMEN_INDEX.generado) return { fase: 'emitido', label }
   if (cv?.index === ESTADO_RESUMEN_INDEX.error) return { fase: 'error', label }
   return { fase: 'en-curso', label }
+}
+
+/* ===== Generación pedida por la app, directo al escenario ===== */
+
+/**
+ * Cómo cerró una emisión pedida por la app, ya traducida a lo que muestra la pantalla: la fase del
+ * botón, el avance de cada card y, si falló, qué decirle al usuario.
+ */
+export interface CierreResumen {
+  fase: 'emitido' | 'error'
+  label: string
+  documentos: DocumentosEmision
+  /** Qué se le dice al usuario cuando la emisión cerró en error. */
+  mensaje?: string
+  /** El detalle técnico, informativo, cuando el que falló fue un módulo del escenario. */
+  detalle?: string
+}
+
+/**
+ * Le pide el resumen DIRECTO al escenario de Make, por `/api/resumen-cta-cte`, y espera a que
+ * termine: el escenario contesta al final con qué documento salió y cuál no. La función arma el
+ * evento con la forma del de Monday más el `appJobId`.
+ *
+ * NO mueve "🤖Estado Resumen Cta Cte" a "Generar": eso dispararía también la automatización de
+ * Monday y el resumen saldría dos veces.
+ *
+ * En desarrollo no hay funciones serverless: el evento se arma acá y sale por el proxy de Vite
+ * (`/make-resumen-cta-cte`, ver `emitirResumenEnLocal`). Nunca se toca la columna de estado.
+ */
+export async function emitirResumenPorApp(
+  ctaCteId: string,
+  formato: FormatoResumen,
+  incluyeEstado: boolean,
+): Promise<CierreResumen> {
+  if (import.meta.env.DEV) return emitirResumenEnLocal(ctaCteId, formato, incluyeEstado)
+  const res = await fetch('/api/resumen-cta-cte', {
+    method: 'POST',
+    headers: await cabecerasPropias({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ ctaCteId }),
+  })
+  /* Los rechazos de seguridad levantan su ventana. Un 5xx de la función —no pudo leer la cuenta en
+     Monday— es de esta emisión y se cuenta en el botón, no como la app caída. */
+  if (res.status === 401 || res.status === 403 || res.status === 429) {
+    await verificarRespuesta(res, 'Resumen de cta cte')
+  }
+  if (!res.ok) {
+    throw new Error('No pudimos iniciar la generación del resumen. Probá de nuevo en unos minutos.')
+  }
+  const { status, cuerpo } = (await res.json()) as { status: number; cuerpo: unknown }
+  return interpretarRespuestaResumen(status, cuerpo, formato, incluyeEstado)
+}
+
+/**
+ * La misma emisión, en localhost: lo que en producción hace `api/resumen-cta-cte.ts` —leer el ítem,
+ * armar el evento con la forma del de Monday y mandárselo al webhook— se hace desde el navegador,
+ * con el token de desarrollo y por el proxy de Vite. La dirección del webhook sale de
+ * `MAKE_WEBHOOK_RESUMEN_CTA_CTE` en `.env.local` y no entra al bundle.
+ *
+ * Sin token de Monday (datos mock) no hay cuenta real sobre la cual generar: se da por emitido.
+ */
+async function emitirResumenEnLocal(
+  ctaCteId: string,
+  formato: FormatoResumen,
+  incluyeEstado: boolean,
+): Promise<CierreResumen> {
+  if (!mondayHabilitado()) {
+    return {
+      fase: 'emitido',
+      label: 'Generado',
+      documentos: { resumen: 'ok', estado: incluyeEstado ? 'ok' : 'no_pedido' },
+    }
+  }
+  const [data, yo] = await Promise.all([
+    mondayApi<{ items: ItemCtaCte[] }>(CONSULTA_ITEM, { ids: [ctaCteId], col: [COL_ESTADO_RESUMEN] }),
+    // El usuario del token de desarrollo: en producción es el del session token firmado.
+    mondayApi<{ me: { id: string } }>('query { me { id } }'),
+  ])
+  const item = data.items?.[0]
+  if (!item) throw new Error('No se encontró la cuenta corriente del cliente.')
+
+  const event = eventoDeResumen({ item, userId: yo.me.id, appJobId: `rcc_local_${crypto.randomUUID()}` })
+  const res = await fetch('/make-resumen-cta-cte', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event }),
+  })
+  // Sin la variable, el proxy no existe y Vite contesta 404 con su propia página.
+  if (res.status === 404 && !res.headers.get('content-type')?.includes('json')) {
+    throw new Error('Falta MAKE_WEBHOOK_RESUMEN_CTA_CTE en .env.local (y reiniciar `npm run dev`).')
+  }
+  return interpretarRespuestaResumen(res.status, comoJson(await res.text()), formato, incluyeEstado)
+}
+
+/** Lo que puede contestar el escenario, en cualquiera de sus salidas. */
+interface RespuestaEscenario {
+  resultado?: string
+  documento?: string | null
+  formato?: string | null
+  mensajeError?: string | null
+  [generado: string]: unknown
+}
+
+type DocumentoPedido = 'resumen' | 'estado'
+
+const NOMBRE_DOCUMENTO: Record<DocumentoPedido, string> = {
+  resumen: 'Resumen de Cta Cte',
+  estado: 'Estado de Cta Cte',
+}
+const FORMATOS_DE: Record<FormatoResumen, readonly ('pdf' | 'excel')[]> = {
+  PDF: ['pdf'],
+  Excel: ['excel'],
+  Ambos: ['pdf', 'excel'],
+}
+const CONTACTAR_SOPORTE = 'Contactate con soporte para revisar lo sucedido.'
+
+/**
+ * Las banderas `*_generado` llegan como BOOLEANOS: el escenario las mapea sin comillas. Sólo `true`
+ * cuenta como generado; `false` o `null` —la variable quedó vacía y el servidor la repara a `null`,
+ * ver `comoJson` en `api/resumen-cta-cte.ts`— es un documento que no salió. El texto `"true"` se
+ * acepta igual, por si un escenario viejo las sigue mandando entre comillas.
+ */
+const generado = (v: unknown): boolean =>
+  v === true || (typeof v === 'string' && v.trim().toLowerCase() === 'true')
+
+/** "El Resumen de Cta Cte y el Estado de Cta Cte NO se pudieron emitir. Contactate con soporte…" */
+export function avisoDocumentosFallidos(fallidos: readonly DocumentoPedido[]): string {
+  const sujeto = fallidos.map((d) => `el ${NOMBRE_DOCUMENTO[d]}`).join(' y ')
+  const verbo = fallidos.length > 1 ? 'NO se pudieron emitir' : 'NO se pudo emitir'
+  return `${sujeto.charAt(0).toUpperCase()}${sujeto.slice(1)} ${verbo}. ${CONTACTAR_SOPORTE}`
+}
+
+/**
+ * El `mensajeError` de la validación trae un renglón "- …" por cada chequeo, y los que pasaron
+ * quedan como "- " vacíos (su `if` da `null`). Se sacan esos renglones y los espacios de sobra.
+ */
+export function limpiarMensajeError(texto: string): string {
+  return texto
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !/^[-•]\s*$/.test(l))
+    .join('\n')
+}
+
+/**
+ * Traduce la respuesta del escenario —status HTTP y cuerpo— a cómo cierra la emisión en pantalla.
+ *
+ *   · 200 `completado`   · cada documento pedido se da por emitido si TODOS sus formatos salieron
+ *                          (con "Ambos", PDF y Excel). Alguno emitido → la emisión cierra bien y la
+ *                          pantalla avisa lo que faltó; ninguno → error.
+ *   · `error_validacion` · no se generó nada: el `mensajeError` del escenario, tal cual.
+ *   · `error_emision`    · falló un documento. Si el que falló fue el módulo que arma el archivo
+ *                          (PDF.co / Excel), su mensaje es técnico: queda como detalle, y al usuario
+ *                          se le dice qué no salió y a quién recurrir.
+ */
+export function interpretarRespuestaResumen(
+  status: number,
+  cuerpo: unknown,
+  formato: FormatoResumen,
+  incluyeEstado: boolean,
+): CierreResumen {
+  const r = (cuerpo && typeof cuerpo === 'object' ? cuerpo : {}) as RespuestaEscenario
+  const pedidos: DocumentoPedido[] = incluyeEstado ? ['resumen', 'estado'] : ['resumen']
+  const todos = (e: EstadoDocumentoEmision): DocumentosEmision => ({
+    resumen: e,
+    estado: incluyeEstado ? e : 'no_pedido',
+  })
+  const mensajeError = typeof r.mensajeError === 'string' ? limpiarMensajeError(r.mensajeError) : ''
+  const error = (documentos: DocumentosEmision, mensaje: string, detalle?: string): CierreResumen => ({
+    fase: 'error',
+    label: 'Error en emisión',
+    documentos,
+    mensaje,
+    ...(detalle ? { detalle } : {}),
+  })
+
+  if (status >= 200 && status < 300 && r.resultado === 'completado') {
+    const salio = (doc: DocumentoPedido) =>
+      FORMATOS_DE[formato].every((f) => generado(r[`${doc}_${f}_generado`]))
+    const documentos: DocumentosEmision = {
+      resumen: salio('resumen') ? 'ok' : 'error',
+      estado: incluyeEstado ? (salio('estado') ? 'ok' : 'error') : 'no_pedido',
+    }
+    const fallidos = pedidos.filter((d) => documentos[d] === 'error')
+    if (fallidos.length < pedidos.length) return { fase: 'emitido', label: 'Generado', documentos }
+    return error(documentos, avisoDocumentosFallidos(fallidos))
+  }
+
+  if (r.resultado === 'error_validacion') {
+    return error(todos('error'), mensajeError || `No pudimos generar el resumen. ${CONTACTAR_SOPORTE}`)
+  }
+
+  if (r.resultado === 'error_emision') {
+    const doc: DocumentoPedido | null =
+      r.documento === 'estado_cta_cte' ? 'estado' : r.documento === 'resumen_cta_cte' ? 'resumen' : null
+    const documentos: DocumentosEmision = doc ? { ...todos('pendiente'), [doc]: 'error' } : todos('error')
+    if (mensajeError && !/^error en m[oó]dulo/i.test(mensajeError)) return error(documentos, mensajeError)
+    const f = r.formato?.toLowerCase()
+    const archivo = f === 'excel' ? 'el Excel' : f === 'pdf' ? 'el PDF' : 'el archivo'
+    return error(
+      documentos,
+      `Ocurrió un error al generar ${archivo}${doc ? ` del ${NOMBRE_DOCUMENTO[doc]}` : ''}. ${CONTACTAR_SOPORTE}`,
+      mensajeError || undefined,
+    )
+  }
+
+  // Un rechazo de la propia función (cuenta inválida, webhook que no respondió…): trae su mensaje.
+  if (r.resultado === 'error_app' && mensajeError) return error(todos('pendiente'), mensajeError)
+
+  if (status === 410) {
+    return error(
+      todos('pendiente'),
+      'El generador de resúmenes está pausado. Avisale al administrador y volvé a intentarlo.',
+    )
+  }
+
+  /* Un 2xx sin resultado —el "Accepted" que Make contesta solo cuando el escenario no llega a un
+     Webhook Response— o un status que el escenario no declara: no se sabe qué se generó. */
+  return {
+    fase: 'error',
+    label: 'Emisión sin confirmar',
+    documentos: todos('pendiente'),
+    mensaje: `No pudimos confirmar la emisión de los documentos. ${CONTACTAR_SOPORTE}`,
+  }
 }
 
 /* ===== Envío del resumen ===== */

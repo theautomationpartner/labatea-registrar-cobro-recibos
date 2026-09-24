@@ -2,8 +2,9 @@ import { Avatar } from '@/components/ui/Avatar'
 import { Fila } from '@/features/recibo/ResumenRecibo'
 import { money } from '@/lib/format'
 import { FORMATOS_RESUMEN, OPCIONES_ESTADO_CTA_CTE } from '@/lib/resumenCtaCte'
+import { avisoDocumentosFallidos } from '@/services/monday/resumenCtaCte'
 import { useApp, useDispatch } from '@/state/hooks'
-import type { Cliente, ErrorEmision, FaseEmision, FormatoResumen } from '@/types'
+import type { Cliente, DocumentosEmision, ErrorEmision, FaseEmision, FormatoResumen } from '@/types'
 
 interface FichaResumenCtaCteProps {
   cliente: Pick<Cliente, 'name' | 'cuit'>
@@ -15,6 +16,8 @@ interface FichaResumenCtaCteProps {
   mercaderiaPendFacturar: number
   fase: FaseEmision
   error: ErrorEmision | null
+  /** Cómo salió cada documento, cuando el escenario lo informó. */
+  documentos: DocumentosEmision | null
   puedeReintentar: boolean
   /** Se intentó emitir sin formato: el selector queda en rojo hasta que se elija uno. */
   marcarFormato: boolean
@@ -34,6 +37,7 @@ export function FichaResumenCtaCte({
   mercaderiaPendFacturar,
   fase,
   error,
+  documentos,
   puedeReintentar,
   marcarFormato,
   onEmitir,
@@ -42,6 +46,13 @@ export function FichaResumenCtaCte({
   const dispatch = useDispatch()
   const enCurso = fase === 'creando' || fase === 'emitiendo'
   const formatoEnFalta = marcarFormato && !resumenFormato
+  /* Emitido A MEDIAS: la emisión cerró bien —salió al menos un documento— pero otro no. El botón
+     sigue verde, y lo que faltó se avisa debajo. */
+  const fallidos =
+    fase === 'emitido' && documentos
+      ? (['resumen', 'estado'] as const).filter((d) => documentos[d] === 'error')
+      : []
+  const parcial = fallidos.length > 0
 
   return (
     <div className="card resumen-recibo">
@@ -126,13 +137,14 @@ export function FichaResumenCtaCte({
           </>
         ) : fase === 'emitido' ? (
           <>
-            <i className="fas fa-check" /> Resumen emitido
+            <i className="fas fa-check" /> {parcial ? 'Parcialmente emitido' : 'Resumen emitido'}
           </>
         ) : fase === 'error' ? (
-          <>
-            <i className="fas fa-triangle-exclamation" />{' '}
-            {puedeReintentar ? 'Reintentar la emisión' : 'No se pudo emitir'}
-          </>
+          /* Sigue siendo el botón de reintentar —pedir de nuevo no duplica nada—, pero lo que dice es
+             lo que pasó. */
+          <span title={puedeReintentar ? 'Volver a intentar la emisión' : undefined}>
+            <i className="fas fa-triangle-exclamation" /> Error en emisión
+          </span>
         ) : (
           <>
             <i className="far fa-file-lines" /> Emitir Resumen Cta Cte
@@ -140,12 +152,18 @@ export function FichaResumenCtaCte({
         )}
       </button>
 
+      {/* Sólo el mensaje: el botón ya dice "Error en emisión", y repetirlo como subtítulo no agrega
+          nada. */}
       {fase === 'error' && error && (
         <div className="rec-error" role="alert">
-          <p className="rec-error-estado">
-            <i className="fas fa-circle-exclamation" /> {error.estado}
-          </p>
           <p className="rec-error-msg">{error.mensaje}</p>
+          {error.detalle && <p className="rec-error-detalle">{error.detalle}</p>}
+        </div>
+      )}
+
+      {parcial && (
+        <div className="rec-aviso" role="status">
+          <i className="fas fa-triangle-exclamation" /> {avisoDocumentosFallidos(fallidos)}
         </div>
       )}
     </div>

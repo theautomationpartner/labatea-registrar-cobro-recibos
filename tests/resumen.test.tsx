@@ -21,6 +21,8 @@ import { ClienteView } from '@/features/cliente/ClienteView'
 import { ConfigResumenCtaCte } from '@/features/resumen/ConfigResumenCtaCte'
 import { ConfigResumenView } from '@/features/resumen/ConfigResumenView'
 import { ComprobantesPendientes } from '@/features/resumen/ComprobantesPendientes'
+import { CardDocumentoCtaCte } from '@/features/resumen/CardDocumentoCtaCte'
+import { FichaResumenCtaCte } from '@/features/resumen/FichaResumenCtaCte'
 import { DetalleMovimientos } from '@/features/resumen/DetalleMovimientos'
 import { ResumenCtaCteView } from '@/features/resumen/ResumenCtaCteView'
 import { comprobanteEnviable } from '@/features/shared/comprobantesEnviables'
@@ -49,6 +51,7 @@ import { usoDeLinea } from '@/lib/selectors'
 import {
   columnasDatosResumen,
   getFacturasAdeudadas,
+  interpretarRespuestaResumen,
   getMovimientosCtaCte,
 } from '@/services/monday/resumenCtaCte'
 import { sumaMirror } from '@/services/monday/parse'
@@ -664,6 +667,156 @@ chequear(
     ),
   ) === '{"dropdown_mm76p5gd":{"ids":[1]},"date_mm7643hk":{"date":"2026-01-01"},"date_mm76jbba":{"date":"2026-03-01"},"boolean_mm767m9h":null}',
 )
+
+/* ===== Cierre de la emisión pedida por la app =====
+   El escenario contesta al terminar con qué documento salió en cada formato. Cada card dice lo suyo
+   —check o cruz— y el botón resume: emitido, parcialmente emitido o error en emisión. */
+/* Las banderas llegan como booleanos; una variable que quedó vacía llega como `null` (el servidor
+   repara el `"x":,` que deja Make). */
+const completado = (banderas: Record<string, boolean | null>) => ({
+  appJobId: 'rcc_1',
+  resumen_pdf_generado: null,
+  resumen_excel_generado: null,
+  estado_pdf_generado: null,
+  estado_excel_generado: null,
+  ...banderas,
+  resultado: 'completado',
+  executionId: 'x',
+})
+{
+  const c = interpretarRespuestaResumen(200, completado({ resumen_pdf_generado: true }), 'PDF', false)
+  chequear('cierre', 'PDF sin estado de cuenta, salió → emitido', c.fase === 'emitido' && c.documentos.resumen === 'ok' && c.documentos.estado === 'no_pedido')
+}
+{
+  // Ambos formatos, los dos documentos, y el Excel del estado vino vacío (la variable quedó sin valor).
+  const c = interpretarRespuestaResumen(
+    200,
+    completado({ resumen_pdf_generado: true, resumen_excel_generado: true, estado_pdf_generado: true }),
+    'Ambos',
+    true,
+  )
+  chequear('cierre', 'Ambos: un formato del estado que falta alcanza para darlo por no emitido', c.documentos.estado === 'error')
+  chequear('cierre', 'y el resumen, con sus dos formatos, sí salió', c.documentos.resumen === 'ok')
+  chequear('cierre', 'uno salió → la emisión cierra bien (parcial), no en error', c.fase === 'emitido')
+}
+{
+  const c = interpretarRespuestaResumen(200, completado({ estado_excel_generado: true }), 'Excel', true)
+  chequear('cierre', 'al revés: el estado salió y el resumen no', c.fase === 'emitido' && c.documentos.resumen === 'error' && c.documentos.estado === 'ok')
+}
+{
+  const c = interpretarRespuestaResumen(200, completado({ resumen_pdf_generado: false }), 'PDF', true)
+  chequear('cierre', 'ninguno salió → error en emisión', c.fase === 'error' && c.label === 'Error en emisión')
+  chequear(
+    'cierre',
+    'con el mensaje que nombra los dos documentos y manda a soporte',
+    c.mensaje === 'El Resumen de Cta Cte y el Estado de Cta Cte NO se pudieron emitir. Contactate con soporte para revisar lo sucedido.',
+  )
+}
+chequear('cierre', 'el texto "true" de un escenario viejo se acepta igual', interpretarRespuestaResumen(200, { ...completado({}), resumen_pdf_generado: 'true' }, 'PDF', false).fase === 'emitido')
+chequear('cierre', 'otro texto no cuenta como generado', interpretarRespuestaResumen(200, { ...completado({}), resumen_pdf_generado: 'ok' }, 'PDF', false).fase === 'error')
+{
+  const c = interpretarRespuestaResumen(
+    400,
+    {
+      resultado: 'error_validacion',
+      documento: '',
+      mensajeError:
+        'NO pudimos generar el documento porque faltan los siguientes datos:\n- ❌NO hay un formato de documento especificado.\n- ',
+    },
+    'PDF',
+    true,
+  )
+  chequear('cierre', 'error de validación → error, con el mensaje del escenario', c.fase === 'error' && c.mensaje?.startsWith('NO pudimos generar') === true)
+  chequear('cierre', 'sin los renglones "- " de los chequeos que pasaron', c.mensaje === 'NO pudimos generar el documento porque faltan los siguientes datos:\n- ❌NO hay un formato de documento especificado.')
+  chequear('cierre', 'y los dos documentos no salieron', c.documentos.resumen === 'error' && c.documentos.estado === 'error')
+}
+{
+  const c = interpretarRespuestaResumen(
+    400,
+    { resultado: 'error_emision', documento: 'resumen_cta_cte', formato: 'pdf', mensajeError: 'La cuenta no tiene CUIT cargado.' },
+    'PDF',
+    true,
+  )
+  chequear('cierre', 'error de emisión con mensaje propio → se muestra tal cual', c.fase === 'error' && c.mensaje === 'La cuenta no tiene CUIT cargado.' && !c.detalle)
+  chequear('cierre', 'la cruz va en la card del documento que falló', c.documentos.resumen === 'error' && c.documentos.estado === 'pendiente')
+}
+{
+  const c = interpretarRespuestaResumen(
+    400,
+    { resultado: 'error_emision', documento: 'estado_cta_cte', formato: 'excel', mensajeError: 'Error en modulo de PDF.co: 401 Unauthorized' },
+    'Ambos',
+    true,
+  )
+  chequear('cierre', 'error del módulo → mensaje para el usuario, que nombra archivo y documento', c.mensaje === 'Ocurrió un error al generar el Excel del Estado de Cta Cte. Contactate con soporte para revisar lo sucedido.')
+  chequear('cierre', 'y el error técnico queda como detalle informativo', c.detalle === 'Error en modulo de PDF.co: 401 Unauthorized')
+}
+chequear(
+  'cierre',
+  'el "Accepted" de Make (sin cuerpo) → no se pudo confirmar, y manda a soporte',
+  interpretarRespuestaResumen(200, null, 'PDF', false).mensaje ===
+    'No pudimos confirmar la emisión de los documentos. Contactate con soporte para revisar lo sucedido.',
+)
+chequear('cierre', 'un rechazo de la propia función trae su mensaje', interpretarRespuestaResumen(504, { resultado: 'error_app', mensajeError: 'No terminó a tiempo.' }, 'PDF', false).mensaje === 'No terminó a tiempo.')
+
+const semaforo = (fase: 'creando' | 'emitido' | 'error', documento?: 'pendiente' | 'ok' | 'error') =>
+  renderToString(
+    createElement(CardDocumentoCtaCte, {
+      titulo: 'Estado de Cta Cte',
+      badges: ['Documento Cta Cte'],
+      datos: [],
+      fase,
+      documento,
+      estado: '',
+      children: null,
+    }),
+  )
+chequear('card', 'mientras espera la respuesta, la card gira', semaforo('creando').includes('fa-spin'))
+chequear('card', 'documento que salió: check', semaforo('emitido', 'ok').includes('comp-ok on') && semaforo('emitido', 'ok').includes('fa-check'))
+{
+  const html = semaforo('emitido', 'error')
+  chequear('card', 'documento que no salió: cruz roja, aunque la emisión cerró bien', html.includes('fa-xmark') && html.includes('comp-ok--x'))
+}
+chequear('card', 'error sin detalle por documento: la advertencia de siempre', semaforo('error').includes('fa-triangle-exclamation'))
+
+const ficha = (fase: 'emitido' | 'error', documentos: { resumen: 'ok' | 'error' | 'pendiente'; estado: 'ok' | 'error' | 'no_pedido' | 'pendiente' } | null, error: { estado: string; mensaje: string; detalle?: string } | null = null) =>
+  pintar(initialState, () =>
+    createElement(FichaResumenCtaCte, {
+      cliente: { name: 'Cliente', cuit: '' },
+      rotuloPeriodo: '',
+      saldoFinal: 0,
+      mercaderiaPendFacturar: 0,
+      fase,
+      error,
+      documentos,
+      puedeReintentar: true,
+      marcarFormato: false,
+      onEmitir: () => undefined,
+    }),
+  )
+{
+  const html = ficha('emitido', { resumen: 'ok', estado: 'ok' })
+  chequear('botón', 'todo salió: "Resumen emitido", verde, sin aviso', html.includes('Resumen emitido') && html.includes('btn-generar--ok') && !html.includes('rec-aviso'))
+}
+{
+  const html = ficha('emitido', { resumen: 'ok', estado: 'error' })
+  chequear('botón', 'uno no salió: "Parcialmente emitido", sigue verde', html.includes('Parcialmente emitido') && html.includes('btn-generar--ok') && !html.includes('btn-generar--err'))
+  chequear('botón', 'y el aviso amarillo nombra el que no salió y manda a soporte', html.includes('rec-aviso') && html.includes('El Estado de Cta Cte NO se pudo emitir. Contactate con soporte'))
+}
+{
+  const html = ficha('emitido', { resumen: 'error', estado: 'ok' })
+  chequear('botón', 'al revés, el aviso nombra al resumen', html.includes('Parcialmente emitido') && html.includes('El Resumen de Cta Cte NO se pudo emitir.'))
+}
+{
+  const html = ficha('error', { resumen: 'error', estado: 'error' }, {
+    estado: 'Error en emisión',
+    mensaje: 'Ocurrió un error al generar el PDF del Resumen de Cta Cte. Contactate con soporte para revisar lo sucedido.',
+    detalle: 'Error en modulo de PDF.co: 401',
+  })
+  chequear('botón', 'ninguno salió: "Error en emisión" en rojo', html.includes('Error en emisión') && html.includes('btn-generar--err'))
+  chequear('botón', 'con el mensaje y el detalle técnico debajo', html.includes('Contactate con soporte') && html.includes('rec-error-detalle') && html.includes('PDF.co: 401'))
+  chequear('botón', 'debajo va sólo el mensaje, sin el subtítulo "Error en emisión"', !html.includes('rec-error-estado') && (html.match(/Error en emisión/g) ?? []).length === 1)
+  chequear('botón', 'un error se puede reintentar: el botón no queda deshabilitado', !/<button[^>]*btn-generar[^>]*disabled/.test(html))
+}
 
 if (fallas > 0) {
   console.error(`\n${fallas} chequeo(s) fallaron`)
