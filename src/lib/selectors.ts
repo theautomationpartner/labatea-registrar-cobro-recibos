@@ -59,8 +59,8 @@ export interface CreditoCliente {
 export function creditoCliente(c: Cliente): CreditoCliente {
   const disponible = c.disponible
   const usado = c.limit - disponible
-  const usadoPct = c.limit > 0 ? Math.round((usado / c.limit) * 100) : 0
-  const disponiblePct = c.limit > 0 ? Math.round((disponible / c.limit) * 100) : 100
+  const usadoPct = c.limit > 0 ? round2((usado / c.limit) * 100) : 0
+  const disponiblePct = c.limit > 0 ? round2((disponible / c.limit) * 100) : 100
 
   const { color, clase } = semaforoDeCredito(usadoPct)
 

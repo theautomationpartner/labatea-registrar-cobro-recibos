@@ -1,13 +1,18 @@
 /**
- * Redondeo de importes: hasta dos decimales. Es el ÚNICO redondeo que se le aplica a un monto en
- * toda la app, para que lo que se muestra, lo que se calcula y lo que se escribe en Monday
- * coincidan.
+ * Dos decimales para importes: se REDONDEA como `ROUND(valor, 2)` de las fórmulas de Monday y el
+ * redondeo de los escenarios de Make, así la app, Monday y Make dan exactamente el mismo número.
+ * El medio centavo se aleja del cero: 123456,785 → 123456,79; -1,005 → -1,01.
+ * Es la ÚNICA regla de decimales que se le aplica a un monto en toda la app —cálculos, lecturas de
+ * Monday y escrituras en Monday—.
  *
- * El `Number.EPSILON` corrige el arrastre binario del punto flotante: sin él, 1.005 redondea
- * a 1 en vez de a 1.01 porque en realidad vale 1.00499999999999989.
+ * El `toPrecision(15)` limpia el arrastre binario del punto flotante antes de redondear: 1.005
+ * en realidad vale 1.00499999999999989, y sin la limpieza redondearía a 1 en vez de a 1.01.
  */
-export const round2 = (n: number): number =>
-  Number.isFinite(n) ? Math.round((n + Number.EPSILON) * 100) / 100 : 0
+export const round2 = (n: number): number => {
+  if (!Number.isFinite(n)) return 0
+  const centavos = Math.round(Number((Math.abs(n) * 100).toPrecision(15)))
+  return (Math.sign(n) * centavos) / 100 + 0
+}
 
 const ARS = new Intl.NumberFormat('es-AR', {
   minimumFractionDigits: 2,
@@ -17,12 +22,13 @@ const ARS = new Intl.NumberFormat('es-AR', {
 /** "$ 10.465,78" — formato usado en toda la app, siempre con sus dos decimales. */
 export const money = (n: number): string => `$ ${ARS.format(round2(n))}`
 
-export const pct = (n: number): string => `${Math.round(n)}%`
-
 const DEC = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 })
 
 /** Número → texto AR para un input de importe (miles con punto, coma decimal, sin símbolo). */
-export const importeATexto = (n: number): string => (Number.isFinite(n) ? DEC.format(n) : '')
+export const importeATexto = (n: number): string => (Number.isFinite(n) ? DEC.format(round2(n)) : '')
+
+/** "93,33%" — porcentaje redondeado a dos decimales, con coma decimal y sin ceros de relleno. */
+export const pct = (n: number): string => `${DEC.format(round2(n))}%`
 
 /**
  * Da formato ARGENTINO a lo tecleado en un input de importe: miles con punto y decimales con coma

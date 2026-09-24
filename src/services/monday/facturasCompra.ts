@@ -119,7 +119,7 @@ function mapFacturaCompra(item: MondayItem): FacturaCompraPendiente {
     pagado,
     /* El porcentaje se CALCULA: el tablero no tiene una columna que lo diga (a diferencia del de
        ventas, que trae su "🤖Cobrado %"). Sin total no hay proporción posible, y ahí es 0. */
-    pagadoPct: total > 0 ? Math.min(Math.max(Math.round((pagado / total) * 100), 0), 100) : 0,
+    pagadoPct: total > 0 ? Math.min(Math.max(round2((pagado / total) * 100), 0), 100) : 0,
     pendiente: round2(num(valor(c[COL.factCompra.pendiente]))),
     importeNeto,
     totalFactura,

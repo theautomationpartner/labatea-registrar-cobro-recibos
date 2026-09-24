@@ -1,4 +1,4 @@
-import { money } from '@/lib/format'
+import { money, pct } from '@/lib/format'
 import { proporcion, TRAMOS_VENCIMIENTO, type FilaCobranza } from '@/lib/cobranza'
 import { MOVIMIENTOS_POR_PAGINA } from '@/lib/resumenCtaCte'
 import { semaforoDeCredito } from '@/lib/selectors'
@@ -94,7 +94,7 @@ export function DetalleCuenta({ fila }: { fila: FilaCobranza }) {
         />
         <Cifra
           rotulo="Uso de línea"
-          valor={fila.usoLinea === null ? '—' : `${Math.round(fila.usoLinea)}%`}
+          valor={fila.usoLinea === null ? '—' : pct(fila.usoLinea)}
           tono={semaforo?.clase}
         >
           {semaforo && fila.usoLinea !== null && (

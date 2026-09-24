@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { aplicaCredito, motivoCreditoIgnorado } from '@/lib/credito'
-import { money } from '@/lib/format'
+import { money, pct } from '@/lib/format'
 import { creditoCliente } from '@/lib/selectors'
 import type { Cliente, SaldosCliente } from '@/types'
 
@@ -232,7 +232,7 @@ export function ClienteFicha({
           <div className="credito-uso">
             <div className="progress-header">
               <span>Uso de límite de crédito</span>
-              <strong>{vacio ? '—' : `${credito?.usadoPct ?? 0}% Utilizado`}</strong>
+              <strong>{vacio ? '—' : `${pct(credito?.usadoPct ?? 0)} Utilizado`}</strong>
             </div>
             <div className="progress-track">
               {!vacio && (

@@ -1,3 +1,5 @@
+import { round2 } from '@/lib/format'
+
 /**
  * Lectura de los `column_values` que devuelve la API de Monday. Las mismas reglas valen para
  * todos los tableros, así que viven acá y no en la capa de servicio de cada etapa.
@@ -37,10 +39,13 @@ export const byId = (item: { column_values: CV[] }): Record<string, CV> =>
 /** Valor de una columna: usa display_value (fórmulas) o text (numéricas/comunes). */
 export const valor = (cv?: CV): string => cv?.display_value ?? cv?.text ?? ''
 
-/** Número a partir del texto de Monday (que puede venir formateado). */
+/**
+ * Número a partir del texto de Monday (que puede venir formateado), ya redondeado a dos decimales:
+ * toda lectura de Monday entra a la app con la misma precisión con la que se calcula y se escribe.
+ */
 export const num = (t?: string | null): number => {
   const n = Number(String(t ?? '').replace(/[^\d.-]/g, ''))
-  return Number.isFinite(n) ? n : 0
+  return Number.isFinite(n) ? round2(n) : 0
 }
 
 /** Número de una columna, tomando display_value o text según corresponda. */
@@ -54,4 +59,4 @@ export const numCol = (cv?: CV): number => num(valor(cv))
 export const sumaMirror = (cv?: CV): number =>
   String(cv?.display_value ?? cv?.text ?? '')
     .split(',')
-    .reduce((acc, parte) => acc + num(parte), 0)
+    .reduce((acc, parte) => round2(acc + num(parte)), 0)

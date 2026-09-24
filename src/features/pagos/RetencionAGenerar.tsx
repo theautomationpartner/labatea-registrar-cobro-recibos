@@ -1,4 +1,4 @@
-import { money } from '@/lib/format'
+import { money, round2 } from '@/lib/format'
 import { usePlegable } from '@/features/recibo/usePlegable'
 
 /**
@@ -21,7 +21,7 @@ export interface LineaRetencion {
 
 /** La alícuota como la muestra la constancia: dos decimales y el signo. */
 const porcentaje = (valor: number | null): string =>
-  valor === null ? '—' : `${valor.toFixed(2)}%`
+  valor === null ? '—' : `${round2(valor).toFixed(2)}%`
 
 /**
  * La CONSTANCIA DE RETENCIÓN que se emite junto con la orden de pago.

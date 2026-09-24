@@ -1,4 +1,4 @@
-import { money } from '@/lib/format'
+import { money, pct } from '@/lib/format'
 import { proporcion, textoClaroSobre, TRAMOS_VENCIMIENTO, type PorTramo } from '@/lib/cobranza'
 import { Esqueleto } from './Esqueleto'
 
@@ -69,7 +69,7 @@ export function BateriaVencimientos({
                 key={f.valor}
                 className="cbz-bateria-franja"
                 style={{ width: `${f.pct}%`, background: f.color }}
-                title={`${f.label}: ${money(f.importe)} (${f.pct}%)`}
+                title={`${f.label}: ${money(f.importe)} (${pct(f.pct)})`}
               >
                 {/* El porcentaje se escribe DENTRO de la franja sólo si entra: en una franja angosta
                     el texto se saldría y taparía a la de al lado. */}
@@ -79,7 +79,7 @@ export function BateriaVencimientos({
                       textoClaroSobre(f.color) ? 'cbz-bateria-pct--claro' : ''
                     }`}
                   >
-                    {Math.round(f.pct)}%
+                    {pct(f.pct)}
                   </span>
                 )}
               </span>
@@ -97,7 +97,7 @@ export function BateriaVencimientos({
             {listo ? (
               <>
                 <span className="cbz-leyenda-num">{money(f.importe)}</span>
-                <span className="cbz-leyenda-pct">{f.pct}%</span>
+                <span className="cbz-leyenda-pct">{pct(f.pct)}</span>
               </>
             ) : (
               <>

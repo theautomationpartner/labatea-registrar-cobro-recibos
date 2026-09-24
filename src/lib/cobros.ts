@@ -127,7 +127,7 @@ export function impactoImputacion(
   importe: number,
 ): ImpactoImputacion {
   const aCobrar = round2(Number.isFinite(importe) ? Math.max(importe, 0) : 0)
-  const pct = factura.pendiente > 0 ? Math.round((aCobrar / factura.pendiente) * 100) : 0
+  const pct = factura.pendiente > 0 ? round2((aCobrar / factura.pendiente) * 100) : 0
   return {
     pct: Math.min(Math.max(pct, 0), 100),
     aCobrar,

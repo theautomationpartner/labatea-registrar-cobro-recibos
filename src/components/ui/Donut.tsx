@@ -1,3 +1,5 @@
+import { pct } from '@/lib/format'
+
 interface DonutProps {
   /** Porción coloreada del anillo, 0-100. */
   percent: number
@@ -17,11 +19,11 @@ export function Donut({ percent, color, label, size = 'md' }: DonutProps) {
       className={`donut donut--${size}`}
       style={{ background: `conic-gradient(${color} ${p}%, var(--donut-track) 0)` }}
       role="img"
-      aria-label={`${label ?? 'Cancelado'}: ${p}%`}
+      aria-label={`${label ?? 'Cancelado'}: ${pct(p)}`}
     >
       <div className="donut-in">
         <span className="donut-v" style={{ color }}>
-          {p}%
+          {pct(p)}
         </span>
         {label && <span className="donut-l">{label}</span>}
       </div>
