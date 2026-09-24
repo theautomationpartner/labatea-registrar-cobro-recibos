@@ -2,7 +2,6 @@ import { money } from '@/lib/format'
 import { detalleDeMovimientos, estadoDeCuenta } from '@/lib/resumenCtaCte'
 import { hoyIso } from '@/lib/dates'
 import type {
-  DocumentosEmision,
   FacturaAdeudada,
   FaseEmision,
   FormatoResumen,
@@ -29,8 +28,6 @@ interface ResumenCtaCteAGenerarProps {
   facturas: readonly FacturaAdeudada[]
   cargandoFacturas: boolean
   fase: FaseEmision
-  /** Cómo va cada documento según los avisos del escenario; `null` mientras no avisó nada. */
-  documentos: DocumentosEmision | null
   /** Etiqueta del estado que publica el tablero. */
   estado: string
 }
@@ -55,7 +52,6 @@ export function ResumenCtaCteAGenerar({
   facturas,
   cargandoFacturas,
   fase,
-  documentos,
   estado,
 }: ResumenCtaCteAGenerarProps) {
   const badges = formato ? [BADGE_DOCUMENTO, formato] : [BADGE_DOCUMENTO]
@@ -81,7 +77,6 @@ export function ResumenCtaCteAGenerar({
           },
         ]}
         fase={fase}
-        documento={documentos?.resumen}
         estado={estado}
       >
         <DetalleMovimientos movimientos={movimientos} desde={desde} cargando={cargandoMovimientos} />
@@ -101,7 +96,6 @@ export function ResumenCtaCteAGenerar({
             },
           ]}
           fase={fase}
-          documento={documentos?.estado}
           estado={estado}
         >
           <ComprobantesPendientes facturas={facturas} cargando={cargandoFacturas} />

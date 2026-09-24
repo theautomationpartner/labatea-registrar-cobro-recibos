@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Dato } from '@/features/recibo/ReciboAGenerar'
 import { usePlegable } from '@/features/recibo/usePlegable'
-import type { EstadoDocumentoEmision, FaseEmision } from '@/types'
+import type { FaseEmision } from '@/types'
 
 interface CardDocumentoCtaCteProps {
   titulo: string
@@ -10,11 +10,6 @@ interface CardDocumentoCtaCteProps {
   /** Las métricas de la cabecera, siempre visibles aunque la card esté cerrada. */
   datos: readonly { rotulo: string; valor: ReactNode; fuerte?: boolean }[]
   fase: FaseEmision
-  /**
-   * Cómo salió ESTE documento, cuando el escenario lo informa por separado. Manda sobre la fase: con
-   * "Ambos" puede salir uno y el otro no, y cada card tiene que decir lo suyo.
-   */
-  documento?: EstadoDocumentoEmision
   /** Etiqueta del estado que publica el tablero, para el `title` del semáforo. */
   estado: string
   /** El documento: se muestra al desplegar la card. */
@@ -27,25 +22,19 @@ interface CardDocumentoCtaCteProps {
  * el documento desplegable debajo. Nace CERRADA.
  *
  * La usan los dos documentos de la etapa —el resumen y, si se incluye, el estado de cuenta—, que se
- * generan en la MISMA emisión: los dos semáforos siguen la misma fase, salvo que el escenario diga
- * cómo salió el documento de cada uno (`documento`): check si salió, cruz roja si no.
+ * generan en la MISMA emisión: por eso los dos semáforos siguen la misma fase.
  */
 export function CardDocumentoCtaCte({
   titulo,
   badges,
   datos,
-  fase: faseEmision,
-  documento,
+  fase,
   estado,
   children,
 }: CardDocumentoCtaCteProps) {
   const { abierta, abriendo, cerrando, visible, alternar } = usePlegable(false)
-  const fase: FaseEmision =
-    documento === 'ok' ? 'emitido' : documento === 'error' ? 'error' : faseEmision
   const enCurso = fase === 'creando' || fase === 'emitiendo'
   const emitido = fase === 'emitido'
-  /* El escenario dijo que ESTE documento no salió: cruz, no la advertencia genérica de la fase. */
-  const noSalio = documento === 'error'
 
   return (
     <div className="comp-card">
@@ -72,13 +61,9 @@ export function CardDocumentoCtaCte({
 
         <span className="comp-estado">
           <span
-            className={`comp-ok ${emitido ? 'on' : ''} ${
-              noSalio ? 'comp-ok--x' : fase === 'error' ? 'comp-ok--err' : ''
-            }`}
+            className={`comp-ok ${emitido ? 'on' : ''} ${fase === 'error' ? 'comp-ok--err' : ''}`}
             title={
-              noSalio
-                ? `${titulo} no se pudo emitir`
-                : fase === 'error'
+              fase === 'error'
                 ? `Error al generar · ${titulo}${estado ? ` · ${estado}` : ''}`
                 : enCurso
                   ? `Generando · ${titulo}${estado ? ` · ${estado}` : ''}`
@@ -89,9 +74,7 @@ export function CardDocumentoCtaCte({
           >
             <i
               className={`fas ${
-                noSalio
-                  ? 'fa-xmark'
-                  : fase === 'error'
+                fase === 'error'
                   ? 'fa-triangle-exclamation'
                   : enCurso
                     ? 'fa-circle-notch fa-spin'

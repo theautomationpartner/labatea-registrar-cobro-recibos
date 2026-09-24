@@ -392,8 +392,6 @@ export interface ErrorEmision {
   estado: string
   /** El detalle. Cuando el fallo es una excepción, es el mensaje capturado en el `catch`. */
   mensaje: string
-  /** Un detalle técnico, informativo, debajo del mensaje (el error de un módulo del escenario). */
-  detalle?: string
 }
 
 /**
@@ -407,20 +405,6 @@ export interface EmisionRecibo {
   /** Etiqueta del estado de emisión que publica el tablero, tal cual: la pantalla no inventa estados. */
   estado: string
   error: ErrorEmision | null
-  /**
-   * Cómo salió cada documento, cuando la emisión los informa por separado (hoy, sólo el resumen de
-   * cta cte pedido directo al escenario de Make).
-   */
-  documentos?: DocumentosEmision | null
-}
-
-/** Cómo va un documento de la emisión. `no_pedido`: el estado de cuenta de un resumen que va sin él. */
-export type EstadoDocumentoEmision = 'pendiente' | 'ok' | 'error' | 'no_pedido'
-
-/** Los documentos del resumen de cta cte, cada uno con su propio avance. */
-export interface DocumentosEmision {
-  resumen: EstadoDocumentoEmision
-  estado: EstadoDocumentoEmision
 }
 
 /* ===== Envío del recibo ===== */

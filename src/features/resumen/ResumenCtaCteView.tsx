@@ -51,8 +51,7 @@ export function ResumenCtaCteView() {
   const lectura = useMovimientosCtaCte()
   const facturas = useFacturasAdeudadas(incluyeEstado)
 
-  const { fase, estado, error, documentos, puedeReintentar, emitir } =
-    useEmision(RESUMEN_CTA_CTE_EMISIBLE)
+  const { fase, estado, error, puedeReintentar, emitir } = useEmision(RESUMEN_CTA_CTE_EMISIBLE)
   const [aviso, setAviso] = useState<Aviso | null>(null)
   const [marcarFormato, setMarcarFormato] = useState(false)
 
@@ -118,14 +117,12 @@ export function ResumenCtaCteView() {
         ) : (
           <div className="recibo-grid">
             <FichaResumenCtaCte
-              ctaCteId={ctaCteId}
               cliente={cliente}
               rotuloPeriodo={rotuloCriterio(criterio)}
               saldoFinal={saldoFinal}
               mercaderiaPendFacturar={lectura.listo ? mercaderiaPendFacturar : 0}
               fase={fase}
               error={error}
-              documentos={documentos}
               puedeReintentar={puedeReintentar}
               marcarFormato={marcarFormato}
               onEmitir={emitirResumen}
@@ -161,7 +158,6 @@ export function ResumenCtaCteView() {
                 facturas={facturas.listo ? facturasAdeudadas : []}
                 cargandoFacturas={facturas.cargando}
                 fase={fase}
-                documentos={documentos}
                 estado={estado}
               />
 

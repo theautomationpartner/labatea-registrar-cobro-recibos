@@ -18,17 +18,17 @@ import {
   escribirDatosResumen,
   getEstadoEmision,
   getEstadoEmisionOP,
-  emitirResumenPorApp,
   getEstadoResumenCtaCte,
   ordenPagoCompleta,
   pedirEmision,
   pedirEmisionOP,
+  pedirGeneracionResumen,
   reciboCompleto,
   type DatosOrdenPago,
   type DatosRecibo,
 } from '@/services/monday'
 import type { Action, AppState } from '@/state/appState'
-import type { DocumentosEmision, EmisionRecibo, FormatoResumen } from '@/types'
+import type { EmisionRecibo, FormatoResumen } from '@/types'
 
 /**
  * Cuántos subelementos entraron de cada tipo, contra los que se esperaban. Los dos documentos lo
@@ -47,12 +47,6 @@ export interface EstadoDeTablero {
   fase: 'en-curso' | 'emitido' | 'error'
   /** Etiqueta tal cual la muestra el tablero: la pantalla dice exactamente lo mismo que el board. */
   label: string
-  /** Cómo salió cada documento, cuando la emisión los informa por separado (el resumen). */
-  documentos?: DocumentosEmision
-  /** Qué decirle al usuario si cerró en error, cuando quien emite lo dijo. */
-  mensaje?: string
-  /** Un detalle técnico, informativo, que acompaña al mensaje. */
-  detalle?: string
 }
 
 /** Todo lo que la emisión necesita saber para escribir y seguir UN documento. */
@@ -69,11 +63,8 @@ export interface Emisible<D> {
   parchear: (emision: Partial<EmisionRecibo>) => Action
   /** Escribe el documento y sus subelementos. Un `throw` acá corta la emisión. */
   crear: (datos: D) => Promise<ResultadoEmision>
-  /**
-   * Le pide al tablero que lo emita. Es el disparador de la automatización. Si quien emite contesta
-   * recién al terminar —el escenario de Make del resumen—, devuelve ese cierre y no hay sondeo.
-   */
-  pedirEmision: (itemId: string, datos: D) => Promise<EstadoDeTablero | null | void>
+  /** Le pide al tablero que lo emita. Es el disparador de la automatización. */
+  pedirEmision: (itemId: string) => Promise<void>
   /** Lee la columna de estado. Es la consulta que se repite mientras se espera. */
   getEstado: (itemId: string) => Promise<EstadoDeTablero>
   /** El documento quedó completo: entraron TODOS sus subelementos. */
@@ -156,10 +147,6 @@ export interface DatosResumenCtaCte {
  * RESUMEN DE CTA CTE. A diferencia de los otros dos, NO crea un ítem: el resumen se pide sobre la
  * cuenta corriente del cliente, que ya existe. Por eso "crear" es sólo dejar escrito el formato, no
  * hay subelementos que puedan faltar, y un error del tablero se puede reintentar sin duplicar nada.
- *
- * Y es el único que se le pide DIRECTO al escenario de Make, sin pasar por la columna del tablero:
- * la app espera la respuesta del escenario, que dice qué documento salió y cuál no (ver
- * `interpretarRespuestaResumen`). Por eso cada card tiene su propio check o su cruz.
  */
 export const RESUMEN_CTA_CTE_EMISIBLE: Emisible<DatosResumenCtaCte> = {
   nombre: 'el resumen de cuenta corriente',
@@ -173,9 +160,7 @@ export const RESUMEN_CTA_CTE_EMISIBLE: Emisible<DatosResumenCtaCte> = {
     await escribirDatosResumen(ctaCteId, formato, periodo, incluyeEstado)
     return { id: ctaCteId, facturasCreadas: 0, facturasEsperadas: 0, pagosCreados: 0, pagosEsperados: 0 }
   },
-  pedirEmision: (ctaCteId, { formato, incluyeEstado }) =>
-    emitirResumenPorApp(ctaCteId, formato, incluyeEstado),
-  /* Sólo se sondea en desarrollo, donde no hay funciones serverless y el pedido va por la columna. */
+  pedirEmision: pedirGeneracionResumen,
   getEstado: getEstadoResumenCtaCte,
   completo: () => true,
   faltantes: () => [],
