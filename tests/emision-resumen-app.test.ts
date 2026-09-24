@@ -6,9 +6,12 @@
  *    estructura de datos para los dos disparadores; un campo de más o de menos la rompe.
  *  · la respuesta final del escenario se lee aunque el `mensajeError` venga con saltos de línea
  *    crudos, como sale de un texto escrito a mano en Make.
+ *  · el PDF que se abre para imprimir es el del documento pedido, aunque la columna tenga también
+ *    los Excel y el otro documento, y el nombre venga con guiones bajos o con espacios.
  *
  * Se corre con esbuild + node (`npm run test:emision-resumen`); vive fuera de `src/`.
  */
+import { pdfDelDocumento, type ArchivoCtaCte } from '../api/_archivoResumen'
 import { comoJson, eventoDeResumen, type ItemCtaCte } from '../api/_eventoResumen'
 
 let fallas = 0
@@ -135,6 +138,37 @@ chequear('respuesta', 'un JSON válido se lee tal cual', (comoJson('{"a":"x\\ny"
 chequear('respuesta', 'un ":," adentro de un string no se toca', (comoJson('{"m":"a:,b","x":}') as { m: string } | null)?.m === 'a:,b')
 chequear('respuesta', 'el "Accepted" de Make no es JSON → null', comoJson('Accepted') === null)
 chequear('respuesta', 'cuerpo vacío → null', comoJson('') === null)
+
+/* ── El PDF para imprimir ─────────────────────────────────────────────────────────────────────── */
+
+const archivo = (name: string, created_at: string): ArchivoCtaCte => ({
+  name,
+  file_extension: name.slice(name.lastIndexOf('.')),
+  public_url: `https://files/${name}`,
+  created_at,
+})
+/* Los nombres, tal cual los dejó el escenario en una cuenta real. */
+const COLUMNA = [
+  archivo('Resumen_Cta_Cte-Periodo-25_07_2026-23-09-2026.pdf', '2026-09-23T12:00:34Z'),
+  archivo('Estado_Cta_Cte-Fecha-23-09-2026.xlsx', '2026-09-23T12:00:57Z'),
+  archivo('Resumen Cta Cte-Periodo-25-07-2026-23-09-2026.xlsx', '2026-09-23T12:01:15Z'),
+]
+chequear('pdf', 'el resumen: su PDF, no su Excel', pdfDelDocumento(COLUMNA, 'resumen')?.name.endsWith('.pdf') === true)
+chequear('pdf', 'el estado sólo en Excel → sin PDF', pdfDelDocumento(COLUMNA, 'estado') === null)
+chequear(
+  'pdf',
+  'el estado con espacios en el nombre también se encuentra',
+  pdfDelDocumento([...COLUMNA, archivo('Estado Cta Cte-Fecha-23-09-2026.pdf', '2026-09-23T12:02:00Z')], 'estado') !== null,
+)
+chequear(
+  'pdf',
+  'si quedó uno viejo, el más nuevo',
+  pdfDelDocumento(
+    [archivo('Resumen_Cta_Cte-viejo.pdf', '2026-08-01T10:00:00Z'), ...COLUMNA],
+    'resumen',
+  )?.name === COLUMNA[0].name,
+)
+chequear('pdf', 'columna vacía → sin PDF', pdfDelDocumento([], 'resumen') === null)
 
 if (fallas > 0) {
   console.error(`\n${fallas} chequeo(s) fallaron`)

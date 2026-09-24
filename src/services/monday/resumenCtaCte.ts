@@ -56,6 +56,14 @@ import {
   eventoDeResumen,
   type ItemCtaCte,
 } from '../../../api/_eventoResumen'
+import {
+  COL_ARCHIVO_RESUMEN,
+  CONSULTA_ARCHIVOS,
+  pdfDelDocumento,
+  sinPdf,
+  type ArchivoCtaCte,
+  type DocumentoArchivo,
+} from '../../../api/_archivoResumen'
 
 /* ===== Forma de las respuestas =====
    Tipos locales y no los de `parse`: acá los vinculados vienen SIN `column_values` (sólo interesa
@@ -890,6 +898,54 @@ export function interpretarRespuestaResumen(
     documentos: todos('pendiente'),
     mensaje: `No pudimos confirmar la emisión de los documentos. ${CONTACTAR_SOPORTE}`,
   }
+}
+
+/* ===== PDF del resumen emitido ===== */
+
+/**
+ * El PDF de un documento de la última emisión, tal cual quedó en "🤖Resumen Cta Cte" de la cuenta,
+ * para abrirlo en una pestaña e imprimirlo desde ahí.
+ *
+ * En producción lo baja `/api/resumen-archivo`: el enlace de Monday lo serviría como descarga (ver
+ * el encabezado de esa función). En desarrollo no hay funciones serverless: el archivo se elige acá,
+ * con el token de desarrollo, y se baja por el proxy de Vite (`/monday-files`).
+ */
+export async function pdfDeResumen(ctaCteId: string, documento: DocumentoArchivo): Promise<Blob> {
+  if (import.meta.env.DEV) return pdfDeResumenEnLocal(ctaCteId, documento)
+  const res = await fetch('/api/resumen-archivo', {
+    method: 'POST',
+    headers: await cabecerasPropias({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ ctaCteId, documento }),
+  })
+  /* Como en la emisión: los rechazos de seguridad levantan su ventana, y el resto de los errores son
+     de este PDF y se cuentan al lado del botón. */
+  if (res.status === 401 || res.status === 403 || res.status === 429) {
+    await verificarRespuesta(res, 'PDF del resumen')
+  }
+  if (!res.ok) {
+    const cuerpo = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(
+      res.status === 404 && cuerpo.error ? cuerpo.error : 'No pudimos abrir el PDF. Probá de nuevo en unos minutos.',
+    )
+  }
+  return res.blob()
+}
+
+async function pdfDeResumenEnLocal(ctaCteId: string, documento: DocumentoArchivo): Promise<Blob> {
+  if (!mondayHabilitado()) throw new Error('Sin conexión a Monday no hay un PDF para mostrar.')
+  const data = await mondayApi<{ items: { assets: ArchivoCtaCte[] }[] }>(CONSULTA_ARCHIVOS, {
+    ids: [ctaCteId],
+    col: [COL_ARCHIVO_RESUMEN],
+  })
+  const archivo = pdfDelDocumento(data.items?.[0]?.assets ?? [], documento)
+  if (!archivo) throw new Error(sinPdf(documento))
+  const url = new URL(archivo.public_url)
+  if (url.hostname !== 'files-monday-com.s3.amazonaws.com') {
+    throw new Error(`El PDF está en ${url.hostname}, que el proxy de desarrollo no cubre.`)
+  }
+  const res = await fetch(`/monday-files${url.pathname}${url.search}`)
+  if (!res.ok) throw new Error(`No pudimos traer el PDF (HTTP ${res.status}).`)
+  return res.blob()
 }
 
 /* ===== Envío del resumen ===== */

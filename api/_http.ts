@@ -87,7 +87,7 @@ export async function endpointMfa<T>(
 }
 
 /** El cuerpo como objeto. Un cuerpo vacío es `{}`: varios endpoints no necesitan ninguno. */
-async function leerJson<T>(req: Pedido): Promise<T> {
+export async function leerJson<T>(req: Pedido): Promise<T> {
   if (req.body && typeof req.body === 'object') return req.body as T
 
   const crudo =

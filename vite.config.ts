@@ -71,6 +71,15 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/monday-api/, '/v2'),
         },
+        /* Los archivos de las columnas `file` (el PDF del resumen de cta cte): Monday los entrega por
+           un enlace firmado de S3 que el navegador no puede leer desde localhost (CORS). En
+           producción los baja `api/resumen-archivo.ts`. La firma viaja en la query, que el proxy
+           reenvía intacta. */
+        '/monday-files': {
+          target: 'https://files-monday-com.s3.amazonaws.com',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/monday-files/, ''),
+        },
         ...proxyMake,
         ...proxyResumen,
       },

@@ -5,9 +5,12 @@ import { FORMATOS_RESUMEN, OPCIONES_ESTADO_CTA_CTE } from '@/lib/resumenCtaCte'
 import { avisoDocumentosFallidos } from '@/services/monday/resumenCtaCte'
 import { useApp, useDispatch } from '@/state/hooks'
 import type { Cliente, DocumentosEmision, ErrorEmision, FaseEmision, FormatoResumen } from '@/types'
+import { VerPdfResumen } from './VerPdfResumen'
 
 interface FichaResumenCtaCteProps {
   cliente: Pick<Cliente, 'name' | 'cuit'>
+  /** El ítem de la cuenta corriente: de ahí se baja el PDF emitido. */
+  ctaCteId: string | null
   /** El período elegido en el paso 1, ya nombrado (ver `rotuloCriterio`). Vacío = sin período. */
   rotuloPeriodo: string
   /** Con qué saldo termina la cuenta en el período: el del último movimiento. */
@@ -32,6 +35,7 @@ interface FichaResumenCtaCteProps {
  */
 export function FichaResumenCtaCte({
   cliente,
+  ctaCteId,
   rotuloPeriodo,
   saldoFinal,
   mercaderiaPendFacturar,
@@ -165,6 +169,12 @@ export function FichaResumenCtaCte({
         <div className="rec-aviso" role="status">
           <i className="fas fa-triangle-exclamation" /> {avisoDocumentosFallidos(fallidos)}
         </div>
+      )}
+
+      {/* Con el resumen emitido, el PDF de cada documento que salió, para verlo e imprimirlo sin ir a
+          buscarlo a Drive. */}
+      {fase === 'emitido' && (
+        <VerPdfResumen ctaCteId={ctaCteId} formato={resumenFormato} documentos={documentos} />
       )}
     </div>
   )
