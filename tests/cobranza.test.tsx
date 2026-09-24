@@ -669,8 +669,30 @@ chequear(
 )
 chequear(
   'paginado',
-  'con diez o menos NO se pagina: no hay nada que repartir',
-  !tablero.includes('Página siguiente'),
+  'con diez o menos el paginador se ve igual, pero sus flechas no navegan',
+  tablero.includes('Página siguiente') &&
+    /disabled=""[^>]*aria-label="Página anterior"/.test(tablero) &&
+    /disabled=""[^>]*aria-label="Página siguiente"/.test(tablero) &&
+    !tablero.includes('aria-label="Página 2"'),
+)
+chequear(
+  'paginado',
+  'sin cuentas también está el paginador, con las flechas apagadas',
+  /disabled=""[^>]*aria-label="Página anterior"/.test(enBlanco) &&
+    /disabled=""[^>]*aria-label="Página siguiente"/.test(enBlanco),
+)
+/* Filas del cuerpo de la tabla de cuentas: con datos, el renglón vacío y el relleno. */
+const filasTabla = (html: string) =>
+  (html.match(/class="ant-row cbz-fila|class="cbz-fila-vacia"|class="mov-relleno"/g) ?? []).length
+chequear(
+  'paginado',
+  'con menos de diez cuentas la tabla NO se encoge: se rellena hasta las diez filas',
+  filasTabla(tablero) === CUENTAS_POR_PAGINA && tablero.includes('mov-relleno'),
+)
+chequear(
+  'paginado',
+  'sin cuentas también mide diez filas: el aviso y nueve en blanco',
+  filasTabla(enBlanco) === CUENTAS_POR_PAGINA,
 )
 chequear(
   'paginado',

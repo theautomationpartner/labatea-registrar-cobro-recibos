@@ -1,3 +1,4 @@
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { money } from '@/lib/format'
 import {
   CUENTAS_POR_PAGINA,
@@ -11,6 +12,10 @@ import { DetalleCuenta } from './DetalleCuenta'
 import type { FilaDesplegada } from './useFilaDesplegada'
 
 const guion = <span className="ant-sd">—</span>
+
+/* `useLayoutEffect` en el navegador; en el render de los tests (sin DOM) no hay nada que medir y
+   React avisaría en cada pintada. */
+const useMedida = typeof window === 'undefined' ? useEffect : useLayoutEffect
 
 /** Las columnas de la tabla. Las que tienen `orden` se pueden ordenar clickeando su encabezado. */
 const COLUMNAS: readonly {
@@ -58,14 +63,15 @@ interface TablaCuentasProps {
  * tablas de sólo lectura de la app, así que no introduce otra tipografía ni otros filetes.
  *
  * SIN CUENTAS —todavía no se buscó, o la búsqueda no trajo ninguna— la tabla se dibuja igual, con su
- * encabezado y UN renglón que lo dice. Mide exactamente lo que mediría con una cuenta: el alto sólo
- * cambia cuando hay más de una, así que la pantalla no salta al aparecer el resultado.
+ * encabezado y UN renglón que lo dice.
  *
  * Se despliega UNA cuenta a la vez: el detalle es alto —trae la tabla de facturas del cliente— y con
  * varias abiertas la lista deja de poder recorrerse. Clickear la abierta la cierra.
  *
- * De a diez por página. El paginador aparece sólo con más de diez cuentas, y mientras pagina la
- * tabla reserva SIEMPRE el alto de una página completa: pasar a la última no encoge la pantalla.
+ * De a diez por página. El paginador está SIEMPRE, como en toda tabla de la app: con una sola página
+ * se ve igual pero no navega —las flechas quedan apagadas y el "1" es la página en pantalla—. Y la
+ * tabla reserva siempre el alto de una página completa —vacía, con tres cuentas o en la última
+ * página—: la pantalla no salta al aparecer el resultado ni al filtrar o paginar.
  */
 export function TablaCuentas({
   filas,
@@ -77,13 +83,34 @@ export function TablaCuentas({
   onPagina,
   cargando,
 }: TablaCuentasProps) {
-  const paginada = filas.length > CUENTAS_POR_PAGINA
-  const hoja = paginar(filas, pagina, paginada ? CUENTAS_POR_PAGINA : Math.max(filas.length, 1))
+  const hoja = paginar(filas, pagina, CUENTAS_POR_PAGINA)
   const vacia = filas.length === 0
+  /* El renglón que avisa que no hay cuentas ocupa el lugar de una fila. */
+  const relleno = Math.max(hoja.vacias - (vacia ? 1 : 0), 0)
+  /* Sin ningún detalle en el DOM —ni abierto ni plegándose— la tabla tiene su alto de página
+     completa, relleno incluido: es el momento de medirlo. */
+  const sinDetalle = plegado.abierta === null && plegado.plegando === null
+
+  /* Con un detalle montado no se rellena (sumaría huecos a lo que el detalle ya estiró), así que el
+     alto de las diez filas se sostiene con un `min-height` medido con la tabla cerrada: abrir una
+     cuenta en una página de dos no encoge la tabla. Se mide ANTES de pintar —por eso es un
+     `useLayoutEffect`— y soltando antes el mínimo anterior, para que la medida no se quede con un
+     alto viejo cuando la tabla cerrada ahora mide menos. */
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const altoPagina = useRef(0)
+  useMedida(() => {
+    const wrap = wrapRef.current
+    if (!wrap) return
+    if (sinDetalle) {
+      wrap.style.minHeight = ''
+      altoPagina.current = wrap.offsetHeight
+    }
+    wrap.style.minHeight = altoPagina.current ? `${altoPagina.current}px` : ''
+  })
 
   return (
     <div className="anticipos-v2 mov-ctacte cbz-tabla">
-      <div className="ant-tabla-wrap">
+      <div className="ant-tabla-wrap" ref={wrapRef}>
         <table className="ant-tabla">
           <thead>
             <tr>
@@ -235,12 +262,13 @@ export function TablaCuentas({
               ]
             })}
 
-            {/* La página incompleta se completa con filas en blanco: la tabla no se encoge al llegar
-                a la última y lo que está debajo no salta de lugar. Con una cuenta desplegada NO se
-                rellena: el detalle ya hizo crecer la tabla, y sumar huecos la estiraría al doble. */}
-            {paginada &&
-              plegado.abierta === null &&
-              Array.from({ length: hoja.vacias }, (_, i) => (
+            {/* La página incompleta se completa con filas en blanco hasta las diez: la tabla mide
+                siempre lo mismo, tenga una cuenta, ninguna o esté en la última página, y lo que está
+                debajo no salta de lugar. Con un detalle montado —abierto o plegándose— NO se
+                rellena: el detalle ya hizo crecer la tabla, y el alto mínimo lo sostiene el
+                `min-height` medido (ver arriba). */}
+            {sinDetalle &&
+              Array.from({ length: relleno }, (_, i) => (
                 <tr key={`relleno-${i}`} className="mov-relleno" aria-hidden="true">
                   <td colSpan={COLUMNAS.length}>
                     <div className="mov-comp" />
@@ -251,17 +279,15 @@ export function TablaCuentas({
         </table>
       </div>
 
-      {paginada && (
-        <PaginadorMovimientos
-          pagina={hoja.pagina}
-          totalPaginas={hoja.totalPaginas}
-          desde={hoja.desde}
-          hasta={hoja.hasta}
-          total={hoja.total}
-          sustantivo="cuentas"
-          onCambiar={onPagina}
-        />
-      )}
+      <PaginadorMovimientos
+        pagina={hoja.pagina}
+        totalPaginas={hoja.totalPaginas}
+        desde={hoja.desde}
+        hasta={hoja.hasta}
+        total={hoja.total}
+        sustantivo="cuentas"
+        onCambiar={onPagina}
+      />
     </div>
   )
 }
