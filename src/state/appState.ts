@@ -247,14 +247,13 @@ export interface AppState {
    */
   resumenEstadoCtaCte: EstadoCtaCteResumen | null
   /**
-   * La ventana de días del criterio ("Últimos 30 días"). `null` = no se eligió ninguna, que es
-   * válido mientras haya fechas: los dos filtros del criterio son independientes (ver
-   * `periodoDelCriterio`).
+   * El período del criterio: una ventana de días ("Últimos 30 días") o `personalizado`, que toma las
+   * dos fechas de abajo. `null` = todavía no se eligió (ver `periodoDelCriterio`).
    */
   resumenRango: RangoResumen | null
-  /** Fecha DESDE del criterio, en ISO. Vacía = esa punta no acota. */
+  /** Fecha DESDE del período personalizado, en ISO. Vacía = todavía no se cargó. */
   resumenDesde: string
-  /** Fecha HASTA del criterio, en ISO. Vacía = esa punta no acota. */
+  /** Fecha HASTA del período personalizado, en ISO. Vacía = todavía no se cargó. */
   resumenHasta: string
   /** Los movimientos del período, leídos de la cuenta corriente del cliente. */
   movimientosCtaCte: MovimientoCtaCte[]
@@ -507,7 +506,7 @@ export const hayOperacionEnCurso = (state: AppState): boolean =>
 export const claveMovimientosCtaCte = (clienteId: string, periodo: PeriodoResumen): string =>
   `${clienteId}·${periodo.desde}·${periodo.hasta}`
 
-/** Los dos filtros del paso 1, juntos: es lo que define qué movimientos entran (ver `types`). */
+/** El período elegido y sus fechas, juntos: es lo que define qué movimientos entran (ver `types`). */
 export const criterioResumen = (state: AppState): CriterioResumen => ({
   rango: state.resumenRango,
   desde: state.resumenDesde,

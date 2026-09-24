@@ -6,8 +6,7 @@
 
 /* ===== Paso 2 · el formulario de "Configurar Emisión de Resumen de Cuenta" =====
    La card lleva encabezado gris con su ícono y el cuerpo en blanco, como las demás cards con título
-   de la app. Los dos filtros —la ventana de días y el rango de fechas— van en la MISMA línea: son
-   dos maneras de acotar lo mismo. */
+   de la app. */
 .resumen-v2 .res-form {
   padding: 0;
   margin-bottom: 0;
@@ -38,10 +37,51 @@
   background: #fff;
 }
 
-.resumen-v2 .res-form-fila {
+/* El período: el selector, las fechas del personalizado debajo y el renglón que cuenta qué se va a
+   buscar. */
+.resumen-v2 .res-periodo {
   display: flex;
-  flex-wrap: wrap;
-  gap: 16px 32px;
+  flex-direction: column;
+  gap: 12px;
+}
+/* Las fechas se despliegan hacia abajo al elegir "Periodo personalizado": crecen desde el selector
+   —y empujan de a poco lo que sigue, sin saltos— mientras aparecen. */
+.resumen-v2 .res-periodo-fechas {
+  animation: res-despliegue 0.25s ease-out;
+}
+@keyframes res-despliegue {
+  from {
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    max-height: 90px;
+    overflow: hidden;
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .resumen-v2 .res-periodo-fechas {
+    animation: none;
+  }
+}
+/* Texto corrido, no flex: con flex cada tramo del texto y cada fecha en negrita se separarían con
+   el `gap`. */
+.resumen-v2 .res-periodo-rango {
+  /* Aire de más hacia la pregunta siguiente: sin él, el renglón se lee pegado a ella. */
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--text-gray, #676879);
+}
+.resumen-v2 .res-periodo-rango strong {
+  color: var(--text-dark, #323338);
+  font-weight: 600;
+}
+.resumen-v2 .res-periodo-rango i {
+  margin-right: 6px;
 }
 .resumen-v2 .res-campo {
   display: flex;
@@ -49,7 +89,8 @@
   gap: 6px;
 }
 .resumen-v2 .res-campo--ancho {
-  flex: 0 1 340px;
+  width: 340px;
+  max-width: 100%;
 }
 .resumen-v2 .res-campo-lbl {
   font-size: 13px;

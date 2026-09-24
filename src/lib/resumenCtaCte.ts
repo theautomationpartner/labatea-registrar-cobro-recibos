@@ -19,9 +19,13 @@ const pad = (n: number) => String(n).padStart(2, '0')
 const aIsoLocal = (d: Date): string =>
   `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 
+/** Los períodos que se cuentan hacia atrás desde hoy: todos menos el personalizado. */
+export type VentanaResumen = Exclude<RangoResumen, 'personalizado'>
+
 /**
  * Los períodos que se pueden pedir, en el orden del selector. El AÑO no se cuenta en días: "último
- * año" es desde la misma fecha del año pasado, y 365 días se correría uno en un año bisiesto.
+ * año" es desde la misma fecha del año pasado, y 365 días se correría uno en un año bisiesto. El
+ * PERSONALIZADO va último y no tiene días: sus puntas son las dos fechas que se cargan a mano.
  */
 export const RANGOS_RESUMEN: readonly {
   valor: RangoResumen
@@ -34,6 +38,7 @@ export const RANGOS_RESUMEN: readonly {
   { valor: 'ultimos45', label: 'Últimos 45 días', dias: 45 },
   { valor: 'ultimos60', label: 'Últimos 60 días', dias: 60 },
   { valor: 'ultimoAnio', label: 'Último año', anios: 1 },
+  { valor: 'personalizado', label: 'Periodo personalizado' },
 ]
 
 /** Cómo se nombra un período en pantalla. */
@@ -46,7 +51,7 @@ export const rotuloRango = (rango: RangoResumen): string =>
  * `hoy` se recibe para que la regla sea testeable; en la app es la fecha del día. Se trabaja sobre
  * un `Date` local a medianoche, así los cambios de mes y de año los resuelve el calendario.
  */
-export function periodoDeRango(rango: RangoResumen, hoy: Date = new Date()): PeriodoResumen {
+export function periodoDeRango(rango: VentanaResumen, hoy: Date = new Date()): PeriodoResumen {
   const opcion = RANGOS_RESUMEN.find((r) => r.valor === rango)
   const hasta = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate())
   const desde = new Date(hasta)
@@ -55,34 +60,21 @@ export function periodoDeRango(rango: RangoResumen, hoy: Date = new Date()): Per
   return { desde: aIsoLocal(desde), hasta: aIsoLocal(hasta) }
 }
 
-/* ===== El criterio: la ventana de días, las fechas, o las dos ===== */
+/* ===== El criterio: una ventana de días, o el período personalizado ===== */
 
 /** Texto con forma de fecha ISO (yyyy-MM-dd). Lo que no la tiene se ignora como si estuviera vacío. */
 export const esIsoFecha = (v: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(v)
 
-/**
- * Sin punta inferior declarada el período arranca acá: cubre toda la cuenta, porque ningún
- * movimiento es anterior. Se usa una fecha y no el vacío para que las dos puntas siempre existan y
- * la comparación del filtro sea una sola regla.
- */
-export const INICIO_DE_LA_CUENTA = '1900-01-01'
-
 /** Por qué el criterio no define un período. Cada motivo tiene su mensaje (ver `MSG_PERIODO`). */
-export type ProblemaPeriodo = 'sin-criterio' | 'fechas-invertidas' | 'sin-cruce'
+export type ProblemaPeriodo = 'sin-criterio' | 'sin-fechas' | 'fechas-invertidas'
 
 /**
  * El período que sale del criterio, o por qué no sale ninguno.
  *
- * Los dos filtros se combinan punta por punta, y la FECHA cargada manda sobre la ventana: la ventana
- * ("Últimos 30 días") es el valor por defecto de la punta que no se cargó a mano. Así "el último
- * año, del 01/01/2025 al 01/07/2025" son exactamente esas dos fechas —que es lo que se pidió— y
- * "últimos 30 días, hasta el 01/07" arranca hace 30 días y corta el 01/07.
- *
- * Con las dos puntas vacías y sin ventana no hay nada que filtrar: la fecha "desde" que falta y no
- * tiene ventana arranca en el principio de la cuenta, y la "hasta" que falta llega hasta hoy.
- *
- * Lo que NO se admite es un criterio vacío ni uno imposible: fechas al revés, o una punta de la
- * ventana que cae después de la fecha con la que se la combinó.
+ * Las dos maneras de elegirlo son EXCLUYENTES: una ventana ("Últimos 30 días") es exactamente esa
+ * ventana, y las fechas cargadas —que quedan guardadas por si se vuelve al personalizado— no la
+ * tocan. El período personalizado son las dos fechas, y hacen falta las dos: con una sola no hay
+ * cómo decir de dónde a dónde se busca.
  *
  * `hoy` se recibe para que la regla sea testeable; en la app es la fecha del día.
  */
@@ -90,44 +82,38 @@ export function periodoDelCriterio(
   criterio: CriterioResumen,
   hoy: Date = new Date(),
 ): { periodo: PeriodoResumen | null; problema: ProblemaPeriodo | null } {
-  const desdeManual = esIsoFecha(criterio.desde) ? criterio.desde : ''
-  const hastaManual = esIsoFecha(criterio.hasta) ? criterio.hasta : ''
-  const ventana = criterio.rango ? periodoDeRango(criterio.rango, hoy) : null
-
-  if (!ventana && !desdeManual && !hastaManual) return { periodo: null, problema: 'sin-criterio' }
-  if (desdeManual && hastaManual && desdeManual > hastaManual) {
-    return { periodo: null, problema: 'fechas-invertidas' }
+  if (!criterio.rango) return { periodo: null, problema: 'sin-criterio' }
+  if (criterio.rango !== 'personalizado') {
+    return { periodo: periodoDeRango(criterio.rango, hoy), problema: null }
   }
 
-  const desde = desdeManual || ventana?.desde || INICIO_DE_LA_CUENTA
-  const hasta = hastaManual || ventana?.hasta || aIsoLocal(hoy)
-  if (desde > hasta) return { periodo: null, problema: 'sin-cruce' }
+  const desde = esIsoFecha(criterio.desde) ? criterio.desde : ''
+  const hasta = esIsoFecha(criterio.hasta) ? criterio.hasta : ''
+  if (!desde || !hasta) return { periodo: null, problema: 'sin-fechas' }
+  if (desde > hasta) return { periodo: null, problema: 'fechas-invertidas' }
   return { periodo: { desde, hasta }, problema: null }
 }
 
 /**
- * Cómo se nombra el criterio en la ficha y en la card del documento: la ventana, las fechas, o las
- * dos separadas por "·". Sin criterio, vacío.
+ * Cómo se nombra el criterio en la ficha y en la card del documento: la ventana, o las fechas del
+ * período personalizado. Sin criterio completo, vacío.
  */
 export function rotuloCriterio(criterio: CriterioResumen): string {
-  const partes: string[] = []
-  if (criterio.rango) partes.push(rotuloRango(criterio.rango))
+  if (!criterio.rango) return ''
+  if (criterio.rango !== 'personalizado') return rotuloRango(criterio.rango)
   const desde = esIsoFecha(criterio.desde) ? desdeIso(criterio.desde) : ''
   const hasta = esIsoFecha(criterio.hasta) ? desdeIso(criterio.hasta) : ''
-  if (desde && hasta) partes.push(`${desde} al ${hasta}`)
-  else if (desde) partes.push(`desde el ${desde}`)
-  else if (hasta) partes.push(`hasta el ${hasta}`)
-  return partes.join(' · ')
+  return desde && hasta ? `${desde} al ${hasta}` : ''
 }
 
 /** Lo que se le dice al usuario cuando el criterio no define un período. */
 export const MSG_PERIODO: Record<ProblemaPeriodo, string> = {
   'sin-criterio':
-    'Para continuar tenés que indicar qué movimientos entran en el resumen: elegí un período de la cuenta corriente, un rango de fechas, o los dos.',
+    'Para continuar tenés que indicar qué movimientos entran en el resumen: elegí un período de la cuenta corriente.',
+  'sin-fechas':
+    'Para el período personalizado tenés que cargar las dos fechas: desde y hasta.',
   'fechas-invertidas':
     'El rango de fechas está al revés: la fecha "desde" es posterior a la fecha "hasta". Corregilas y volvé a intentar.',
-  'sin-cruce':
-    'El período elegido y la fecha cargada no se cruzan: el período empieza después de la fecha hasta la que se pidieron los movimientos. Ampliá el período o corregí la fecha.',
 }
 
 /**

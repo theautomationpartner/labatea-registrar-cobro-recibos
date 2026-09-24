@@ -774,10 +774,17 @@ export interface PagoState {
 export type EstadoCtaCteResumen = 'INCLUIR' | 'NO_INCLUIR'
 
 /**
- * El período que abarca el resumen, contado hacia atrás desde HOY. La clave es la que viaja por el
- * estado; los días y el rótulo salen de `lib/resumenCtaCte`.
+ * El período que abarca el resumen: una ventana contada hacia atrás desde HOY, o `personalizado`,
+ * que es el que se arma con dos fechas a mano. La clave es la que viaja por el estado; los días y el
+ * rótulo salen de `lib/resumenCtaCte`.
  */
-export type RangoResumen = 'ultimos15' | 'ultimos30' | 'ultimos45' | 'ultimos60' | 'ultimoAnio'
+export type RangoResumen =
+  | 'ultimos15'
+  | 'ultimos30'
+  | 'ultimos45'
+  | 'ultimos60'
+  | 'ultimoAnio'
+  | 'personalizado'
 
 /** Las dos puntas de un período, en ISO (yyyy-MM-dd) y AMBAS inclusive. */
 export interface PeriodoResumen {
@@ -786,14 +793,12 @@ export interface PeriodoResumen {
 }
 
 /**
- * Con qué se eligen los movimientos que entran en el resumen. Son DOS filtros independientes que se
- * pueden usar sueltos o juntos, y cuando van juntos se CRUZAN (ver `periodoDelCriterio`):
+ * Con qué se eligen los movimientos que entran en el resumen (ver `periodoDelCriterio`):
  *
- *   · `rango` · una ventana contada hacia atrás desde hoy ("Últimos 30 días").
- *   · `desde` / `hasta` · fechas concretas, en ISO. Vacías = esa punta no acota nada.
- *
- * Así se puede pedir "el último año, pero del 01/01/2025 al 01/07/2025": el rango pone el techo de
- * antigüedad y las fechas recortan dentro de él.
+ *   · `rango` · una ventana contada hacia atrás desde hoy ("Últimos 30 días"), o `personalizado`.
+ *   · `desde` / `hasta` · fechas concretas, en ISO. Cuentan SÓLO con el período personalizado: con
+ *     una ventana elegida se guardan —para no perderlas si se vuelve al personalizado— pero no
+ *     acotan nada.
  */
 export interface CriterioResumen {
   rango: RangoResumen | null

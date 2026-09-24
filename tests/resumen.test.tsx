@@ -35,7 +35,7 @@ import {
   dentroDelPeriodo,
   detalleDeMovimientos,
   estadoDeCuenta,
-  INICIO_DE_LA_CUENTA,
+  MSG_PERIODO,
   nombreSinCliente,
   nroDeFactura,
   paginar,
@@ -46,6 +46,7 @@ import {
   totalesDeFacturas,
   totalesDelPeriodo,
 } from '@/lib/resumenCtaCte'
+import { desdeIso } from '@/lib/dates'
 import { money } from '@/lib/format'
 import { usoDeLinea } from '@/lib/selectors'
 import {
@@ -138,16 +139,39 @@ chequear('paso 2', 'se llama "Configurar Emisión de Resumen de Cuenta"', config
 chequear('paso 2', 'y su bajada dice para qué es', config.includes('Indicá cómo se van a obtener los movimientos de la cuenta del cliente para generar el resumen.'))
 chequear(
   'paso 2',
-  'sus tres preguntas: período, rango de fechas y estado de cuenta',
+  'sus dos preguntas: período y estado de cuenta',
   config.includes('Buscar movimientos en la cuenta corriente') &&
-    config.includes('Seleccionar rango de fechas') &&
     config.includes('¿Desea incluir el estado de cuenta corriente?'),
 )
-chequear('paso 2', 'ofrece las ventanas de días y poder no elegir ninguna', config.includes('>Seleccionar...<') && config.includes('>Últimos 15 días<') && config.includes('>Último año<'))
+chequear('paso 2', 'ofrece las ventanas de días y el período personalizado', config.includes('>Seleccionar...<') && config.includes('>Últimos 15 días<') && config.includes('>Último año<') && config.includes('>Periodo personalizado<'))
 chequear('paso 2', 'el estado de cuenta son dos cajas, no un selector', (config.match(/res-opcion /g) ?? []).length === 2 && config.includes('type="radio"'))
-chequear('paso 2', 'las fechas son dos campos de fecha', (config.match(/type="date"/g) ?? []).length === 2)
+chequear('paso 2', 'sin el personalizado NO hay fechas', !config.includes('type="date"'))
+chequear('paso 2', 'sin período elegido tampoco se cuenta qué se busca', !config.includes('Se buscarán los movimientos'))
+const conPersonalizado = pintar(aplicar(conClienteSolo, [{ type: 'setResumenRango', rango: 'personalizado' }]), ConfigResumenView)
+chequear('paso 2', 'con el personalizado aparecen las dos fechas, sin rótulo', !conPersonalizado.includes('Seleccionar rango de fechas') && (conPersonalizado.match(/type="date"/g) ?? []).length === 2)
 chequear('paso 2', 'ofrece INCLUIR y NO INCLUIR', config.includes('>INCLUIR<') && config.includes('>NO INCLUIR<'))
-chequear('paso 2', 'el rango de fechas va DEBAJO del período', config.indexOf('Buscar movimientos en la cuenta corriente') < config.indexOf('Seleccionar rango de fechas'))
+chequear('paso 2', 'y van DEBAJO del período', conPersonalizado.indexOf('Buscar movimientos en la cuenta corriente') < conPersonalizado.indexOf('type="date"'))
+chequear('paso 2', 'a medio cargar, el renglón muestra el hueco', conPersonalizado.includes('<strong>dd/mm/aaaa</strong> al <strong>dd/mm/aaaa</strong>'))
+const p60 = periodoDeRango('ultimos60')
+chequear(
+  'paso 2',
+  'con una ventana, el renglón dice de qué fecha a qué fecha',
+  pintar(aplicar(conClienteSolo, [{ type: 'setResumenRango', rango: 'ultimos60' }]), ConfigResumenView).includes(
+    `desde <strong>${desdeIso(p60.desde)}</strong> al <strong>${desdeIso(p60.hasta)}</strong>`,
+  ),
+)
+chequear(
+  'paso 2',
+  'y con el personalizado, las fechas cargadas',
+  pintar(
+    aplicar(conClienteSolo, [
+      { type: 'setResumenRango', rango: 'personalizado' },
+      { type: 'setResumenDesde', fecha: '2026-01-01' },
+      { type: 'setResumenHasta', fecha: '2026-03-31' },
+    ]),
+    ConfigResumenView,
+  ).includes('desde <strong>01/01/2026</strong> al <strong>31/03/2026</strong>'),
+)
 chequear('paso 2', 'el pie reclama qué movimientos entran', config.includes('Indicá qué movimientos de la cuenta corriente entran en el resumen'))
 
 /* La consulta la dispara el BOTÓN, y hasta que contesta no se avanza. */
@@ -234,11 +258,19 @@ const conCriterio = aplicar(enResumen, [
 chequear('paso 2', 'con el formulario completo el rojo se va solo', !pintarForm(conCriterio, true, true).includes('--error'))
 /* Fechas al revés: es un dato mal cargado, así que se marca en cuanto pasa. */
 const fechasAlReves = aplicar(enResumen, [
+  { type: 'setResumenRango', rango: 'personalizado' },
   { type: 'setResumenDesde', fecha: '2026-07-01' },
   { type: 'setResumenHasta', fecha: '2026-01-01' },
 ])
 chequear('paso 2', 'fechas al revés: rojo sin esperar a que se intente avanzar', pintarForm(fechasAlReves, false, false).includes('res-campo-in--error'))
-chequear('paso 2', 'el formulario NO narra el período que quedó', !pintarForm(conCriterio, false, false).includes('Entran los movimientos'))
+const personalizadoVacio = aplicar(enResumen, [{ type: 'setResumenRango', rango: 'personalizado' }])
+chequear('paso 2', 'personalizado sin fechas: no es rojo hasta intentar avanzar', !pintarForm(personalizadoVacio, false, false).includes('res-campo-in--error'))
+chequear(
+  'paso 2',
+  'y al intentarlo, en rojo las fechas y no el selector',
+  (pintarForm(personalizadoVacio, true, false).match(/res-campo-in--error/g) ?? []).length === 2 &&
+    pintarForm(personalizadoVacio, true, false).includes(MSG_PERIODO['sin-fechas']),
+)
 
 /* ===== El criterio: la ventana, las fechas, o las dos ===== */
 
@@ -259,54 +291,42 @@ chequear('período', 'sin fecha no entra en ninguno', !dentroDelPeriodo('', p))
 chequear('criterio', 'sin nada elegido, no hay período', periodoDelCriterio(criterio({}), HOY).problema === 'sin-criterio')
 chequear(
   'criterio',
-  'sólo la ventana: el período es el de la ventana',
+  'una ventana: el período es el de la ventana',
   JSON.stringify(periodoDelCriterio(criterio({ rango: 'ultimos15' }), HOY).periodo) ===
     JSON.stringify(periodoDeRango('ultimos15', HOY)),
 )
+/* Las fechas quedan guardadas al pasar a una ventana, pero no la tocan: sólo valen para el personalizado. */
 chequear(
   'criterio',
-  'sólo fechas: las fechas mandan',
-  JSON.stringify(periodoDelCriterio(criterio({ desde: '2025-01-01', hasta: '2025-07-01' }), HOY).periodo) ===
+  'una ventana ignora las fechas guardadas',
+  JSON.stringify(periodoDelCriterio(criterio({ rango: 'ultimoAnio', desde: '2025-01-01', hasta: '2025-07-01' }), HOY).periodo) ===
+    JSON.stringify(periodoDeRango('ultimoAnio', HOY)),
+)
+chequear('criterio', 'fechas sin el personalizado: no hay período', periodoDelCriterio(criterio({ desde: '2025-01-01', hasta: '2025-07-01' }), HOY).problema === 'sin-criterio')
+chequear(
+  'criterio',
+  'personalizado: el período son las dos fechas',
+  JSON.stringify(periodoDelCriterio(criterio({ rango: 'personalizado', desde: '2025-01-01', hasta: '2025-07-01' }), HOY).periodo) ===
     '{"desde":"2025-01-01","hasta":"2025-07-01"}',
 )
-/* El caso que pidió el usuario: "el último año, pero del 01/01/2025 al 01/07/2025". La FECHA manda
-   sobre la ventana, punta por punta, así que el período es el de las fechas. */
 chequear(
   'criterio',
-  'ventana + fechas: la fecha manda (último año, del 01/01/2025 al 01/07/2025)',
-  JSON.stringify(
-    periodoDelCriterio(criterio({ rango: 'ultimoAnio', desde: '2025-01-01', hasta: '2025-07-01' }), HOY).periodo,
-  ) === '{"desde":"2025-01-01","hasta":"2025-07-01"}',
+  'personalizado con una sola fecha: faltan fechas',
+  periodoDelCriterio(criterio({ rango: 'personalizado', desde: '2026-09-01' }), HOY).problema === 'sin-fechas' &&
+    periodoDelCriterio(criterio({ rango: 'personalizado', hasta: '2026-09-01' }), HOY).problema === 'sin-fechas',
 )
 chequear(
   'criterio',
-  'ventana + UNA fecha: la otra punta la pone la ventana',
-  JSON.stringify(periodoDelCriterio(criterio({ rango: 'ultimos30', hasta: '2026-09-05' }), HOY).periodo) ===
-    `{"desde":"${periodoDeRango('ultimos30', HOY).desde}","hasta":"2026-09-05"}`,
+  'fechas al revés: no hay período',
+  periodoDelCriterio(criterio({ rango: 'personalizado', desde: '2026-09-10', hasta: '2026-09-01' }), HOY).problema === 'fechas-invertidas',
 )
 chequear(
   'criterio',
-  'sólo la fecha desde: el período llega hasta hoy',
-  JSON.stringify(periodoDelCriterio(criterio({ desde: '2026-09-01' }), HOY).periodo) ===
-    '{"desde":"2026-09-01","hasta":"2026-09-14"}',
-)
-chequear(
-  'criterio',
-  'sólo la fecha hasta: arranca en el principio de la cuenta',
-  periodoDelCriterio(criterio({ hasta: '2026-09-01' }), HOY).periodo?.desde === INICIO_DE_LA_CUENTA,
-)
-chequear('criterio', 'fechas al revés: no hay período', periodoDelCriterio(criterio({ desde: '2026-09-10', hasta: '2026-09-01' }), HOY).problema === 'fechas-invertidas')
-chequear(
-  'criterio',
-  'una ventana que arranca después de la fecha hasta: tampoco',
-  periodoDelCriterio(criterio({ rango: 'ultimos15', hasta: '2020-02-01' }), HOY).problema === 'sin-cruce',
-)
-chequear(
-  'criterio',
-  'se nombra con la ventana y las fechas',
-  rotuloCriterio(criterio({ rango: 'ultimos30', desde: '2025-01-01', hasta: '2025-07-01' })) ===
-    'Últimos 30 días · 01/01/2025 al 01/07/2025' &&
-    rotuloCriterio(criterio({ hasta: '2025-07-01' })) === 'hasta el 01/07/2025' &&
+  'se nombra con la ventana, o con las fechas del personalizado',
+  rotuloCriterio(criterio({ rango: 'ultimos30', desde: '2025-01-01', hasta: '2025-07-01' })) === 'Últimos 30 días' &&
+    rotuloCriterio(criterio({ rango: 'personalizado', desde: '2025-01-01', hasta: '2025-07-01' })) ===
+      '01/01/2025 al 01/07/2025' &&
+    rotuloCriterio(criterio({ rango: 'personalizado', hasta: '2025-07-01' })) === '' &&
     rotuloCriterio(criterio({})) === '',
 )
 
@@ -389,7 +409,7 @@ chequear(
 )
 const otrasFechas = aplicar(emitido, [{ type: 'setResumenDesde', fecha: '2026-01-01' }])
 chequear('emisión', 'y cambiar una fecha, también', otrasFechas.emisionResumen.fase === 'idle' && otrasFechas.resumenCtaCteId === null)
-chequear('emisión', 'sacar la ventana deja el criterio sólo con fechas', aplicar(conLista, [{ type: 'setResumenRango', rango: null }]).resumenRango === null)
+chequear('emisión', 'el período se puede volver a dejar sin elegir', aplicar(conLista, [{ type: 'setResumenRango', rango: null }]).resumenRango === null)
 
 const generando = aplicar(conLista, [{ type: 'setEmisionResumen', emision: { fase: 'emitiendo' } }])
 chequear('emisión', 'generándose, no se cambia el período', aplicar(generando, [{ type: 'setResumenRango', rango: 'ultimos15' }]).resumenRango === 'ultimos60')
@@ -704,14 +724,13 @@ chequear(
   JSON.stringify(columnasDatosResumen('PDF', periodoDeRango('ultimos15', HOY), false)) ===
     '{"dropdown_mm76p5gd":{"ids":[1]},"date_mm7643hk":{"date":"2026-08-30"},"date_mm76jbba":{"date":"2026-09-14"},"boolean_mm767m9h":null}',
 )
-/* Las fechas que se escriben en la cuenta son las del período CRUZADO, no las del rango suelto. */
 chequear(
   'emisión',
-  'con ventana y fechas se escribe el período cruzado',
+  'con el personalizado se escriben sus fechas',
   JSON.stringify(
     columnasDatosResumen(
       'PDF',
-      periodoDelCriterio(criterio({ rango: 'ultimoAnio', desde: '2026-01-01', hasta: '2026-03-01' }), HOY).periodo!,
+      periodoDelCriterio(criterio({ rango: 'personalizado', desde: '2026-01-01', hasta: '2026-03-01' }), HOY).periodo!,
       false,
     ),
   ) === '{"dropdown_mm76p5gd":{"ids":[1]},"date_mm7643hk":{"date":"2026-01-01"},"date_mm76jbba":{"date":"2026-03-01"},"boolean_mm767m9h":null}',

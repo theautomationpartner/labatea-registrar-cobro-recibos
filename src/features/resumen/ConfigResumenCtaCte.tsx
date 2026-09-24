@@ -1,4 +1,6 @@
+import { desdeIso } from '@/lib/dates'
 import {
+  esIsoFecha,
   MSG_PERIODO,
   OPCIONES_ESTADO_CTA_CTE,
   periodoDelCriterio,
@@ -40,15 +42,14 @@ const ICONO_ESTADO: Record<EstadoCtaCteResumen, string> = {
  * El formulario de la etapa "Configurar Emisión de Resumen de Cuenta": qué movimientos de la cuenta
  * corriente del cliente entran en el documento y si el resumen va acompañado del estado de la cuenta.
  *
- * Son tres preguntas, en el orden en que se deciden:
+ * Son dos preguntas, las dos obligatorias:
  *
- *   1. una VENTANA de días contada desde hoy ("Últimos 30 días"),
- *   2. un RANGO de fechas concretas,
- *   3. si el documento lleva el estado de la cuenta corriente.
+ *   1. el PERÍODO: una ventana de días contada desde hoy ("Últimos 30 días") o un período
+ *      personalizado, que despliega debajo las dos fechas con que se arma (ver `periodoDelCriterio`),
+ *   2. si el documento lleva el estado de la cuenta corriente.
  *
- * Las dos primeras se combinan punta por punta y la FECHA manda sobre el período (ver
- * `periodoDelCriterio`), que es lo que permite pedir "el último año, pero del 01/01/2025 al
- * 01/07/2025". Al menos una hace falta; la tercera es obligatoria siempre.
+ * Debajo del período se lee siempre de qué fecha a qué fecha se va a buscar: con una ventana, es la
+ * cuenta hecha; con el personalizado, lo que se lleva cargado.
  *
  * La consulta NO sale sola: la dispara el botón "Confirmar", igual que el buscador de clientes del
  * paso 1. Mientras el tablero contesta, el formulario muestra en qué anda —y al terminar, qué
@@ -63,19 +64,27 @@ export function ConfigResumenCtaCte({
   const { resumenRango, resumenDesde, resumenHasta, resumenEstadoCtaCte } = state
   const dispatch = useDispatch()
 
-  const { problema } = periodoDelCriterio(criterioResumen(state))
+  const { periodo, problema } = periodoDelCriterio(criterioResumen(state))
   /* Con la generación en vuelo el criterio queda fijo: el archivo que se está armando es de ESTE. */
   const trabado = generacionResumenEnVuelo(state)
 
-  /* Que FALTE el criterio se pinta en rojo recién después de intentar buscar: al entrar al paso no
-     hay nada elegido todavía y eso no es un error. Un criterio IMPOSIBLE —fechas al revés, o una
-     ventana que arranca después de la fecha de corte— se marca en cuanto pasa: ahí ya hay algo mal
-     cargado. */
-  const errorCriterio = problema !== null && (problema !== 'sin-criterio' || marcarPeriodo)
+  /* Que FALTE algo —el período, o una fecha del personalizado— se pinta en rojo recién después de
+     intentar buscar: al entrar al paso no hay nada elegido todavía y eso no es un error. Las fechas
+     AL REVÉS se marcan en cuanto pasa: ahí ya hay algo mal cargado. */
+  const errorCriterio = problema !== null && (problema === 'fechas-invertidas' || marcarPeriodo)
+  const errorRango = errorCriterio && problema === 'sin-criterio'
+  /* Fechas al revés: las dos en rojo. Falta alguna: sólo la que está vacía. */
   const errorFechas = errorCriterio && problema !== 'sin-criterio'
-  const errorRango = errorCriterio && !errorFechas
+  const errorDesde = errorFechas && (problema === 'fechas-invertidas' || !resumenDesde)
+  const errorHasta = errorFechas && (problema === 'fechas-invertidas' || !resumenHasta)
   const errorEstado = marcarEstado && !resumenEstadoCtaCte
+  const personalizado = resumenRango === 'personalizado'
   const conFechas = !!resumenDesde || !!resumenHasta
+
+  /* Las puntas que se leen debajo del selector: con una ventana, la cuenta ya hecha; con el
+     personalizado, lo que se lleva cargado —y la fecha que falta, como el hueco que es—. */
+  const puntas = personalizado ? { desde: resumenDesde, hasta: resumenHasta } : periodo
+  const fecha = (iso: string) => (esIsoFecha(iso) ? desdeIso(iso) : 'dd/mm/aaaa')
 
   return (
     <section className="card res-form">
@@ -85,8 +94,7 @@ export function ConfigResumenCtaCte({
       </header>
 
       <div className="res-form-body">
-        {/* Los dos filtros van en la MISMA línea: son dos maneras de acotar lo mismo y se combinan. */}
-        <div className="res-form-fila">
+        <div className="res-periodo">
           <div className="res-campo res-campo--ancho">
             <label className="res-campo-lbl" htmlFor="res-rango">
               Buscar movimientos en la cuenta corriente de los:
@@ -106,7 +114,6 @@ export function ConfigResumenCtaCte({
                 })
               }
             >
-              {/* Se puede volver a dejarlo sin elegir: el criterio puede ser sólo de fechas. */}
               <option value="">Seleccionar...</option>
               {RANGOS_RESUMEN.map((r) => (
                 <option key={r.valor} value={r.valor}>
@@ -116,52 +123,58 @@ export function ConfigResumenCtaCte({
             </select>
           </div>
 
-          <div className="res-campo">
-            <label className="res-campo-lbl" htmlFor="res-desde">
-              Seleccionar rango de fechas
-            </label>
-            <div className="res-fechas">
-              <input
-                id="res-desde"
-                type="date"
-                className={`res-campo-in ${errorFechas ? 'res-campo-in--error' : ''}`}
-                aria-label="Fecha desde"
-                aria-invalid={errorFechas || undefined}
-                disabled={trabado}
-                value={resumenDesde}
-                onChange={(e) => dispatch({ type: 'setResumenDesde', fecha: e.target.value })}
-              />
-              <span className="res-fechas-nexo">al</span>
-              <input
-                id="res-hasta"
-                type="date"
-                className={`res-campo-in ${errorFechas ? 'res-campo-in--error' : ''}`}
-                aria-label="Fecha hasta"
-                aria-invalid={errorFechas || undefined}
-                disabled={trabado}
-                value={resumenHasta}
-                onChange={(e) => dispatch({ type: 'setResumenHasta', fecha: e.target.value })}
-              />
-              {/* Vaciar los dos campos a mano es incómodo: con un click el criterio vuelve a ser
-                  sólo el período. */}
-              {conFechas && !trabado && (
-                <button
-                  type="button"
-                  className="res-form-limpiar"
-                  onClick={() => {
-                    dispatch({ type: 'setResumenDesde', fecha: '' })
-                    dispatch({ type: 'setResumenHasta', fecha: '' })
-                  }}
-                >
-                  <i className="fas fa-eraser" /> Limpiar fechas
-                </button>
-              )}
+          {/* Las fechas existen SÓLO para el período personalizado: aparecen desplegándose debajo
+              del selector en cuanto se lo elige. */}
+          {personalizado && (
+            <div className="res-campo res-periodo-fechas">
+              <div className="res-fechas">
+                <input
+                  id="res-desde"
+                  type="date"
+                  className={`res-campo-in ${errorDesde ? 'res-campo-in--error' : ''}`}
+                  aria-label="Fecha desde"
+                  aria-invalid={errorDesde || undefined}
+                  disabled={trabado}
+                  value={resumenDesde}
+                  onChange={(e) => dispatch({ type: 'setResumenDesde', fecha: e.target.value })}
+                />
+                <span className="res-fechas-nexo">al</span>
+                <input
+                  id="res-hasta"
+                  type="date"
+                  className={`res-campo-in ${errorHasta ? 'res-campo-in--error' : ''}`}
+                  aria-label="Fecha hasta"
+                  aria-invalid={errorHasta || undefined}
+                  disabled={trabado}
+                  value={resumenHasta}
+                  onChange={(e) => dispatch({ type: 'setResumenHasta', fecha: e.target.value })}
+                />
+                {/* Vaciar los dos campos a mano es incómodo: con un click se vuelve a empezar. */}
+                {conFechas && !trabado && (
+                  <button
+                    type="button"
+                    className="res-form-limpiar"
+                    onClick={() => {
+                      dispatch({ type: 'setResumenDesde', fecha: '' })
+                      dispatch({ type: 'setResumenHasta', fecha: '' })
+                    }}
+                  >
+                    <i className="fas fa-eraser" /> Limpiar fechas
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
+          )}
+
+          {puntas && (
+            <p className="res-periodo-rango">
+              <i className="fas fa-calendar-days" aria-hidden="true" /> Se buscarán los movimientos
+              desde <strong>{fecha(puntas.desde)}</strong> al <strong>{fecha(puntas.hasta)}</strong>
+            </p>
+          )}
         </div>
 
-        {/* Lo único que el formulario escribe de más es lo que está MAL cargado: qué período resultó
-            no hace falta contarlo, se lee de los propios campos. */}
+        {/* Lo que está MAL cargado, aparte del renglón que cuenta de qué fecha a qué fecha se busca. */}
         {errorCriterio && problema && (
           <p className="res-form-nota res-form-nota--error">
             <i className="fas fa-circle-exclamation" /> {MSG_PERIODO[problema]}
