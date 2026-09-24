@@ -536,3 +536,24 @@
     flex: 1 1 180px;
   }
 }
+
+/* ===== PDF del resumen emitido ===== */
+/* Debajo del botón de emisión: uno por documento generado, a lo ancho, para abrir el PDF e
+   imprimirlo desde la pestaña. */
+.resumen-v2 .res-pdf {
+  margin-top: 12px;
+}
+.resumen-v2 .res-pdf-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.resumen-v2 .res-pdf-btn {
+  width: 100%;
+  padding: 0 12px;
+  font-size: 13px;
+}
+.resumen-v2 .res-pdf-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}

@@ -4,6 +4,7 @@
  * los movimientos, la limpieza del nombre de un movimiento, la caché de la lista y qué invalida un
  * resumen ya emitido—. Mismo criterio que `rechazos.test.tsx`: no reemplaza probar la app en Monday.
  */
+import { pdfDelDocumento, type ArchivoCtaCte } from '../api/_archivoResumen'
 import { renderToString } from 'react-dom/server'
 import { createElement, type ComponentType } from 'react'
 import { DispatchContext, StateContext } from '@/state/context'
@@ -664,6 +665,37 @@ chequear(
     ),
   ) === '{"dropdown_mm76p5gd":{"ids":[1]},"date_mm7643hk":{"date":"2026-01-01"},"date_mm76jbba":{"date":"2026-03-01"},"boolean_mm767m9h":null}',
 )
+
+/* ── El PDF para imprimir ─────────────────────────────────────────────────────────────────────── */
+
+const archivo = (name: string, created_at: string): ArchivoCtaCte => ({
+  name,
+  file_extension: name.slice(name.lastIndexOf('.')),
+  public_url: `https://files/${name}`,
+  created_at,
+})
+/* Los nombres, tal cual los dejó el escenario en una cuenta real. */
+const COLUMNA = [
+  archivo('Resumen_Cta_Cte-Periodo-25_07_2026-23-09-2026.pdf', '2026-09-23T12:00:34Z'),
+  archivo('Estado_Cta_Cte-Fecha-23-09-2026.xlsx', '2026-09-23T12:00:57Z'),
+  archivo('Resumen Cta Cte-Periodo-25-07-2026-23-09-2026.xlsx', '2026-09-23T12:01:15Z'),
+]
+chequear('pdf', 'el resumen: su PDF, no su Excel', pdfDelDocumento(COLUMNA, 'resumen')?.name.endsWith('.pdf') === true)
+chequear('pdf', 'el estado sólo en Excel → sin PDF', pdfDelDocumento(COLUMNA, 'estado') === null)
+chequear(
+  'pdf',
+  'el estado con espacios en el nombre también se encuentra',
+  pdfDelDocumento([...COLUMNA, archivo('Estado Cta Cte-Fecha-23-09-2026.pdf', '2026-09-23T12:02:00Z')], 'estado') !== null,
+)
+chequear(
+  'pdf',
+  'si quedó uno viejo, el más nuevo',
+  pdfDelDocumento(
+    [archivo('Resumen_Cta_Cte-viejo.pdf', '2026-08-01T10:00:00Z'), ...COLUMNA],
+    'resumen',
+  )?.name === COLUMNA[0].name,
+)
+chequear('pdf', 'columna vacía → sin PDF', pdfDelDocumento([], 'resumen') === null)
 
 if (fallas > 0) {
   console.error(`\n${fallas} chequeo(s) fallaron`)

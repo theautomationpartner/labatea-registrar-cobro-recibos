@@ -117,6 +117,7 @@ export function ResumenCtaCteView() {
         ) : (
           <div className="recibo-grid">
             <FichaResumenCtaCte
+              ctaCteId={ctaCteId}
               cliente={cliente}
               rotuloPeriodo={rotuloCriterio(criterio)}
               saldoFinal={saldoFinal}

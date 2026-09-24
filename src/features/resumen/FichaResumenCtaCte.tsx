@@ -4,9 +4,12 @@ import { money } from '@/lib/format'
 import { FORMATOS_RESUMEN, OPCIONES_ESTADO_CTA_CTE } from '@/lib/resumenCtaCte'
 import { useApp, useDispatch } from '@/state/hooks'
 import type { Cliente, ErrorEmision, FaseEmision, FormatoResumen } from '@/types'
+import { VerPdfResumen } from './VerPdfResumen'
 
 interface FichaResumenCtaCteProps {
   cliente: Pick<Cliente, 'name' | 'cuit'>
+  /** El ítem de la cuenta corriente: de ahí se baja el PDF generado. */
+  ctaCteId: string | null
   /** El período elegido en el paso 1, ya nombrado (ver `rotuloCriterio`). Vacío = sin período. */
   rotuloPeriodo: string
   /** Con qué saldo termina la cuenta en el período: el del último movimiento. */
@@ -29,6 +32,7 @@ interface FichaResumenCtaCteProps {
  */
 export function FichaResumenCtaCte({
   cliente,
+  ctaCteId,
   rotuloPeriodo,
   saldoFinal,
   mercaderiaPendFacturar,
@@ -147,6 +151,16 @@ export function FichaResumenCtaCte({
           </p>
           <p className="rec-error-msg">{error.mensaje}</p>
         </div>
+      )}
+
+      {/* Con el resumen generado, el PDF de cada documento, para verlo e imprimirlo sin ir a buscarlo
+          a Drive. */}
+      {fase === 'emitido' && (
+        <VerPdfResumen
+          ctaCteId={ctaCteId}
+          formato={resumenFormato}
+          incluyeEstado={resumenEstadoCtaCte === 'INCLUIR'}
+        />
       )}
     </div>
   )
