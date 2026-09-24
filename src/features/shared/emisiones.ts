@@ -23,6 +23,7 @@ import {
   pedirEmision,
   pedirEmisionOP,
   pedirGeneracionResumen,
+  recordarArchivosAlEmitir,
   reciboCompleto,
   type DatosOrdenPago,
   type DatosRecibo,
@@ -155,9 +156,14 @@ export const RESUMEN_CTA_CTE_EMISIBLE: Emisible<DatosResumenCtaCte> = {
   emision: (s) => s.emisionResumen,
   parchear: (emision) => ({ type: 'setEmisionResumen', emision }),
   /* "Crear" es dejar escritos el formato, el período (🤖Fecha Desde / 🤖Fecha Hasta) y si incluye el
-     estado de la cuenta (🤖Incluye Estado Cta Cte). */
+     estado de la cuenta (🤖Incluye Estado Cta Cte). En paralelo, y siempre ANTES de pedir la
+     generación, la foto de los archivos que ya hay en la cuenta: es lo que dice después qué PDF salió
+     de esta emisión (ver `recordarArchivosAlEmitir`). */
   crear: async ({ ctaCteId, formato, periodo, incluyeEstado }) => {
-    await escribirDatosResumen(ctaCteId, formato, periodo, incluyeEstado)
+    await Promise.all([
+      escribirDatosResumen(ctaCteId, formato, periodo, incluyeEstado),
+      recordarArchivosAlEmitir(ctaCteId),
+    ])
     return { id: ctaCteId, facturasCreadas: 0, facturasEsperadas: 0, pagosCreados: 0, pagosEsperados: 0 }
   },
   pedirEmision: pedirGeneracionResumen,

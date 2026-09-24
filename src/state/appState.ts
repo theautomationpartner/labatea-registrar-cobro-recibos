@@ -18,6 +18,7 @@ import type {
   CobroState,
   Contacto,
   EmisionRecibo,
+  PdfsResumen,
   EstadoCtaCteResumen,
   EstadoSaldo,
   FacturaAdeudada,
@@ -301,6 +302,12 @@ export interface AppState {
   resumenCtaCteId: string | null
   /** En qué anda la generación del resumen. Global por el mismo motivo que la del recibo. */
   emisionResumen: EmisionRecibo
+  /**
+   * El contador de "Ver / Imprimir": qué PDFs dejó la emisión y cuáles se abrieron. Global para que
+   * ir y volver entre etapas no lo pierda. Nace de nuevo con cada emisión, y se descarta junto con
+   * ella cuando algo la invalida.
+   */
+  resumenPdfs: PdfsResumen
 
   /* ===== MÓDULO DE GESTIÓN DE COBRANZA =====
      El tablero de análisis. No tiene etapas ni documento: tiene un CRITERIO de búsqueda y el
@@ -371,6 +378,7 @@ export interface AppState {
 
 /** Emisión sin empezar: es el punto de partida y el estado al que vuelve cada reinicio. */
 const EMISION_INICIAL: EmisionRecibo = { fase: 'idle', estado: '', error: null }
+const PDFS_RESUMEN_INICIAL: PdfsResumen = { emitidos: [], abiertos: [], listo: false }
 
 /** Cobro en blanco: sin movimientos y fechado en el día en que se opera. */
 const cobroVacio = (): CobroState => ({ fecha: hoy(), movimientos: [], confirmado: false })
@@ -442,6 +450,7 @@ export const initialState: AppState = {
   resumenFormato: null,
   resumenCtaCteId: null,
   emisionResumen: EMISION_INICIAL,
+  resumenPdfs: PDFS_RESUMEN_INICIAL,
   /* GESTIÓN DE COBRANZA. El criterio arranca puesto —es la pregunta con la que se entra a cobrar,
      ver `CRITERIO_INICIAL`— pero SIN pedir: el tablero abre en blanco y no consulta hasta que se
      aprieta "Buscar". */
@@ -566,6 +575,8 @@ export type Action =
   | { type: 'setResumenCtaCteId'; id: string }
   /** Mismo criterio que `setEmision`: llega como PARCHE. */
   | { type: 'setEmisionResumen'; emision: Partial<EmisionRecibo> }
+  /** Mismo criterio: PARCHE del contador de "Ver / Imprimir". */
+  | { type: 'setResumenPdfs'; pdfs: Partial<PdfsResumen> }
   | { type: 'setCobranzaEstados'; estados: readonly EstadoSaldo[] }
   | { type: 'setCobranzaTramos'; tramos: readonly TramoVencimiento[] }
   | { type: 'pedirCobranza' }
@@ -653,6 +664,7 @@ const resumenSinEmitir = (state: AppState): AppState => ({
   resumenBusquedaPedida: null,
   resumenCtaCteId: null,
   emisionResumen: EMISION_INICIAL,
+  resumenPdfs: PDFS_RESUMEN_INICIAL,
   documentoEnviado: false,
   log: [],
 })
@@ -897,6 +909,7 @@ export function reducer(state: AppState, action: Action): AppState {
         ctaCteId: null,
         resumenCtaCteId: null,
         emisionResumen: EMISION_INICIAL,
+        resumenPdfs: PDFS_RESUMEN_INICIAL,
       }
 
     /* Llegaron los saldos de la cuenta corriente del cliente. Van al estado global —y no al estado
@@ -1190,7 +1203,16 @@ export function reducer(state: AppState, action: Action): AppState {
 
     /* Avance de la generación, tal como lo va reportando `useEmision`. */
     case 'setEmisionResumen':
-      return { ...state, emisionResumen: { ...state.emisionResumen, ...action.emision } }
+      return {
+        ...state,
+        emisionResumen: { ...state.emisionResumen, ...action.emision },
+        /* Una emisión que arranca —la primera o un reintento— cuenta desde cero: lo de la anterior
+           ya no vale. */
+        ...(action.emision.fase === 'creando' ? { resumenPdfs: PDFS_RESUMEN_INICIAL } : {}),
+      }
+
+    case 'setResumenPdfs':
+      return { ...state, resumenPdfs: { ...state.resumenPdfs, ...action.pdfs } }
 
 
     /* ===== GESTIÓN DE COBRANZA =====

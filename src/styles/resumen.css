@@ -537,16 +537,11 @@
   }
 }
 
-/* ===== PDF del resumen emitido ===== */
-/* Debajo del botón de emisión: uno por documento generado, a lo ancho, para abrir el PDF e
-   imprimirlo desde la pestaña. */
+/* ===== Ver / Imprimir ===== */
+/* Debajo del botón de emisión, a lo ancho, siempre visible: se habilita cuando la emisión deja algún
+   PDF. Los mensajes de los dos botones van debajo de éste. */
 .resumen-v2 .res-pdf {
-  margin-top: 12px;
-}
-.resumen-v2 .res-pdf-btns {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  margin-top: 10px;
 }
 .resumen-v2 .res-pdf-btn {
   width: 100%;
@@ -554,6 +549,7 @@
   font-size: 13px;
 }
 .resumen-v2 .res-pdf-btn:disabled {
-  cursor: default;
-  opacity: 0.6;
+  cursor: not-allowed;
+  background: #f4f5f7;
+  color: #a1a3b1;
 }

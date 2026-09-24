@@ -407,6 +407,20 @@ export interface EmisionRecibo {
   error: ErrorEmision | null
 }
 
+/** Los documentos del resumen de cta cte que dejan un PDF en la cuenta. */
+export type DocumentoResumen = 'resumen' | 'estado'
+
+/**
+ * El contador del botón "Ver / Imprimir" del resumen: qué documentos dejó la emisión y cuáles ya se
+ * abrieron. El número del botón es la diferencia.
+ */
+export interface PdfsResumen {
+  emitidos: DocumentoResumen[]
+  abiertos: DocumentoResumen[]
+  /** Ya se leyó la columna con la emisión TERMINADA: el conteo es el final y no hace falta repetirlo. */
+  listo: boolean
+}
+
 /* ===== Envío del recibo ===== */
 
 /** Canal por el que sale el documento. "Ambos" manda por los dos. */

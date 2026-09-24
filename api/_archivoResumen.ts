@@ -31,6 +31,8 @@ const PREFIJO: Record<DocumentoArchivo, string> = {
 
 /** Lo que hace falta de cada archivo de la columna. */
 export interface ArchivoCtaCte {
+  /** El id del archivo en Monday: cada subida es uno nuevo, aunque el nombre se repita. */
+  id: string
   name: string
   file_extension: string | null
   public_url: string
@@ -40,7 +42,7 @@ export interface ArchivoCtaCte {
 export const CONSULTA_ARCHIVOS = `query ($ids: [ID!], $col: [String!]) {
   items(ids: $ids) {
     board { id }
-    assets(column_ids: $col) { name file_extension public_url created_at }
+    assets(column_ids: $col) { id name file_extension public_url created_at }
   }
 }`
 
@@ -48,7 +50,7 @@ export const CONSULTA_ARCHIVOS = `query ($ids: [ID!], $col: [String!]) {
 const normalizar = (nombre: string): string =>
   nombre
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/\p{M}/gu, '')
     .toLowerCase()
     .replace(/[\s_-]+/g, ' ')
     .trim()
@@ -71,7 +73,29 @@ export function pdfDelDocumento(
   return candidatos[0] ?? null
 }
 
-const NOMBRE_DOCUMENTO: Record<DocumentoArchivo, string> = {
+/**
+ * Qué documentos tienen un PDF NUEVO en la columna: uno que no estaba cuando se pidió la emisión.
+ *
+ * Es la única forma de saber qué salió en cada emisión: el tablero informa un solo estado para las
+ * dos ("Generado" o "Error - Ver Update"), y la columna guarda los archivos de la emisión anterior
+ * hasta que otra los reemplaza. Un PDF que ya estaba es de antes, y ofrecerlo mostraría un documento
+ * que esta emisión no generó.
+ *
+ * Sin la foto de antes (`previos` en `null`: no se pudo leer la columna al pedir la emisión) no hay
+ * con qué comparar, y cuenta cualquier PDF que esté.
+ */
+export function pdfsNuevos(
+  archivos: readonly ArchivoCtaCte[],
+  previos: ReadonlySet<string> | null,
+  documentos: readonly DocumentoArchivo[],
+): DocumentoArchivo[] {
+  return documentos.filter((d) => {
+    const pdf = pdfDelDocumento(archivos, d)
+    return pdf !== null && !previos?.has(pdf.id)
+  })
+}
+
+export const NOMBRE_DOCUMENTO: Record<DocumentoArchivo, string> = {
   resumen: 'Resumen de Cta Cte',
   estado: 'Estado de Cta Cte',
 }

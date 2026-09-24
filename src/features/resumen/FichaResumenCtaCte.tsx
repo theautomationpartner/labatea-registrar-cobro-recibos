@@ -144,24 +144,24 @@ export function FichaResumenCtaCte({
         )}
       </button>
 
-      {fase === 'error' && error && (
-        <div className="rec-error" role="alert">
-          <p className="rec-error-estado">
-            <i className="fas fa-circle-exclamation" /> {error.estado}
-          </p>
-          <p className="rec-error-msg">{error.mensaje}</p>
-        </div>
-      )}
-
-      {/* Con el resumen generado, el PDF de cada documento, para verlo e imprimirlo sin ir a buscarlo
-          a Drive. */}
-      {fase === 'emitido' && (
-        <VerPdfResumen
-          ctaCteId={ctaCteId}
-          formato={resumenFormato}
-          incluyeEstado={resumenEstadoCtaCte === 'INCLUIR'}
-        />
-      )}
+      {/* "Ver / Imprimir", siempre debajo de emitir: se habilita cuando la emisión deja algún PDF. Los
+          mensajes —el error de la emisión y los del PDF— van DEBAJO de los dos botones, nunca entre
+          ellos. */}
+      <VerPdfResumen
+        ctaCteId={ctaCteId}
+        formato={resumenFormato}
+        incluyeEstado={resumenEstadoCtaCte === 'INCLUIR'}
+        fase={fase}
+      >
+        {fase === 'error' && error && (
+          <div className="rec-error" role="alert">
+            <p className="rec-error-estado">
+              <i className="fas fa-circle-exclamation" /> {error.estado}
+            </p>
+            <p className="rec-error-msg">{error.mensaje}</p>
+          </div>
+        )}
+      </VerPdfResumen>
     </div>
   )
 }

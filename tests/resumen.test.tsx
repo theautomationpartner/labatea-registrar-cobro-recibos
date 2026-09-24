@@ -4,7 +4,8 @@
  * los movimientos, la limpieza del nombre de un movimiento, la caché de la lista y qué invalida un
  * resumen ya emitido—. Mismo criterio que `rechazos.test.tsx`: no reemplaza probar la app en Monday.
  */
-import { pdfDelDocumento, type ArchivoCtaCte } from '../api/_archivoResumen'
+import { pdfDelDocumento, pdfsNuevos, type ArchivoCtaCte } from '../api/_archivoResumen'
+import { pendientesDeAbrir } from '@/features/resumen/VerPdfResumen'
 import { renderToString } from 'react-dom/server'
 import { createElement, type ComponentType } from 'react'
 import { DispatchContext, StateContext } from '@/state/context'
@@ -509,6 +510,56 @@ chequear(
     conLista.mercaderiaPendFacturar === 286_621.81 &&
     paso2.includes('286.621,81'),
 )
+/* "Ver / Imprimir (0)" está desde antes de emitir, deshabilitado: todavía no hay ningún PDF. */
+{
+  const btnVer = /<button[^>]*res-pdf-btn[^>]*>/.exec(paso2)?.[0] ?? ''
+  chequear('ver / imprimir', 'el botón está antes de emitir, debajo del de emitir', btnVer !== '' && paso2.indexOf('Emitir Resumen Cta Cte') < paso2.indexOf('Ver / Imprimir'))
+  chequear('ver / imprimir', 'y nace deshabilitado, en (0)', btnVer.includes(' disabled=""') && paso2.includes('Ver / Imprimir (0)'))
+  const conError = pintar(
+    aplicar(conLista, [
+      { type: 'setEmisionResumen', emision: { fase: 'error', estado: 'Error - Ver Update', error: { estado: 'Error - Ver Update', mensaje: 'MENSAJE-DE-PRUEBA' } } },
+    ]),
+    ResumenCtaCteView,
+  )
+  const iEmitir = conError.indexOf('Reintentar la emisión')
+  const iVer = conError.indexOf('Ver / Imprimir')
+  const iError = conError.indexOf('MENSAJE-DE-PRUEBA')
+  chequear('ver / imprimir', 'el error de la emisión va DEBAJO de "Ver / Imprimir", no entre los dos botones', iEmitir > -1 && iEmitir < iVer && iVer < iError)
+  /* El número es lo que queda por abrir: (2) → abre el resumen → (1) → abre el estado → (0). */
+  const ambos = ['resumen', 'estado'] as const
+  chequear(
+    'ver / imprimir',
+    'cuenta hacia abajo, primero el resumen y después el estado',
+    pendientesDeAbrir(ambos, []).join() === 'resumen,estado' &&
+      pendientesDeAbrir(ambos, ['resumen']).join() === 'estado' &&
+      pendientesDeAbrir(ambos, ['resumen', 'estado']).length === 0,
+  )
+  chequear('ver / imprimir', 'si sólo salió el resumen, arranca en (1)', pendientesDeAbrir(['resumen'], []).length === 1)
+}
+
+/* El contador vive en el estado de la app: ir a otra etapa y volver no lo pierde. */
+{
+  const emitido = aplicar(conLista, [
+    { type: 'setEmisionResumen', emision: { fase: 'emitido', estado: 'Generado' } },
+    { type: 'setResumenPdfs', pdfs: { emitidos: ['resumen', 'estado'], listo: true } },
+    { type: 'setResumenPdfs', pdfs: { abiertos: ['resumen'] } },
+  ])
+  const idaYVuelta = aplicar(emitido, [
+    { type: 'goto', paso: 'configResumen' },
+    { type: 'goto', paso: 'resumenCtaCte' },
+  ])
+  chequear(
+    'ver / imprimir',
+    'ir a la etapa anterior y volver mantiene el contador',
+    pendientesDeAbrir(idaYVuelta.resumenPdfs.emitidos, idaYVuelta.resumenPdfs.abiertos).join() === 'estado' &&
+      pintar(idaYVuelta, ResumenCtaCteView).includes('Ver / Imprimir (1)'),
+  )
+  const reintento = aplicar(emitido, [{ type: 'setEmisionResumen', emision: { fase: 'creando' } }])
+  chequear('ver / imprimir', 'una emisión nueva lo vuelve a cero', reintento.resumenPdfs.emitidos.length === 0 && reintento.resumenPdfs.abiertos.length === 0)
+  chequear('ver / imprimir', 'y cerrar la operación también', aplicar(emitido, [{ type: 'reset' }]).resumenPdfs.emitidos.length === 0)
+  chequear('ver / imprimir', 'y cambiar de cliente también', aplicar(emitido, [{ type: 'setCliente', cliente: CLIENTES[1] }]).resumenPdfs.emitidos.length === 0)
+}
+
 /* Sin la lista leída todavía, la card no inventa números: los muestra en "--". */
 const leyendo = pintar(conCliente, ResumenCtaCteView)
 chequear('paso 3', 'mientras la cuenta se lee, la card no muestra números', leyendo.includes('>--<'))
@@ -669,6 +720,7 @@ chequear(
 /* ── El PDF para imprimir ─────────────────────────────────────────────────────────────────────── */
 
 const archivo = (name: string, created_at: string): ArchivoCtaCte => ({
+  id: `id-${name}`,
   name,
   file_extension: name.slice(name.lastIndexOf('.')),
   public_url: `https://files/${name}`,
@@ -696,6 +748,23 @@ chequear(
   )?.name === COLUMNA[0].name,
 )
 chequear('pdf', 'columna vacía → sin PDF', pdfDelDocumento([], 'resumen') === null)
+
+/* Qué salió de ESTA emisión: los PDFs que no estaban en la foto de antes de pedirla. */
+{
+  const resumenViejo = archivo('Resumen_Cta_Cte-viejo.pdf', '2026-08-01T10:00:00Z')
+  const estadoViejo = archivo('Estado_Cta_Cte-viejo.pdf', '2026-08-01T10:00:00Z')
+  const resumenNuevo = archivo('Resumen_Cta_Cte-nuevo.pdf', '2026-09-24T10:00:00Z')
+  const foto = new Set([resumenViejo.id, estadoViejo.id])
+  const ambos = ['resumen', 'estado'] as const
+  chequear(
+    'pdf',
+    'salió el resumen y el estado no: sólo el resumen, aunque quede el PDF del estado anterior',
+    pdfsNuevos([resumenViejo, estadoViejo, resumenNuevo], foto, ambos).join() === 'resumen',
+  )
+  chequear('pdf', 'la emisión no dejó nada nuevo → nada que ofrecer', pdfsNuevos([resumenViejo, estadoViejo], foto, ambos).length === 0)
+  chequear('pdf', 'el estado no pedido no se ofrece', pdfsNuevos(COLUMNA, new Set(), ['resumen']).join() === 'resumen')
+  chequear('pdf', 'sin foto, cuenta cualquier PDF que esté', pdfsNuevos([resumenViejo, estadoViejo], null, ambos).join() === 'resumen,estado')
+}
 
 if (fallas > 0) {
   console.error(`\n${fallas} chequeo(s) fallaron`)

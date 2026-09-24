@@ -50,6 +50,7 @@ import {
   COL_ARCHIVO_RESUMEN,
   CONSULTA_ARCHIVOS,
   pdfDelDocumento,
+  pdfsNuevos,
   sinPdf,
   type ArchivoCtaCte,
   type DocumentoArchivo,
@@ -683,6 +684,57 @@ export async function getEstadoResumenCtaCte(
 
 /* ===== PDF del resumen emitido ===== */
 
+/** Los archivos de "🤖Resumen Cta Cte" de la cuenta. Sin conexión a Monday (mock), ninguno. */
+export async function archivosDelResumen(ctaCteId: string): Promise<ArchivoCtaCte[]> {
+  if (!mondayHabilitado()) return []
+  const data = await mondayApi<{ items: { assets: ArchivoCtaCte[] }[] }>(CONSULTA_ARCHIVOS, {
+    ids: [ctaCteId],
+    col: [COL_ARCHIVO_RESUMEN],
+  })
+  return data.items?.[0]?.assets ?? []
+}
+
+/**
+ * La FOTO de la columna al pedir la emisión, por cuenta: los ids de los archivos que ya estaban. Con
+ * ella se sabe después qué PDF generó ESTA emisión (ver `pdfsNuevos`).
+ *
+ * Vive en el módulo y no en el estado de la app porque no es un dato de la pantalla: es la referencia
+ * contra la que se compara, y tiene que sobrevivir a ir y volver entre etapas. Una emisión nueva la
+ * reemplaza.
+ */
+const archivosAlEmitir = new Map<string, ReadonlySet<string>>()
+
+/**
+ * Toma la foto. Si la columna no se puede leer, la foto se descarta: no hay con qué comparar, y
+ * después cuenta cualquier PDF que esté. No corta la emisión: el resumen se puede generar igual.
+ */
+export async function recordarArchivosAlEmitir(ctaCteId: string): Promise<void> {
+  try {
+    const archivos = await archivosDelResumen(ctaCteId)
+    archivosAlEmitir.set(ctaCteId, new Set(archivos.map((a) => a.id)))
+  } catch {
+    archivosAlEmitir.delete(ctaCteId)
+  }
+}
+
+/**
+ * Qué documentos de esta emisión tienen su PDF en la columna.
+ *
+ * `conFoto`: sólo si hay foto de antes de emitir. Es para mirar MIENTRAS la emisión corre: sin foto
+ * no se distingue un PDF recién subido de uno de la emisión anterior, y el contador del botón
+ * sumaría documentos que esta emisión todavía no generó. Al terminar, en cambio, se acepta contar sin
+ * foto (ver `pdfsNuevos`).
+ */
+export async function pdfsDeLaEmision(
+  ctaCteId: string,
+  documentos: readonly DocumentoArchivo[],
+  { conFoto = false }: { conFoto?: boolean } = {},
+): Promise<DocumentoArchivo[]> {
+  const foto = archivosAlEmitir.get(ctaCteId) ?? null
+  if (conFoto && !foto) return []
+  return pdfsNuevos(await archivosDelResumen(ctaCteId), foto, documentos)
+}
+
 /**
  * El PDF de un documento de la última emisión, tal cual quedó en "🤖Resumen Cta Cte" de la cuenta,
  * para abrirlo en una pestaña e imprimirlo desde ahí.
@@ -714,11 +766,7 @@ export async function pdfDeResumen(ctaCteId: string, documento: DocumentoArchivo
 
 async function pdfDeResumenEnLocal(ctaCteId: string, documento: DocumentoArchivo): Promise<Blob> {
   if (!mondayHabilitado()) throw new Error('Sin conexión a Monday no hay un PDF para mostrar.')
-  const data = await mondayApi<{ items: { assets: ArchivoCtaCte[] }[] }>(CONSULTA_ARCHIVOS, {
-    ids: [ctaCteId],
-    col: [COL_ARCHIVO_RESUMEN],
-  })
-  const archivo = pdfDelDocumento(data.items?.[0]?.assets ?? [], documento)
+  const archivo = pdfDelDocumento(await archivosDelResumen(ctaCteId), documento)
   if (!archivo) throw new Error(sinPdf(documento))
   const url = new URL(archivo.public_url)
   if (url.hostname !== 'files-monday-com.s3.amazonaws.com') {
