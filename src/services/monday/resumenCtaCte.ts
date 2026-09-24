@@ -717,22 +717,13 @@ export async function recordarArchivosAlEmitir(ctaCteId: string): Promise<void> 
   }
 }
 
-/**
- * Qué documentos de esta emisión tienen su PDF en la columna.
- *
- * `conFoto`: sólo si hay foto de antes de emitir. Es para mirar MIENTRAS la emisión corre: sin foto
- * no se distingue un PDF recién subido de uno de la emisión anterior, y el contador del botón
- * sumaría documentos que esta emisión todavía no generó. Al terminar, en cambio, se acepta contar sin
- * foto (ver `pdfsNuevos`).
- */
+/** Qué documentos de esta emisión, ya terminada, dejaron su PDF en la columna. */
 export async function pdfsDeLaEmision(
   ctaCteId: string,
   documentos: readonly DocumentoArchivo[],
-  { conFoto = false }: { conFoto?: boolean } = {},
 ): Promise<DocumentoArchivo[]> {
-  const foto = archivosAlEmitir.get(ctaCteId) ?? null
-  if (conFoto && !foto) return []
-  return pdfsNuevos(await archivosDelResumen(ctaCteId), foto, documentos)
+  const archivos = await archivosDelResumen(ctaCteId)
+  return pdfsNuevos(archivos, archivosAlEmitir.get(ctaCteId) ?? null, documentos)
 }
 
 /**

@@ -7,9 +7,6 @@ import { NOMBRE_DOCUMENTO } from '../../../api/_archivoResumen'
 /* Cuánto vive el enlace local al PDF. La pestaña ya lo cargó entero mucho antes; se suelta para no
    dejar el archivo retenido en memoria mientras la app siga abierta. */
 const VIDA_ENLACE_MS = 5 * 60_000
-/* Cada cuánto se mira la columna mientras la emisión corre: el mismo ritmo que el seguimiento del
-   tablero (ver `useEmision`). */
-const INTERVALO_MS = 3000
 
 interface VerPdfResumenProps {
   ctaCteId: string | null
@@ -37,14 +34,15 @@ export const pendientesDeAbrir = (
  * El botón "Ver / Imprimir (n)": cada clic abre en una pestaña el PDF del siguiente documento emitido
  * —primero el resumen, después el estado— y desde ahí se imprime con el visor del navegador.
  *
- * El número es cuántos documentos emitidos quedan por abrir. Arranca en 0, suma uno por cada PDF que
- * la emisión deja en la cuenta y resta uno por cada documento que se abre. Una sola pestaña por clic:
- * es lo que el navegador siempre deja abrir sin tomarla por ventana emergente.
+ * El número es cuántos documentos emitidos quedan por abrir. Queda en 0 mientras la emisión corre;
+ * cuando la automatización termina —el tablero cierra en "Generado" o en "Error - Ver Update"— se lee
+ * UNA vez la columna, y el número pasa a ser cuántos documentos salieron bien. Cada documento que se
+ * abre resta uno. Una sola pestaña por clic: es lo que el navegador siempre deja abrir sin tomarla por
+ * ventana emergente.
  *
- * Está SIEMPRE, pero se habilita sólo con la emisión TERMINADA —bien o con error— y algún documento
- * por abrir: mientras la emisión corre el número ya cuenta, pero no se imprime un documento a mitad de
- * camino. Qué salió se sabe por los PDFs NUEVOS de la columna (ver `pdfsDeLaEmision`): el tablero da
- * un solo estado para los dos documentos.
+ * Está SIEMPRE, pero se habilita sólo con la emisión TERMINADA y algún documento por abrir: no se
+ * imprime un documento a mitad de camino. Qué salió se sabe por los PDFs NUEVOS de la columna (ver
+ * `pdfsDeLaEmision`): el tablero da un solo estado para los dos documentos.
  *
  * El contador vive en el estado de la app (`resumenPdfs`) y no acá: ir a otra etapa y volver no lo
  * pierde. La emisión que arranca lo pone en cero.
@@ -62,33 +60,23 @@ export function VerPdfResumen({ ctaCteId, formato, incluyeEstado, fase, children
   const terminada = fase === 'emitido' || fase === 'error'
   const conPdf = formato === 'PDF' || formato === 'Ambos'
 
-  /* Qué PDFs dejó la emisión: mientras corre, cada pocos segundos, para que el número vaya subiendo;
-     al terminar, una última vez, que es la que habilita el botón. Si ese conteo final ya se hizo
-     —se volvió a la etapa con la emisión terminada—, no se repite. */
+  /* La automatización terminó: se mira UNA vez qué PDFs dejó, y eso es el número del botón. Si ese
+     conteo ya se hizo —se volvió a la etapa con la emisión terminada—, no se repite. */
   useEffect(() => {
-    if (!ctaCteId || !conPdf || (fase !== 'emitiendo' && !terminada) || (terminada && listo)) return
+    if (!ctaCteId || !conPdf || !terminada || listo) return
     let vigente = true
-    let timer: number | undefined
     const pedidos: DocumentoResumen[] = incluyeEstado ? ['resumen', 'estado'] : ['resumen']
-    const mirar = () =>
-      pdfsDeLaEmision(ctaCteId, pedidos, { conFoto: !terminada })
-        .then((docs) => {
-          if (vigente) dispatch({ type: 'setResumenPdfs', pdfs: { emitidos: docs, listo: terminada } })
-        })
-        .catch(() => {
-          if (vigente && terminada) {
-            setError('No pudimos ver qué PDFs dejó la emisión. Recargá la app para volver a intentarlo.')
-          }
-        })
-        .finally(() => {
-          if (vigente && !terminada) timer = window.setTimeout(mirar, INTERVALO_MS)
-        })
-    void mirar()
+    pdfsDeLaEmision(ctaCteId, pedidos)
+      .then((docs) => {
+        if (vigente) dispatch({ type: 'setResumenPdfs', pdfs: { emitidos: docs, listo: true } })
+      })
+      .catch(() => {
+        if (vigente) setError('No pudimos ver qué PDFs dejó la emisión. Recargá la app para volver a intentarlo.')
+      })
     return () => {
       vigente = false
-      window.clearTimeout(timer)
     }
-  }, [ctaCteId, conPdf, incluyeEstado, fase, terminada, listo, dispatch])
+  }, [ctaCteId, conPdf, incluyeEstado, terminada, listo, dispatch])
 
   const pendientes = pendientesDeAbrir(emitidos, abiertos)
   const habilitado = terminada && pendientes.length > 0 && !abriendo
