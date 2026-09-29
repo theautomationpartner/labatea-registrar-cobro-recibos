@@ -79,7 +79,7 @@ function detalleDe(m: MovimientoPago): Dato[] {
   // Retenciones: lo único que agregan al importe es el comprobante que las respalda.
   if (esRetencion(m.formaPago)) {
     return [
-      { label: 'Año', valor: m.anioRetencion || '—' },
+      { label: 'Fecha', valor: m.fechaRetencion || '—' },
       { label: 'Nro Comprobante', valor: m.nroComprobanteRetencion?.trim() || '—' },
       { label: 'Comprobante', valor: m.comprobanteNombre || '—' },
     ]
@@ -90,6 +90,8 @@ function detalleDe(m: MovimientoPago): Dato[] {
       { label: 'Fecha de Venc.', valor: m.vencimientoTarjeta || '—' },
     ]
     filas.push({ label: 'Nro Cupon', valor: m.numeroCupon?.trim() || '—' })
+    filas.push({ label: 'Titular', valor: m.titularTarjeta?.trim() || '—' })
+    filas.push({ label: 'Banco Emisor', valor: m.bancoTarjeta?.trim() || '—' })
     filas.push({ label: 'Comprobante', valor: m.comprobanteNombre || '—' })
     filas.push({ label: 'Banco de Acreditación', valor: m.cuentaPropia || '—' })
     return filas

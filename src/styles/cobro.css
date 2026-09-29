@@ -631,11 +631,8 @@
 .cobro-v2 .cobro-cuit-estado--err {
   background: var(--c-danger);
 }
-/* Retención: el año es corto y el número del certificado acompaña; el adjunto se queda con el
-   resto del renglón. */
-.cobro-v2 .cobro-cond .cobro-form-campo.cobro-campo--anio {
-  flex: 0 0 140px;
-}
+/* Retención: el número del certificado acompaña a la fecha; el adjunto se queda con el resto del
+   renglón. */
 .cobro-v2 .cobro-cond .cobro-form-campo.cobro-campo--nroret {
   flex: 0 1 240px;
 }
@@ -831,6 +828,17 @@
    —que el navegador dibuja al ancho de su opción más larga— se abre mucho más ancho que el campo.
    Dándole el renglón entero, lo cerrado y lo desplegado miden lo mismo y el CBU se lee sin abrir. */
 .cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-campo--ctatransf {
+  flex: 1 1 420px;
+  max-width: none;
+}
+/* Tarjeta: el titular mide lo que antes medía la acreditación (y el banco emisor lo acompaña), y
+   la acreditación, en su propio renglón, se lleva todo el ancho hasta el "+ Agregar" —por el mismo
+   motivo que la cuenta de la transferencia: el nombre trae el CBU completo—. */
+.cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-campo--titular {
+  flex: 0 0 41%;
+  max-width: 41%;
+}
+.cobro-v2 .cobro-cond .cobro-lector-campos .cobro-form-campo.cobro-campo--acredtarj {
   flex: 1 1 420px;
   max-width: none;
 }

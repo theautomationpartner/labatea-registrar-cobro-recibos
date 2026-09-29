@@ -1,3 +1,5 @@
+import type { AvanceRegistroCobro } from '@/services/monday/registroCobro'
+
 /** Modelo de dominio. La capa de servicio (Monday) debe devolver exactamente estas formas. */
 
 /**
@@ -320,7 +322,8 @@ export interface MovimientoPago {
    * dígitos, y número del comprobante que lo respalda. Los pide cualquier medio cuyo nombre empiece
    * con "Retencion" (ver `esRetencion`).
    */
-  anioRetencion?: string
+  /** Sólo RETENCIÓN: fecha del certificado (dd/MM/yyyy). */
+  fechaRetencion?: string
   nroComprobanteRetencion?: string
   /**
    * Transferencia: número de la operación que figura en el comprobante bancario. Es la referencia
@@ -348,6 +351,8 @@ export interface MovimientoPago {
   comprobanteArchivo?: File | null
   /** Tarjeta (débito/crédito): banco emisor y tipo de tarjeta. */
   bancoTarjeta?: string
+  /** Tarjeta: titular del plástico, tal como figura en el cupón. */
+  titularTarjeta?: string
   tipoTarjeta?: TarjetaTipo | null
   /** Tarjeta: vencimiento del plástico (dd/mm/aaaa). */
   vencimientoTarjeta?: string
@@ -439,9 +444,10 @@ export interface ComprobanteEmitido<D> {
   /**
    * Hasta dónde llegó "Registrar", para que un reintento retome sin duplicar nada: el ítem ya creado
    * es `reciboId` / `ordenPagoId`; acá, si ya se subió el PDF y si el ítem quedó INCOMPLETO (le faltan
-   * subitems: no se le sube el PDF ni se le pide el registro).
+   * subitems: no se le sube el PDF ni se le pide el registro). En el RECIBO, además, `cobro`: los
+   * subelementos creados y lo que "Registrar Cobro" ya impactó en cada tablero (ver `registrarCobro`).
    */
-  registro: { pdfSubido: boolean; incompleto: string[] | null }
+  registro: { pdfSubido: boolean; incompleto: string[] | null; cobro?: AvanceRegistroCobro }
   /**
    * Sólo la ORDEN DE PAGO que practicó una retención de Ganancias: la CONSTANCIA que sale junto con
    * ella, con el número de certificado que lleva. Se abre, se envía y se registra con la orden.

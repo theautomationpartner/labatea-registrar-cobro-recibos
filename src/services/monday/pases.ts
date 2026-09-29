@@ -18,11 +18,12 @@
  *      —uno por anticipo del que sale saldo, con su importe y linkeado a ese anticipo— y después el
  *      CRÉDITO al destino, que es UNO solo por el total.
  *
- * Con las dos escrituras confirmadas se le pide al tablero que PROCESE el ítem —su columna de
- * registro en "Registrar"—, y esa tercera solicitud SÍ se espera: es el disparador de la
- * automatización, y una operación que nunca llegó a pedirse no se puede dar por registrada. Lo que
- * viene después —esperar a que el tablero la confirme— es del llamador (ver `esperarRegistro`), que
- * es quien tiene la pantalla tapada mientras tanto.
+ * Con las dos escrituras confirmadas, el REGISTRO depende del lado:
+ *   · PROVEEDORES · se le pide al tablero que PROCESE el ítem —su columna de registro en
+ *     "Registrar"—, y esa solicitud SÍ se espera: es el disparador de la automatización. Esperar a
+ *     que el tablero lo confirme es del llamador (ver `esperarRegistro`).
+ *   · CLIENTES    · no se le pide nada al tablero: el llamador lo registra desde la app con
+ *     `registrarCobro`, con las patas que devuelve esta función.
  *
  * El orden no es cosmético: el saldo sale de una cuenta antes de entrar en otra, y los campos raíz
  * de una `mutation` se ejecutan en serie y en el orden en que están escritos. Que todas las patas
@@ -49,6 +50,7 @@ import {
   TIPO_COBRO_INDEX,
   TIPO_PAGO_INDEX,
 } from './columns'
+import type { LineaReciboCreada } from './registroCobro'
 import { pedirRegistro, REGISTRO_COBROS, REGISTRO_PAGOS, type TableroDeRegistro } from './registro'
 import { mondayApi, mondayHabilitado } from './sdk'
 
@@ -196,15 +198,28 @@ export interface DatosPase {
   acreditado: number
 }
 
+/** El pase escrito: su ítem y, del lado de CLIENTES, sus dos patas para registrarlo desde la app. */
+export interface PaseEscrito {
+  id: string
+  /**
+   * Los subelementos creados (débitos y crédito). Del lado de clientes el registro lo hace la app
+   * con `registrarCobro`; del de proveedores lo sigue haciendo el tablero y esto viene vacío.
+   */
+  lineas: LineaReciboCreada[]
+}
+
 /**
- * Registra el pase y devuelve el id del ítem creado.
+ * Escribe el pase y devuelve el ítem creado.
+ *
+ * Del lado de CLIENTES no se pide el registro al tablero: el llamador lo registra con
+ * `registrarCobro` (lo que antes hacía el escenario de Make). Del de PROVEEDORES se sigue pidiendo.
  *
  * Un fallo en cualquiera de las dos solicitudes se propaga: el llamador lo comunica y NO da la
  * operación por cerrada. Con la cabecera escrita y los subítems no, queda un ítem sin sus dos patas
  * —visible en el tablero y corregible a mano—, que es preferible a un pase a medias que la app dé
  * por bueno.
  */
-export async function registrarPaseDeSaldo(datos: DatosPase): Promise<string> {
+export async function registrarPaseDeSaldo(datos: DatosPase): Promise<PaseEscrito> {
   const { rol, personaOrigenId, nombreOrigen, personaDestinoId, debitos, vendedorId } = datos
   const tablero = TABLERO_DE_PASE[rol]
   const debitado = round2(debitos.reduce((acc, d) => acc + d.importe, 0))
@@ -215,7 +230,7 @@ export async function registrarPaseDeSaldo(datos: DatosPase): Promise<string> {
      movimiento descuadrado en el tablero, que después hay que encontrar y deshacer a mano. */
   if (!paseCuadra(debitado, acreditado)) throw new Error(MSG_PASE_DESCUADRADO)
 
-  if (!mondayHabilitado()) return `mock-pase-${Date.now()}`
+  if (!mondayHabilitado()) return { id: `mock-pase-${Date.now()}`, lineas: [] }
 
   /* --- La cabecera. Se espera: su id es el padre de los dos subelementos. --- */
   const cabecera: Record<string, unknown> = {
@@ -295,15 +310,30 @@ export async function registrarPaseDeSaldo(datos: DatosPase): Promise<string> {
   })
   const declaraciones = lineas.map((_, i) => `$n${i}: String!, $c${i}: JSON!`).join(', ')
 
-  await mondayApi(
+  const creados = await mondayApi<Record<string, { id: string } | null>>(
     `mutation ($parentId: ID!, ${declaraciones}) { ${campos.join(' ')} }`,
     variables,
   )
 
-  /* Con el ítem y todas sus patas ya escritas, se le pide al tablero que lo procese. Se ESPERA: si
-     el pedido no entra, la automatización nunca arranca y el pase queda escrito pero sin registrar
-     —y el llamador se quedaría esperando una confirmación que nadie va a dar—. */
-  await pedirRegistro(itemId, tablero.registro)
+  /* PROVEEDORES: con el ítem y sus patas escritas, se le pide al tablero que lo procese. Se ESPERA:
+     si el pedido no entra, la automatización nunca arranca y el pase queda escrito pero sin
+     registrar —y el llamador se quedaría esperando una confirmación que nadie va a dar—. */
+  if (rol === 'proveedor') {
+    await pedirRegistro(itemId, tablero.registro)
+    return { id: itemId, lineas: [] }
+  }
 
-  return itemId
+  /* Del lado de clientes, las patas con su id: es lo que `registrarCobro` impacta en los anticipos
+     y en las dos cuentas corrientes. */
+  const lineasCreadas: LineaReciboCreada[] = [
+    ...debitos.map((d, i) => ({
+      clase: 'debitoPase' as const,
+      id: creados[`d${i}`]?.id ?? '',
+      anticipoId: d.anticipoId,
+      personaOrigenId,
+      importe: round2(d.importe),
+    })),
+    { clase: 'creditoPase' as const, id: creados.c0?.id ?? '', importe: acreditado },
+  ]
+  return { id: itemId, lineas: lineasCreadas }
 }

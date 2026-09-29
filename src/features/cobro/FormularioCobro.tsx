@@ -28,7 +28,7 @@ import {
   vencimientoDeCheque,
   vencimientoTarjetaInvalido,
 } from '@/lib/pagos'
-import { aIso, desdeIso, manana } from '@/lib/dates'
+import { aIso, desdeIso, manana, parseDate } from '@/lib/dates'
 import { formatearImporteAR, importeATexto, money } from '@/lib/format'
 import { AvisoModal } from '@/components/ui/AvisoModal'
 import type { DatosComprobante } from '@/services/make'
@@ -60,11 +60,13 @@ const BORRADOR_VACIO: Borrador = {
   cuentaPropiaId: null,
   comprobanteNombre: '',
   comprobanteArchivo: null,
-  anioRetencion: '',
+  fechaRetencion: '',
   nroComprobanteRetencion: '',
   tipoTarjeta: null,
   vencimientoTarjeta: '',
   numeroCupon: '',
+  titularTarjeta: '',
+  bancoTarjeta: '',
 }
 
 /**
@@ -98,8 +100,8 @@ const ramalDe = (forma: string): Ramal => {
 /** En qué quedó la validación del CUIT del emisor: sin validar, validado o rechazado. */
 type EstadoCuit = 'pendiente' | 'ok' | 'error'
 
-/** Dígitos del año de la retención: se pide el ejercicio completo (2026), no dos cifras. */
-const ANIO_DIGITOS = 4
+/** Tope del titular de la tarjeta: acota el desborde, no el nombre. */
+const TITULAR_LARGO = 60
 
 /** Tope del número de certificado. Holgado: acota el desborde, no la forma del comprobante. */
 const NRO_COMPROBANTE_LARGO = 20
@@ -190,11 +192,13 @@ const ROTULO_CAMPO: Record<string, string> = {
   // TRANSFERENCIA
   nroCompTransf: 'Nro de Comprobante',
   // RETENCIÓN
-  anioRet: 'Año de la retención',
+  fechaRet: 'Fecha de la retención',
   nroCompRet: 'Nro de Comprobante',
   // TARJETA
   tipoTarjeta: 'Tipo Tarjeta',
   vencTarjeta: 'Fecha de Venc.',
+  titularTarjeta: 'Titular Tarjeta',
+  bancoTarjeta: 'Banco Emisor',
   acreditacion: 'Banco de Acreditación',
 }
 
@@ -214,6 +218,8 @@ const AJENOS_A_LA_LECTURA = new Set([
      sería retar por algo que el documento nunca iba a traer. */
   'vencTarjeta',
   'acreditacion',
+  // El cupón no dice de qué banco es el plástico: el banco emisor lo elige el usuario.
+  'bancoTarjeta',
   /* El impuesto lo declara el usuario ANTES de cargar el certificado: es lo que decide a qué caja
      va el movimiento, y no se lo reclama por una lectura que no tenía por qué traerlo. */
   'tipoRet',
@@ -600,11 +606,14 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
        registrar. El recuadro de carga ya explica por qué, en rojo. */
     comprobanteAjeno,
     tipoRet: esRet && !tipoRetencion,
-    anioRet: esRet && (borrador.anioRetencion ?? '').length !== ANIO_DIGITOS,
+    /* La fecha del certificado: es la "🤖Fecha de Retencion" del tablero de retenciones. */
+    fechaRet: esRet && !parseDate(borrador.fechaRetencion ?? ''),
     nroCompRet: esRet && !borrador.nroComprobanteRetencion?.trim(),
     // TARJETA (débito y crédito)
     tipoTarjeta: esTarjeta && !borrador.tipoTarjeta,
     vencTarjeta: vencTarjMal,
+    titularTarjeta: esTarjeta && !borrador.titularTarjeta?.trim(),
+    bancoTarjeta: esTarjeta && !borrador.bancoTarjeta?.trim(),
     acreditacion: esTarjeta && !borrador.cuentaPropiaId,
   }
   const completo = !Object.values(faltantes).some(Boolean)
@@ -638,8 +647,7 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
    * fecha de vencimiento" sobre una fecha que está a la vista sería mentir.
    */
   const leidoPeroInvalido = (campo: string): boolean =>
-    (campo === 'fechaPago' && !!borrador.fechaPagoCheque) ||
-    (campo === 'anioRet' && !!borrador.anioRetencion)
+    campo === 'fechaPago' && !!borrador.fechaPagoCheque
 
   /* Campos que la lectura NO completó, con el nombre que tienen en pantalla. Es lo que el recuadro
      de carga muestra en rojo: nombrar lo que falta evita mandar a buscarlo por el formulario. */
@@ -866,13 +874,13 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
       return new Set([
         'importe',
         'tipoRetencion',
-        'anioRetencion',
+        'fechaRetencion',
         'nroComprobanteRetencion',
       ] as const)
     /* El cupón dice cuánto, con qué plástico y con qué número de operación. NO dice el banco
        emisor, ni el vencimiento de la tarjeta, ni en qué cuenta de La Batea se acredita: esos tres
        los carga el usuario, así que la lectura no los toca ni aunque el escenario los devuelva. */
-    if (esTarjeta) return new Set(['importe', 'tipoTarjeta', 'numeroCupon'] as const)
+    if (esTarjeta) return new Set(['importe', 'tipoTarjeta', 'numeroCupon', 'titularTarjeta'] as const)
     // Efectivo: sólo el importe, que es todo lo que pide.
     return new Set(['importe'] as const)
   }
@@ -972,7 +980,7 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
          que entran son los de ese certificado, y dejarlos bajo otro tipo los mandaría a la caja
          equivocada. El escenario avisa del cambio con una advertencia; acá se acata. */
       if (tipoLeido) s.formaPago = retencionDeTipo(tipoLeido)
-      if (d.anioRetencion) s.anioRetencion = d.anioRetencion
+      if (d.fechaRetencion) s.fechaRetencion = d.fechaRetencion
       if (d.nroComprobanteRetencion) s.nroComprobanteRetencion = d.nroComprobanteRetencion
       if (d.nroComprobanteTransferencia) {
         s.nroComprobanteTransferencia = d.nroComprobanteTransferencia
@@ -980,6 +988,7 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
       if (d.tipoTarjeta) s.tipoTarjeta = deCatalogo(d.tipoTarjeta, tiposTarjeta)
       if (d.vencimientoTarjeta) s.vencimientoTarjeta = d.vencimientoTarjeta
       if (d.numeroCupon) s.numeroCupon = d.numeroCupon
+      if (d.titularTarjeta) s.titularTarjeta = d.titularTarjeta
       if (cuenta) {
         s.cuentaPropiaId = cuenta.id
         s.cuentaPropia = cuenta.name
@@ -1429,37 +1438,32 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
             <div className="cobro-lector-campos">
               {campoImporte()}
 
-              {/* AÑO y NRO DE COMPROBANTE del certificado: son los datos con los que la retención se
-              identifica ante el fisco, y el archivo de al lado es su respaldo. */}
-              <div className="cobro-form-campo cobro-form-campo--val cobro-campo--anio">
-                <label htmlFor="cobro-ret-anio">
-                  Año de la retención
+              {/* FECHA del certificado: el día en que el cliente practicó la retención. Es el
+                  único dato de tiempo que se pide: el año sale de ella. */}
+              <div className="cobro-form-campo cobro-form-campo--val cobro-campo--fecha">
+                <label htmlFor="cobro-ret-fecha">
+                  Fecha de la retención
                   <Req />
                 </label>
                 <input
-                  id="cobro-ret-anio"
-                  className={`cobro-in ${mal('anioRet') ? 'cobro-in--error' : ''}`}
-                  inputMode="numeric"
-                  autoComplete="off"
-                  maxLength={ANIO_DIGITOS}
-                  placeholder="AAAA"
-                  aria-invalid={mal('anioRet') || undefined}
-                  value={borrador.anioRetencion ?? ''}
-                  /* Sólo dígitos y nunca más de cuatro: lo que no cumple no entra, sin mensaje. */
+                  id="cobro-ret-fecha"
+                  type="date"
+                  className={`cobro-in ${mal('fechaRet') ? 'cobro-in--error' : ''}`}
+                  aria-invalid={mal('fechaRet') || undefined}
+                  value={aIso(borrador.fechaRetencion ?? '')}
                   onChange={(e) =>
-                    setBorrador({
-                      ...borrador,
-                      anioRetencion: soloDigitos(e.target.value, ANIO_DIGITOS),
-                    })
+                    setBorrador({ ...borrador, fechaRetencion: desdeIso(e.target.value) })
                   }
                 />
-                {mal('anioRet') && (
+                {mal('fechaRet') && (
                   <span className="cobro-in-err" role="alert">
-                    {textoFalta('Ingresá el año (4 dígitos)')}
+                    {textoFalta('Ingresá la fecha')}
                   </span>
                 )}
               </div>
 
+              {/* NRO DE COMPROBANTE del certificado: con la fecha, es lo que identifica a la
+                  retención ante el fisco; el archivo de al lado es su respaldo. */}
               <div className="cobro-form-campo cobro-form-campo--val cobro-campo--nroret">
                 <label htmlFor="cobro-ret-nro">
                   Nro de Comprobante
@@ -1570,8 +1574,56 @@ export function FormularioCobro({ bloqueado = false, diferencia = 0 }: Formulari
                 />
               </div>
 
+              {/* TITULAR y BANCO EMISOR del plástico: a nombre de quién está la tarjeta y qué banco
+                  la emitió. Van a "🤖Titular Tarjeta" y "🤖Banco Emisor" de la tarjeta pendiente
+                  de acreditar. */}
+              <div className="cobro-form-campo cobro-form-campo--val cobro-campo--titular">
+                <label htmlFor="cobro-tarj-titular">
+                  Titular Tarjeta
+                  <Req />
+                </label>
+                <input
+                  id="cobro-tarj-titular"
+                  className={`cobro-in ${mal('titularTarjeta') ? 'cobro-in--error' : ''}`}
+                  autoComplete="off"
+                  maxLength={TITULAR_LARGO}
+                  placeholder="Como figura en la tarjeta"
+                  aria-invalid={mal('titularTarjeta') || undefined}
+                  value={borrador.titularTarjeta ?? ''}
+                  onChange={(e) =>
+                    setBorrador({ ...borrador, titularTarjeta: e.target.value.slice(0, TITULAR_LARGO) })
+                  }
+                />
+                {mal('titularTarjeta') && (
+                  <span className="cobro-in-err" role="alert">
+                    {textoFalta('Ingresá el titular')}
+                  </span>
+                )}
+              </div>
+
+              <div className="cobro-form-campo cobro-form-campo--val cobro-campo--banco">
+                <label htmlFor="cobro-tarj-banco">
+                  Banco Emisor
+                  <Req />
+                </label>
+                <BancoEmisorSelect
+                  id="cobro-tarj-banco"
+                  value={borrador.bancoTarjeta ?? ''}
+                  onChange={(banco) => setBorrador({ ...borrador, bancoTarjeta: banco })}
+                  error={mal('bancoTarjeta')}
+                />
+              </div>
+
+              {/* Corte de renglón: la acreditación y el "+ Agregar" cierran abajo, en su propia línea. */}
+              <span className="cobro-lector-corte" aria-hidden="true" />
+
               {/* BANCO DE ACREDITACIÓN: dónde entra la plata (cuentas propias de La Batea). */}
-              {campoCuentaPropia('cobro-tarj-acred', 'Banco de Acreditación', 'acreditacion')}
+              {campoCuentaPropia(
+                'cobro-tarj-acred',
+                'Banco de Acreditación',
+                'acreditacion',
+                'cobro-campo--acredtarj',
+              )}
 
               {botonAgregar()}
             </div>

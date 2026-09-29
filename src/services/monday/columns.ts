@@ -97,6 +97,13 @@ export const BOARDS = {
    * termina "Registrar Resumen": la actividad del envío del resumen se completa con sus contactos.
    */
   actividades: 18420688236,
+  /**
+   * "💰Cajas 📄" (18421035505): un ítem por caja —Efectivo y una por cuenta bancaria propia— y un
+   * SUBÍTEM por movimiento, con su saldo encadenado. Acá entra el dinero de cada cobro.
+   */
+  cajas: 18421035505,
+  /** "💳Tarjetas Pend de Acreditar" (18425243669): un ítem por cupón cobrado con tarjeta. */
+  tarjetas: 18425243669,
 } as const
 
 /**
@@ -536,6 +543,8 @@ export const COL = {
   venta: {
     /** "🤖ID Venta": el identificador que ve el usuario ("VTA-094"). */
     idVenta: 'pulse_id_mkw8wzn1',
+    /** "Facturación": la factura de la venta. Es el "Comprobante de Origen" del movimiento de caja. */
+    facturacion: 'board_relation_mm5bvew3',
   },
   /* "Anticipos Pends de Aplicar" (18426066447): un ítem por anticipo con saldo a favor. De acá salen
      los anticipos que se eligen para cancelar facturas. Los ids se verificaron contra el tablero. */
@@ -690,8 +699,6 @@ export const COL = {
      */
     detalle: 'long_text_mm65mm0k',
     /* --- Retenciones --- */
-    /** "🤖Año" (numbers): el ejercicio al que corresponde la retención. */
-    anioRetencion: 'numeric_mm64dwpx',
     /** "💰Fact Cancelada" (board_relation → 18421035508): la factura que este subítem cancela. */
     factura: 'board_relation_mm63pczd',
     /**
@@ -728,6 +735,8 @@ export const COL = {
        El número del cupón tampoco tiene columna propia: va a "🤖Nro Comprobante"
        (`nroComprobante`). La columna "🤖Numero Cupon" (text_mm5zs69e) del tablero queda sin usar. */
     tipoTarjeta: 'dropdown_mm5rx800',
+    /** "🤖Titular Tarjeta" (text): a nombre de quién está el plástico. */
+    titularTarjeta: 'text_mm5yr164',
     /**
      * "🤖Fecha Pago" (date): el día desde el que el banco paga el cheque. SÓLO la lleva el cheque
      * —de papel o eCheq—: es el dato que trae el documento y del que sale el vencimiento.
@@ -1416,4 +1425,95 @@ export const CHEQUE_ORIGEN_LABEL: Record<FormatoCheque, string> = {
 export const BANCO_EMISOR_LABEL: Record<string, string> = {
   'Banco HSBC': 'HSBC',
   'Banco BBVA': 'BBVA',
+}
+
+/* ===== REGISTRO DEL COBRO =====
+   Lo que "Registrar Cobro" escribe en los tableros que impacta un recibo —lo que antes hacía el
+   escenario de Make "[TAP] Se Registra Cobro VTA POSTERIOR"—. Los ids se verificaron contra el
+   esquema de cada tablero. */
+
+/** El ítem "Efectivo" de "💰Cajas 📄": fijo, igual que en el escenario de Make. */
+export const CAJA_EFECTIVO_ID = '12476858661'
+
+export const COL_REGISTRO = {
+  /* "⚙️Configuracion - Sistema": la cuenta bancaria propia apunta a SU caja. */
+  config: {
+    caja: 'board_relation_mm5zmhxq',
+  },
+  /* Subelementos de "💰Cajas 📄" (18421035566): un movimiento de caja. */
+  cajaSub: {
+    fecha: 'date0',
+    saldoInicial: 'numeric_mksexfxq',
+    ingresos: 'numeric_mkse4dzs',
+    egresos: 'numeric_mksetyds',
+    bancoEmisor: 'dropdown_mm5z78dy',
+    comprobante: 'file_mm5xmpnc',
+    ventas: 'board_relation_mm5yexr3',
+    comprobanteOrigen: 'board_relation_mm5x77s6',
+    cobrado: 'color_mkwb3v95',
+  },
+  /* "🧾Cheques/eCheq en Cartera" (18425237398): lo que el registro agrega a `COL.chequeCartera`. */
+  cheque: {
+    ventas: 'board_relation_mm5ydk2c',
+    subRecibo: 'board_relation_mm5ysy5w',
+  },
+  /* "💳Tarjetas Pend de Acreditar" (18425243669). */
+  tarjeta: {
+    titular: 'text_mm5zvdjj',
+    tipoTarjeta: 'dropdown_mm5zra4w',
+    monto: 'numeric_mm5yt61n',
+    cupon: 'file_mm5ybwj8',
+    nroCupon: 'text_mm5yxc7j',
+    tipo: 'dropdown_mm5ybkgf',
+    fechaEmision: 'date_mm5yq9nc',
+    bancoEmisor: 'dropdown_mm5z9jz3',
+    estado: 'color_mm5ykwtq',
+    ventas: 'board_relation_mm65h5vn',
+    subRecibo: 'board_relation_mm5y1912',
+    persona: 'board_relation_mm64z9kk',
+  },
+  /* "🔃Retenciones" (18426092199). */
+  retencion: {
+    sufridaAplicada: 'dropdown_mm6n5vw',
+    tipo: 'color_mm65rxsy',
+    nro: 'text_mm79nmzs',
+    monto: 'numeric_mm64rg47',
+    fecha: 'date_mm64vv7b',
+    pdf: 'file_mm64e4d8',
+    subRecibo: 'board_relation_mm64n3we',
+    ventas: 'board_relation_mm65zrvg',
+    sujeto: 'board_relation_mm64kd99',
+  },
+  /* "💰Anticipos y Credito x pase de Saldo Pends de Aplicar": lo que se suma a `COL.anticipo`. */
+  anticipo: {
+    subRecibo: 'board_relation_mm65rg9m',
+  },
+  /* Subelementos de los anticipos (18426116657): cada aplicación del saldo a favor. */
+  anticipoSub: {
+    importeAplicado: 'numeric_mm64r9kj',
+  },
+  /* Subelementos de "💰Fact Vtas Pends de Cobro" (18421035588): cada cobro de la factura. */
+  factPendienteSub: {
+    importeCobrado: 'numeric_mkwbw2rj',
+    recibo: 'board_relation_mm6570cv',
+  },
+} as const
+
+/** "✋Cobrado" → "✋Cobrado" en el movimiento de caja. */
+export const CAJA_SUB_COBRADO_INDEX = 1
+/** "🤖Estado Acreditacion" → "Pend de Acreditacion" en la tarjeta. */
+export const TARJETA_PEND_ACREDITACION_INDEX = 0
+/** "🤖Estado del Cheque" → "Pendiente". */
+export const CHEQUE_PENDIENTE_INDEX = 17
+/** "🤖Retencion" → "Sufrida": la que el cliente nos practicó al pagarnos. */
+export const RETENCION_SUFRIDA_ID = 1
+/**
+ * "🤖Tipo Retencion" por forma de pago. La SUSS no tiene etiqueta en el tablero: la columna se
+ * omite en vez de inventarle una.
+ */
+export const RETENCION_TIPO_INDEX: Partial<Record<FormaPago, number>> = {
+  'Retencion IVA': 0,
+  'Retencion GAN': 1,
+  'Retencion CCSS': 2,
+  'Retencion IIBB': 3,
 }

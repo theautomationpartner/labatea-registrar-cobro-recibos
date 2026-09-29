@@ -209,6 +209,34 @@ export async function mondayApi<T>(query: string, variables?: Record<string, unk
   return json.data
 }
 
+/** Un error de GraphQL con el campo raíz (alias) que lo produjo, si Monday lo informa. */
+export interface ErrorParcial {
+  message: string
+  path?: (string | number)[]
+}
+
+/**
+ * Como `mondayApi`, pero una mutación con varios alias NO se descarta entera porque falló uno: se
+ * devuelve lo que sí se ejecutó junto con los errores de los que no. Los campos raíz de una
+ * mutación corren en serie y Monday informa cada falla con su `path`, así que el que llama puede
+ * saber exactamente qué quedó escrito —y no repetirlo al reintentar—. Un fallo de red o HTTP sigue
+ * lanzando: ahí no se sabe nada de lo que pasó.
+ */
+export async function mondayApiParcial<T extends Record<string, unknown>>(
+  query: string,
+  variables?: Record<string, unknown>,
+): Promise<{ data: Partial<T>; errores: ErrorParcial[] }> {
+  const cuerpo = JSON.stringify({ query, variables: variables ?? {} })
+  const res = await pedir(ENDPOINT, (auth) => ({
+    method: 'POST',
+    headers: cabeceras(auth, { 'Content-Type': 'application/json' }),
+    body: cuerpo,
+  }))
+  await verificarRespuesta(res, 'Monday API')
+  const json = (await res.json()) as { data?: Partial<T> | null; errors?: ErrorParcial[] }
+  return { data: json.data ?? {}, errores: json.errors ?? [] }
+}
+
 /**
  * Sube un archivo a una columna `file`. Es el ÚNICO camino: las columnas de archivo no se pueden
  * completar por `column_values` —ahí sólo viaja JSON—, hay que mandar el binario.

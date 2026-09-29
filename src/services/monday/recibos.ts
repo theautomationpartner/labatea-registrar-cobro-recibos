@@ -70,6 +70,7 @@ import {
   TIPO_COBRO_INDEX,
 } from './columns'
 import { escribirColumnas, getProximoNroDocumento, leerNroDocumento, subirArchivoAColumna } from './documentos'
+import type { LineaReciboCreada, OrigenLinea } from './registroCobro'
 import { mondayApi, mondayHabilitado, mondaySubirArchivo } from './sdk'
 
 /**
@@ -100,7 +101,7 @@ const dropdown = (label: string | null | undefined): { labels: string[] } | null
  * Banco emisor tal como lo nombra el TABLERO. Los bancos fijos del selector se traducen; el que el
  * usuario haya agregado a mano viaja como lo escribió y su etiqueta se crea al vuelo.
  */
-const bancoDelTablero = (banco: string | undefined): string | null => {
+export const bancoDelTablero = (banco: string | null | undefined): string | null => {
   const nombre = banco?.trim()
   if (!nombre) return null
   return BANCO_EMISOR_LABEL[nombre] ?? nombre
@@ -289,6 +290,8 @@ function columnasPago(m: MovimientoPago): Record<string, unknown> {
     if (cupon) cv[COL.cobroSub.nroComprobante] = cupon
     const tipo = dropdown(m.tipoTarjeta)
     if (tipo) cv[COL.cobroSub.tipoTarjeta] = tipo
+    const titular = m.titularTarjeta?.trim()
+    if (titular) cv[COL.cobroSub.titularTarjeta] = titular
     // "🤖Fecha Venc" es la MISMA columna que usa el vencimiento del cheque.
     const vencimiento = fechaCol(m.vencimientoTarjeta)
     if (vencimiento) cv[COL.cobroSub.vencimiento] = vencimiento
@@ -298,31 +301,23 @@ function columnasPago(m: MovimientoPago): Record<string, unknown> {
     return cv
   }
 
-  /* Retenciones: el certificado se identifica con su AÑO y su NÚMERO, y cada uno va a una columna
-     de distinto tipo. El NÚMERO comparte "🤖Nro Comprobante" con el cheque —es de texto, así que se
-     escribe tal cual—; el AÑO va a una columna numérica, y ahí sí viaja sólo con dígitos: Monday
-     rechaza el ítem entero si a una `numbers` le llega texto (lo que el usuario tipeó ya viene
-     filtrado, y esto es el resguardo del lado del servicio).
+  /* Retenciones: el certificado se identifica con su FECHA y su NÚMERO. El NÚMERO comparte
+     "🤖Nro Comprobante" con el cheque —es de texto, así que se escribe tal cual—.
 
      Vacías se OMITEN, nunca se mandan en cero: un cero sería un número de comprobante que no
      existe. El archivo que las respalda se sube aparte. */
   if (esRetencion(m.formaPago)) {
     const nro = m.nroComprobanteRetencion?.trim()
     if (nro) cv[COL.cobroSub.nroComprobante] = nro
-    const anio = soloNumeros(m.anioRetencion)
-    if (anio) cv[COL.cobroSub.anioRetencion] = anio
+    /* La fecha del certificado va a "🤖Fecha de Emision Comp", la misma columna que la emisión del
+       cheque: nunca conviven en un mismo subítem. */
+    const emitida = fechaCol(m.fechaRetencion)
+    if (emitida) cv[COL.cobroSub.fechaEmision] = emitida
   }
   return cv
 }
 
 /* ===== Tipos de entrada y salida ===== */
-
-/**
- * Sólo los dígitos de lo cargado, para las columnas NUMÉRICAS del tablero: Monday rechaza el ítem
- * entero si a una columna `numbers` le llega texto. Devuelve '' cuando no queda ningún dígito, que
- * es la señal para omitir la columna en vez de mandarla vacía.
- */
-const soloNumeros = (valor: string | undefined): string => (valor ?? '').replace(/\D/g, '')
 
 /** Una factura imputada: qué ítem se cancela, con qué número se lo muestra y por cuánto. */
 export interface FacturaACancelar {
@@ -404,6 +399,13 @@ export interface ResultadoRecibo {
    */
   pagosCreados: number
   pagosEsperados: number
+  /**
+   * Cada subelemento creado, con su id y de qué salió. Es lo que "Registrar Cobro" recorre para
+   * impactar cajas, cheques, facturas, anticipos y la cuenta corriente (ver `registrarCobro`): el
+   * reemplazo del "Iterar Cobros" del escenario de Make, sin volver a leer el recibo de Monday.
+   * Un subelemento que no entró viene con `id` vacío.
+   */
+  lineas: LineaReciboCreada[]
 }
 
 /** El recibo quedó completo: entraron TODOS sus subelementos, de los dos tipos. */
@@ -452,6 +454,7 @@ export async function crearRecibo(datos: DatosRecibo): Promise<ResultadoRecibo> 
       facturasEsperadas: canceladasEsperadas,
       pagosCreados: recibidasEsperadas,
       pagosEsperados: recibidasEsperadas,
+      lineas: [],
     }
   }
 
@@ -551,6 +554,7 @@ export async function crearRecibo(datos: DatosRecibo): Promise<ResultadoRecibo> 
             datos.detalleAnticipo,
             datos.vencimientoAnticipo,
           ),
+          origen: { clase: 'anticipo', importe: importeAnticipo, detalle: datos.detalleAnticipo?.trim() || undefined },
         },
       ]
     : [
@@ -558,6 +562,7 @@ export async function crearRecibo(datos: DatosRecibo): Promise<ResultadoRecibo> 
           alias: `f${i}`,
           nombre: `Factura ${f.nro}`,
           columnas: columnasFactura(f.id, f.importe),
+          origen: { clase: 'factura', factura: f } as OrigenLinea,
         })),
         /* El ANTICIPO, después de las facturas canceladas y antes de los medios de pago: es lo
            último que el cobro aplica, con lo que quedó cuando las facturas ya se cubrieron.
@@ -569,6 +574,7 @@ export async function crearRecibo(datos: DatosRecibo): Promise<ResultadoRecibo> 
           alias: `x${i}`,
           nombre: 'Anticipo',
           columnas: columnasAnticipo(m.importe, undefined, undefined),
+          origen: { clase: 'anticipo', importe: round2(m.importe) } as OrigenLinea,
         })),
       ]
 
@@ -596,11 +602,13 @@ export async function crearRecibo(datos: DatosRecibo): Promise<ResultadoRecibo> 
            aplicó lo dice su relación (`COL.cobroSub.anticipoAplicado`), no el nombre. */
         nombre: 'Anticipo',
         columnas: columnasAnticipoAplicado(a.id, a.importe),
+        origen: { clase: 'anticipoAplicado', anticipo: a } as OrigenLinea,
       }))
     : movimientosOrdenados.map((m, i) => ({
         alias: `p${i}`,
         nombre: m.formaPago,
         columnas: columnasPago(m),
+        origen: { clase: 'pago', movimiento: m } as OrigenLinea,
       }))
 
   /* El ajuste por diferencia de caja, si lo hubo. Va en su PROPIO bloque —y no pegado al final de
@@ -608,7 +616,14 @@ export async function crearRecibo(datos: DatosRecibo): Promise<ResultadoRecibo> 
      operación. Cuadrando perfecto la línea ni se arma: un ajuste en cero no es información, es
      ruido en el tablero. */
   const ajusteCaja: SubitemACrear[] = hayDifCaja
-    ? [{ alias: 'd0', nombre: 'Dif de Caja', columnas: columnasDifCaja(diferenciaCaja) }]
+    ? [
+        {
+          alias: 'd0',
+          nombre: 'Dif de Caja',
+          columnas: columnasDifCaja(diferenciaCaja),
+          origen: { clase: 'difCaja', importe: diferenciaCaja },
+        },
+      ]
     : []
 
   /* Lo RECIBIDO, como bloque: es lo que se cuenta y contra lo que se emparejan los comprobantes. */
@@ -658,6 +673,7 @@ export async function crearRecibo(datos: DatosRecibo): Promise<ResultadoRecibo> 
        y el PDF saldría sin esa línea—. En una aplicación, lo que se cuenta acá son los anticipos. */
     pagosCreados: idsRecibido.filter(Boolean).length,
     pagosEsperados: recibido.length,
+    lineas: lineas.map((linea) => ({ ...linea.origen, id: idPorAlias.get(linea.alias) ?? '' })),
   }
 }
 
@@ -710,6 +726,8 @@ interface SubitemACrear {
   alias: string
   nombre: string
   columnas: Record<string, unknown>
+  /** De qué salió la línea: viaja en `ResultadoRecibo.lineas` para registrar el cobro. */
+  origen: OrigenLinea
 }
 
 /**

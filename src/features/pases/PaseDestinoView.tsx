@@ -1,5 +1,5 @@
 import { ladosDePase } from '@/lib/permisos'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AvisoModal } from '@/components/ui/AvisoModal'
 import { ModalCargando } from '@/components/ui/ModalCargando'
 import { BuscarCliente, type BusquedaEstado } from '@/features/cliente/BuscarCliente'
@@ -19,11 +19,17 @@ import {
 import { bloqueoDePases, esContado, MSG_CONTADO_DESTINO } from '@/lib/pases'
 import { cumpleRol, rolDeOperacion, ROTULO_OPERACION } from '@/lib/personas'
 import type { Cliente } from '@/types'
+import { hoy } from '@/lib/dates'
 import {
+  ErrorRegistroCobro,
   esperarRegistro,
   getSaldosCliente,
+  mondayHabilitado,
+  registrarCobro,
   registrarPaseDeSaldo,
   tableroDeRegistroDelPase,
+  type Hecho,
+  type PaseEscrito,
 } from '@/services/monday'
 import { useApp, useDispatch } from '@/state/hooks'
 
@@ -75,6 +81,12 @@ export function PaseDestinoView() {
      conexión rechazada de la ventana global de error —la operación SÍ salió—, y decirlo mal haría
      que se reintente algo que ya está en Monday. */
   const [avisoRegistro, setAvisoRegistro] = useState<string | null>(null)
+  /* Pase entre CLIENTES: lo que su registro no pudo impactar. Se informa acá, sin escribir estados
+     ni updates en Monday. */
+  const [falloRegistro, setFalloRegistro] = useState<string[] | null>(null)
+  /* El pase ya escrito y lo que su registro ya impactó: un reintento NO vuelve a escribir el pase,
+     sólo registra lo que faltó. */
+  const paseRef = useRef<(PaseEscrito & { hechos: Record<string, Hecho> }) | null>(null)
 
   /* De qué lado del mostrador es el pase. Es el MISMO rol con el que el paso 1 validó al origen
      —sale del mismo lugar del estado—, y por eso las dos puntas no pueden terminar siendo de lados
@@ -177,26 +189,46 @@ export function PaseDestinoView() {
        comunicar como "no se pudo registrar el pase". */
     let escrito = false
     try {
-      const itemId = await registrarPaseDeSaldo({
-        /* De quiénes son las cuentas decide EN QUÉ TABLERO se escribe todo: el de cobros para un
-           pase entre clientes y el de órdenes de pago para uno entre proveedores. */
-        rol,
-        personaOrigenId: cliente.id,
-        nombreOrigen: cliente.name,
-        personaDestinoId: clienteDestino.id,
-        /* Un débito POR anticipo, con lo que se carga de cada uno: el subelemento queda linkeado a
-           su propio saldo y el tablero muestra de dónde salió cada peso. */
-        debitos: origenes.map((a) => ({ anticipoId: a.id, importe: pasesDeAnticipo[a.id] })),
-        vendedorId: usuario.id,
-        /* Lo acreditado sale del mismo total que suman los débitos: el servicio verifica igual que
-           la diferencia dé cero antes de escribir nada (ver `paseCuadra`). */
-        acreditado: importePase,
-      })
+      /* El pase se escribe UNA vez: si ya está escrito, el reintento sólo registra lo que faltó. */
+      if (!paseRef.current) {
+        const escritoAhora = await registrarPaseDeSaldo({
+          /* De quiénes son las cuentas decide EN QUÉ TABLERO se escribe todo: el de cobros para un
+             pase entre clientes y el de órdenes de pago para uno entre proveedores. */
+          rol,
+          personaOrigenId: cliente.id,
+          nombreOrigen: cliente.name,
+          personaDestinoId: clienteDestino.id,
+          /* Un débito POR anticipo, con lo que se carga de cada uno: el subelemento queda linkeado
+             a su propio saldo y el tablero muestra de dónde salió cada peso. */
+          debitos: origenes.map((a) => ({ anticipoId: a.id, importe: pasesDeAnticipo[a.id] })),
+          vendedorId: usuario.id,
+          /* Lo acreditado sale del mismo total que suman los débitos: el servicio verifica igual
+             que la diferencia dé cero antes de escribir nada (ver `paseCuadra`). */
+          acreditado: importePase,
+        })
+        paseRef.current = { ...escritoAhora, hechos: {} }
+      }
+      const pase = paseRef.current
       escrito = true
 
-      /* El tablero tiene que decir que lo registró. Hasta que esa columna llega a "Registrado" la
-         pantalla sigue tapada: la automatización es la que mueve el saldo de verdad. */
-      await esperarRegistro(itemId, tableroDeRegistroDelPase(rol))
+      if (rol === 'cliente') {
+        /* Entre CLIENTES el registro lo hace la app —lo que antes hacía el escenario de Make—: el
+           débito en los anticipos y la cuenta de origen, y el crédito en la cuenta destino. */
+        if (mondayHabilitado() && pase.lineas.length === 0) {
+          throw new Error('El pase está escrito, pero la app no tiene sus subelementos para registrarlo.')
+        }
+        await registrarCobro(
+          { reciboId: pase.id, tipo: 'pase', clienteId: clienteDestino.id, fechaRecibo: hoy(), lineas: pase.lineas },
+          pase,
+          (hechos) => {
+            pase.hechos = { ...hechos }
+          },
+        )
+      } else {
+        /* Entre PROVEEDORES lo sigue registrando el tablero: hasta que la columna llega a
+           "Registrado" la pantalla sigue tapada. */
+        await esperarRegistro(pase.id, tableroDeRegistroDelPase(rol))
+      }
 
       /* Registro CONFIRMADO por Monday: ESO cierra la operación. La app vuelve a su estado inicial
          en vez de mostrar un cartel de éxito —el pase ya está en el tablero, y dejar la pantalla del
@@ -212,6 +244,10 @@ export function PaseDestinoView() {
       /* Salió pero no se confirmó. Se dice con el mensaje de lo que efectivamente pasó —el error del
          tablero o el tiempo vencido—, y no se reinicia la app: el pase está escrito y hay que
          mirarlo en Monday antes de tocar nada. */
+      if (e instanceof ErrorRegistroCobro) {
+        setFalloRegistro(e.fallas)
+        return
+      }
       setAvisoRegistro(
         e instanceof Error && e.message.trim()
           ? e.message
@@ -352,6 +388,18 @@ export function PaseDestinoView() {
       {avisoRegistro && (
         <AvisoModal titulo="El pase no se confirmó" onClose={() => setAvisoRegistro(null)}>
           {avisoRegistro}
+        </AvisoModal>
+      )}
+
+      {falloRegistro && (
+        <AvisoModal
+          titulo="No se pudo registrar todo el pase"
+          faltantes={falloRegistro}
+          onClose={() => setFalloRegistro(null)}
+        >
+          El pase quedó escrito en Monday, pero esto no se pudo registrar. Volvé a confirmarlo para
+          reintentar: se retoma desde donde se cortó, sin duplicar lo que ya quedó registrado. Si
+          vuelve a fallar, contactate con el soporte de TAP.
         </AvisoModal>
       )}
 

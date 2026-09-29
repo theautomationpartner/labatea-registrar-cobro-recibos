@@ -104,7 +104,8 @@ export interface DatosComprobante {
    * reconoce en el documento, que puede no ser el que el usuario declaró en el formulario.
    */
   tipoRetencion?: string
-  anioRetencion?: string
+  /** Fecha del certificado de retención (dd/MM/yyyy). */
+  fechaRetencion?: string
   nroComprobanteRetencion?: string
   /** Transferencia: número de la operación que figura en el comprobante bancario. */
   nroComprobanteTransferencia?: string
@@ -119,6 +120,8 @@ export interface DatosComprobante {
   tipoTarjeta?: string
   vencimientoTarjeta?: string
   numeroCupon?: string
+  /** Titular del plástico, si el cupón lo imprime. */
+  titularTarjeta?: string
   /**
    * Nombre de la cuenta propia (destino de la transferencia o banco de acreditación). Es un NOMBRE
    * y no un id: el escenario lee un papel, no el tablero de configuración. Quien lo consume lo
@@ -346,16 +349,7 @@ const ALIAS: Record<keyof DatosComprobante, string[]> = {
   /* Sin un alias suelto "tipo": lo llevarían también `tipo_valido` y `tipo_detectado`, que son el
      veredicto del documento y no el impuesto. */
   tipoRetencion: ['tipoRetencion', 'tipoDeRetencion', 'impuesto'],
-  anioRetencion: [
-    'anioRetencion',
-    'anoRetencion',
-    'anioEmision',
-    'anioComprobante',
-    'anio',
-    'ejercicio',
-    'periodo',
-    'year',
-  ],
+  fechaRetencion: ['fechaRetencion', 'fechaDeRetencion', 'fechaComprobante', 'fechaCertificado'],
   nroComprobanteRetencion: [
     'nroComprobanteRetencion',
     'numeroComprobanteRetencion',
@@ -396,6 +390,7 @@ const ALIAS: Record<keyof DatosComprobante, string[]> = {
     'expiry',
   ],
   numeroCupon: ['numeroCupon', 'nroCupon', 'cupon', 'couponNumber'],
+  titularTarjeta: ['titularTarjeta', 'titular', 'nombreTitular', 'cardHolder'],
   cuentaPropia: ['cuentaPropia', 'cuentaDestino', 'cuentaBancaria', 'bancoAcreditacion', 'cuenta'],
 }
 
@@ -495,7 +490,7 @@ function normalizar(fuente: Record<string, unknown>): DatosComprobante {
   poner('cuitDestinatario', aCuit(leer('cuitDestinatario')))
   poner('formatoCheque', aFormatoCheque(leer('formatoCheque')))
   poner('tipoRetencion', aTexto(leer('tipoRetencion')))
-  poner('anioRetencion', aAnio(leer('anioRetencion')))
+  poner('fechaRetencion', aFecha(leer('fechaRetencion')))
   poner('nroComprobanteRetencion', aDigitos(leer('nroComprobanteRetencion')))
   /* El de la transferencia va TAL CUAL: su columna en el tablero es de texto, y el número de
      operación de un banco puede llevar letras o guiones que son parte del dato. */
@@ -505,6 +500,7 @@ function normalizar(fuente: Record<string, unknown>): DatosComprobante {
   poner('tipoTarjeta', aTexto(leer('tipoTarjeta')))
   poner('vencimientoTarjeta', aVencimientoTarjeta(leer('vencimientoTarjeta')))
   poner('numeroCupon', aTexto(leer('numeroCupon')))
+  poner('titularTarjeta', aTexto(leer('titularTarjeta')))
   poner('cuentaPropia', aTexto(leer('cuentaPropia')))
   return datos
 }
@@ -679,16 +675,6 @@ function armarFecha(dia: number, mes: number, anio: number): string | undefined 
   if (fecha.getDate() !== dia || fecha.getMonth() !== mes - 1) return undefined
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${pad(dia)}/${pad(mes)}/${anioPleno}`
-}
-
-/** Año fiscal de la retención: los cuatro dígitos. Cualquier otra cosa no se cae en el campo. */
-function aAnio(v: unknown): string | undefined {
-  const s = crudo(v).replace(/\D/g, '')
-  if (s.length === 4) return s
-  // "26" o una fecha entera de la que se rescata el año.
-  if (s.length === 2) return `20${s}`
-  const conAnio = /(\d{4})/.exec(crudo(v))
-  return conAnio ? conAnio[1] : undefined
 }
 
 /** CUIT en los tres tramos que espera el formulario (XX-XXXXXXXX-X). Sin once dígitos, no hay CUIT. */
