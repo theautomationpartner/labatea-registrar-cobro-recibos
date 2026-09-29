@@ -349,7 +349,10 @@ const ALIAS: Record<keyof DatosComprobante, string[]> = {
   /* Sin un alias suelto "tipo": lo llevarían también `tipo_valido` y `tipo_detectado`, que son el
      veredicto del documento y no el impuesto. */
   tipoRetencion: ['tipoRetencion', 'tipoDeRetencion', 'impuesto'],
-  fechaRetencion: ['fechaRetencion', 'fechaDeRetencion', 'fechaComprobante', 'fechaCertificado'],
+  /* "fecha_emision" es como la devuelve el contrato RETENCION_V1. Va al final: un nombre propio de
+     la retención, si llega, gana. La comparte con la emisión del cheque, y eso no los mezcla: cuál
+     de los dos se carga lo decide el medio de cobro (ver `camposDelMedio` en el formulario). */
+  fechaRetencion: ['fechaRetencion', 'fechaDeRetencion', 'fechaComprobante', 'fechaCertificado', 'fechaEmision'],
   nroComprobanteRetencion: [
     'nroComprobanteRetencion',
     'numeroComprobanteRetencion',
