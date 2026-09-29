@@ -22,17 +22,17 @@ import {
   pasoAnteriorPago,
 } from '@/lib/pasosPago'
 import {
-  adjuntarConstanciaRetencion,
   adjuntarPdfOP,
   crearOrdenDePago,
+  ErrorRegistroPago,
   getProximoNroRetencion,
-  esperarRegistro,
   getProximoNroOP,
   leerNroOP,
+  mondayHabilitado,
   nombreAnticipoPago,
   ordenPagoCompleta,
-  pedirRegistroOP,
-  REGISTRO_PAGOS,
+  registrarPago,
+  type AvanceRegistroPago,
   type DatosOrdenPago,
   type ResultadoOrdenPago,
 } from '@/services/monday'
@@ -54,8 +54,9 @@ export const faltantesOrdenPago = (r: ResultadoOrdenPago): string[] =>
  * también son los mismos:
  *
  *   1. "Emitir orden de pago" genera el PDF EN LA APP. No toca Monday.
- *   2. "Registrar Pago" crea la orden con sus subitems, le sube ese PDF y le pide al tablero que
- *      registre el pago (lo que impacta la cuenta corriente del proveedor).
+ *   2. "Registrar Pago" crea la orden con sus subitems y, en paralelo, le sube ese PDF y registra el
+ *      pago en cada tablero —cajas, cheques, retenciones, facturas, anticipos y la cuenta corriente
+ *      del proveedor— (`registrarPago`, lo que antes hacía el escenario de Make).
  */
 export function OrdenPagoView() {
   const {
@@ -118,9 +119,9 @@ export function OrdenPagoView() {
   /* El registro está en vuelo: tapa la pantalla con `ModalCargando` y frena un segundo click, porque
      es la escritura que impacta la cuenta corriente del proveedor. */
   const [registrando, setRegistrando] = useState(false)
-  /* La orden quedó escrita y pedida, pero el tablero no confirmó su registro. NO se reinicia la
-     app: el ítem está en Monday y hay que mirarlo antes de tocar nada. */
-  const [avisoRegistro, setAvisoRegistro] = useState('')
+  /* Lo que "Registrar Pago" no pudo impactar. Se informa ACÁ y en ningún otro lado: no se escribe
+     ningún estado ni update en Monday. La orden ya está creada; el reintento retoma lo que faltó. */
+  const [falloRegistro, setFalloRegistro] = useState<string[] | null>(null)
   // Monday le dio a la orden otro número que el del PDF enviado.
   const [numeroCambiado, setNumeroCambiado] = useState<{ emitido: string; real: string } | null>(null)
   const [verIncompleto, setVerIncompleto] = useState(false)
@@ -326,9 +327,13 @@ export function OrdenPagoView() {
   }
 
   /**
-   * "Registrar Pago": el ÚNICO lugar donde la orden nace en Monday. Mismo recorrido que el del
-   * recibo —orden con sus subitems, PDF, pedido de registro y espera—, contra "⬅️ Pagos -
-   * PENDIENTES". Retoma donde quedó si un paso falla.
+   * "Registrar Pago": el ÚNICO lugar donde la orden nace en Monday. Dos tiempos, con la ventana de
+   * espera arriba —el mismo recorrido que "Registrar Cobro"—:
+   *   1. la orden con TODOS sus subitems (`crearOrdenDePago`); si alguno no entró, se corta ahí;
+   *   2. EN PARALELO: el PDF emitido a su columna file, con la orden en "Emitido" (`adjuntarPdfOP`),
+   *      y el registro del pago en cada tablero (`registrarPago`) —con la constancia de retención,
+   *      si la hubo—.
+   * Recién con los dos confirmados se cierra la operación. Retoma donde quedó si algo falla.
    */
   const registrar = async () => {
     if (!ordenPagoDoc) {
@@ -345,14 +350,16 @@ export function OrdenPagoView() {
     }
     if (registrando) return
     setRegistrando(true)
-    let pedido = false
     let accion = 'registrar la orden de pago'
     try {
       let id = ordenPagoId
+      let avancePago: AvanceRegistroPago | undefined = ordenPagoDoc.registro.pago
       if (!id) {
         const creada = await crearOrdenDePago(ordenPagoDoc.datos)
         id = creada.id
+        avancePago = { lineas: creada.lineas, hechos: {} }
         dispatch({ type: 'setOrdenPagoId', id })
+        dispatch({ type: 'avanceRegistro', documento: 'ordenPago', avance: { pago: avancePago } })
         if (!ordenPagoCompleta(creada)) {
           dispatch({
             type: 'avanceRegistro',
@@ -364,64 +371,88 @@ export function OrdenPagoView() {
           return
         }
       }
+      const ordenCreada = id
+      const lineas = avancePago?.lineas ?? []
+      if (mondayHabilitado() && lineas.length === 0) {
+        throw new Error('La orden está creada, pero la app no tiene sus subelementos para registrar el pago.')
+      }
 
-      let cambio: { emitido: string; real: string } | null = null
-      // El número con el que quedó la orden en Monday: lo nombra la fila de la retención.
-      let nroReal = ordenPagoDoc.numero
-      if (!ordenPagoDoc.registro.pdfSubido) {
-        accion = 'subir el PDF de la orden de pago'
-        /* El número del PDF era una predicción: si Monday le dio otro, en el tablero queda el PDF
-           con el REAL. */
-        const real = await leerNroOP(id)
+      /* El PDF. El número del PDF era una predicción: si Monday le dio otro, lo que queda en el
+         tablero tiene que decir el REAL, así que se regenera con ése antes de subirlo. */
+      const subirPdf = async (): Promise<{ emitido: string; real: string } | null> => {
+        if (ordenPagoDoc.registro.pdfSubido) return null
+        const real = await leerNroOP(ordenCreada)
         let pdf = ordenPagoDoc.pdf
+        let cambio: { emitido: string; real: string } | null = null
         if (real && real !== ordenPagoDoc.numero) {
           const conReal = datosPdf(real)
           if (conReal) pdf = await generarOrdenPagoPdf(conReal)
           cambio = { emitido: ordenPagoDoc.numero, real }
         }
-        if (real) nroReal = real
-        await adjuntarPdfOP(id, pdf, ordenPagoDoc.fechaEmision)
+        await adjuntarPdfOP(ordenCreada, pdf, ordenPagoDoc.fechaEmision)
         dispatch({ type: 'avanceRegistro', documento: 'ordenPago', avance: { pdfSubido: true } })
+        return cambio
       }
 
-      accion = 'pedir el registro del pago'
-      await pedirRegistroOP(id)
-      pedido = true
-      /* El tablero tiene que decir que lo registró: se sondea "🤖Estado Registro de Pago" hasta que
-         llegue a "Registrado". La que impacta la cuenta corriente del proveedor es la automatización. */
-      await esperarRegistro(id, REGISTRO_PAGOS)
-      /* Con el pago registrado, la automatización ya creó la fila de la retención en "🔃Retenciones":
-         ahí va la constancia. Es best-effort —el pago ya está registrado—: si falla, se avisa en la
-         consola y no se deja al usuario trabado en la etapa. */
       const constancia = ordenPagoDoc.constancia
-      if (constancia) {
-        await adjuntarConstanciaRetencion({
-          ordenId: id,
-          nroOrden: nroReal,
-          constancia,
-          regenerar: async (certificado) => {
-            const d = datosConstancia(certificado, nroReal)
-            return d ? generarConstanciaRetencionPdf(d) : constancia.pdf
+      const [pdf, registro] = await Promise.allSettled([
+        subirPdf(),
+        registrarPago(
+          {
+            ordenId: ordenCreada,
+            tipo: esAnticipo ? 'anticipo' : esAplicacion ? 'aplicacion' : 'pago',
+            proveedorId: ordenPagoDoc.datos.proveedorId,
+            fechaPago: ordenPagoDoc.fechaEmision,
+            lineas,
+            nroRetencion: ordenPagoDoc.datos.nroRetencion,
+            /* La constancia va a la fila de "🔃Retenciones" que crea el registro. Si Monday le dio
+               al certificado o a la orden otro número que el del PDF, se regenera con el REAL. */
+            constancia: constancia
+              ? {
+                  pdf: constancia.pdf,
+                  numero: constancia.numero,
+                  nroOrden: ordenPagoDoc.numero,
+                  regenerar: async (certificado, nroOrden) => {
+                    const d = datosConstancia(certificado, nroOrden)
+                    return d ? generarConstanciaRetencionPdf(d) : constancia.pdf
+                  },
+                }
+              : null,
           },
-        }).catch((e) => console.error('No se pudo subir la constancia de retención', e))
+          { hechos: { ...(avancePago?.hechos ?? {}) } },
+          (hechos) =>
+            dispatch({
+              type: 'avanceRegistro',
+              documento: 'ordenPago',
+              avance: { pago: { lineas, hechos: { ...hechos } } },
+            }),
+        ),
+      ])
+
+      setRegistrando(false)
+      if (registro.status === 'rejected') {
+        const e: unknown = registro.reason
+        setFalloRegistro(
+          e instanceof ErrorRegistroPago
+            ? e.fallas
+            : [e instanceof Error && e.message.trim() ? e.message : 'Monday no respondió al registrar el pago.'],
+        )
+        return
       }
-      if (cambio) {
-        setRegistrando(false)
-        setNumeroCambiado(cambio)
+      if (pdf.status === 'rejected') {
+        accion = 'subir el PDF de la orden de pago'
+        throw pdf.reason
+      }
+      /* Registro CONFIRMADO: eso cierra la operación. Si el número cambió, antes se avisa. */
+      if (pdf.value) {
+        setNumeroCambiado(pdf.value)
         return
       }
       dispatch({ type: 'reset' })
-    } catch (e) {
+    } catch {
       setRegistrando(false)
-      if (!pedido) {
-        dispatch({ type: 'errorMonday', accion })
-        return
-      }
-      setAvisoRegistro(
-        e instanceof Error && e.message.trim()
-          ? e.message
-          : 'La orden quedó creada en Monday, pero el tablero no confirmó el registro del pago.',
-      )
+      // Se puede reintentar y retoma donde quedó.
+      dispatch({ type: 'errorMonday', accion })
     }
   }
 
@@ -539,17 +570,23 @@ export function OrdenPagoView() {
       {registrando && (
         <ModalCargando
           titulo="Registrando pago en el sistema"
-          detalle="Estamos registrando la orden de pago en el sistema junto a sus cajas, sus facturas y su PDF. Espera unos segundos y no salgas de la app"
+          detalle="Estamos registrando la orden de pago en el sistema junto a sus cajas, sus facturas, sus comprobantes y su PDF. Espera unos segundos y no salgas de la app"
         />
       )}
 
-      {/* El pago salió pero el tablero no lo confirmó. Se nombra así, sin prometer nada: lo único
-          seguro es que el ítem está escrito y que su registro no cerró. */}
       {modalReemision}
 
-      {avisoRegistro && (
-        <AvisoModal titulo="El registro no se confirmó" onClose={() => setAvisoRegistro('')}>
-          {avisoRegistro} Revisá la orden en Monday antes de volver a intentarlo.
+      {/* La orden está creada, pero algo del registro no entró. Se nombra qué, y nada se escribe en
+          Monday para contarlo: ni estados ni updates. */}
+      {falloRegistro && (
+        <AvisoModal
+          titulo="No se pudo registrar todo el pago"
+          faltantes={falloRegistro}
+          onClose={() => setFalloRegistro(null)}
+        >
+          La orden de pago quedó creada en Monday, pero esto no se pudo registrar. Tocá{' '}
+          <strong>Registrar Pago</strong> para reintentar: se retoma desde donde se cortó, sin
+          duplicar lo que ya quedó registrado. Si vuelve a fallar, contactate con el soporte de TAP.
         </AvisoModal>
       )}
 
@@ -591,7 +628,7 @@ export function OrdenPagoView() {
           onClose={() => setVerIncompleto(false)}
         >
           La orden se creó en Monday, pero no entraron todos sus subelementos, así que
-          <strong> no se le subió el PDF ni se pidió su registro</strong>: el pago quedaría
+          <strong> no se le subió el PDF ni se registró el pago</strong>: el pago quedaría
           registrado sin esas líneas. Completala en el tablero y registrala desde ahí; volver a
           registrarla desde acá la duplicaría.
         </AvisoModal>

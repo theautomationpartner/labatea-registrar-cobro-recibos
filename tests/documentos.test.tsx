@@ -38,7 +38,6 @@ import {
   type DatosReciboPdf,
 } from '@/lib/documentoComprobante'
 import { mensajesDe } from '@/lib/mensajesEnvio'
-import { nombraLaOrden } from '@/services/monday/ordenPago'
 import { armarEnvioDocumento, evaluarEnvio, problemasDeContactos, tipoDeEnvioEmail } from '@/lib/envioDocumento'
 import { firmaDe } from '@/lib/firma'
 import { armarRecibo, pagosDeAnticipos, type Recibo } from '@/lib/recibo'
@@ -184,11 +183,6 @@ async function main() {
     'constancia-retencion',
   )
   igual(constancia.subarray(0, 5).toString() === '%PDF-' && paginas(constancia) === 1, true, 'la constancia es un PDF de una página')
-  igual(
-    [nombraLaOrden('Retencion GAN - IDPAGO-010 - 1293 - x', 'IDPAGO-010'), nombraLaOrden('Retencion GAN - IDPAGO-010 - x', 'IDPAGO-01')],
-    [true, false],
-    'la fila de "Retenciones" se reconoce por el número ENTERO de la orden',
-  )
 
   console.log('\nCaso 4 · El resumen y el estado de cuenta, en PDF y en Excel:')
   const periodo = { desde: '2026-06-30', hasta: '2026-09-28' }

@@ -31,7 +31,7 @@
  * Sin token (modo local) no se escribe nada, igual que el resto de la capa de servicio.
  */
 import { round2 } from '@/lib/format'
-import { aIso, hoyIso } from '@/lib/dates'
+import { hoyIso } from '@/lib/dates'
 import {
   cuitCompleto,
   esChequeDeCobro,
@@ -57,7 +57,32 @@ import {
 } from './columns'
 import { num, type CV } from './parse'
 import { bancoDelTablero, type AnticipoAAplicar, type FacturaACancelar } from './recibos'
-import { mondayApiParcial, mondayHabilitado, mondaySubirArchivo, type ErrorParcial } from './sdk'
+import {
+  columnas,
+  conexionReal,
+  encadenar,
+  ejecutar,
+  erroresATexto,
+  etiqueta,
+  fecha,
+  idsDe,
+  importeDe,
+  lista,
+  nombre,
+  relacion,
+  relaciones,
+  saldoDelUltimo,
+  suma,
+  type ConexionRegistro,
+  type CuentaLeida,
+  type Ejecucion,
+  type Hecho,
+  type SubitemLeido,
+  type Unidad,
+} from './registroComun'
+import { mondayHabilitado } from './sdk'
+
+export type { ConexionRegistro, Escritura, Hecho, Unidad } from './registroComun'
 
 /* ===== Lo que llega de la creación del recibo ===== */
 
@@ -94,12 +119,6 @@ export interface DatosRegistroCobro {
   lineas: readonly LineaReciboCreada[]
 }
 
-/** Algo que el registro ya creó: su id y, si el tablero le da uno, su código ("ANT-012"). */
-export interface Hecho {
-  id: string
-  codigo?: string
-}
-
 /** El avance de un registro, para retomarlo. Lo guarda la vista con el recibo emitido. */
 export interface AvanceRegistroCobro {
   lineas: LineaReciboCreada[]
@@ -114,42 +133,7 @@ export class ErrorRegistroCobro extends Error {
   }
 }
 
-/** Con qué habla el registro con Monday. Se inyecta en las pruebas. */
-export interface ConexionRegistro {
-  api: typeof mondayApiParcial
-  subir: typeof mondaySubirArchivo
-}
-
-/* ===== Helpers de valores ===== */
-
-const relaciones = (ids: readonly (string | null | undefined)[]): { item_ids: number[] } | null => {
-  const numeros = [...new Set(ids.map(Number).filter((n) => Number.isFinite(n) && n > 0))]
-  return numeros.length ? { item_ids: numeros } : null
-}
-const relacion = (id: string | null | undefined) => relaciones([id])
-const fecha = (ddmmyyyy: string | undefined): { date: string } | null => {
-  const iso = aIso(ddmmyyyy ?? '')
-  return iso ? { date: iso } : null
-}
-const etiqueta = (texto: string | null | undefined): { labels: string[] } | null =>
-  texto?.trim() ? { labels: [texto.trim()] } : null
-
-/** Arma un objeto de columnas sin las que no tienen valor: vacío se OMITE, no se manda en blanco. */
-const columnas = (entradas: Record<string, unknown>): Record<string, unknown> =>
-  Object.fromEntries(Object.entries(entradas).filter(([, v]) => v !== null && v !== undefined && v !== ''))
-
-/** Los nombres se arman con lo que haya: una parte vacía no deja un " -  - " colgando. */
-const nombre = (...partes: (string | null | undefined)[]): string =>
-  partes.map((p) => p?.trim()).filter(Boolean).join(' - ')
-
 /* ===== Lo que se lee antes de escribir ===== */
-
-interface CuentaLeida {
-  id: string
-  /** Saldo final del último movimiento: el "🤖Saldo Inicial" del próximo. */
-  saldo: number
-  anticipoPend: number
-}
 
 interface VentasDeFactura {
   codigos: string[]
@@ -169,33 +153,6 @@ export interface ContextoRegistro {
   saldoCaja: Record<string, number>
 }
 
-interface SubitemLeido {
-  id: string
-  created_at: string
-  column_values: CV[]
-}
-
-/**
- * El saldo con el que quedó el último movimiento, como lo calculaba Make: inicial + entradas −
- * salidas. El "último" es el de creación más reciente (y, a igual fecha, el de id más alto): el
- * orden en que Monday devuelve los subelementos no se puede garantizar.
- */
-function saldoDelUltimo(subitems: readonly SubitemLeido[], ini: string, mas: string, menos: string): number {
-  if (subitems.length === 0) return 0
-  const ultimo = [...subitems].sort((a, b) => {
-    const orden = String(a.created_at).localeCompare(String(b.created_at))
-    return orden !== 0 ? orden : Number(a.id) - Number(b.id)
-  })[subitems.length - 1]
-  const cv = Object.fromEntries(ultimo.column_values.map((c) => [c.id, c.text]))
-  return round2(num(cv[ini]) + num(cv[mas]) - num(cv[menos]))
-}
-
-const idsDe = (cv: CV | undefined): string[] =>
-  ((cv as { linked_item_ids?: (string | number)[] } | undefined)?.linked_item_ids ?? []).map(String)
-
-const erroresATexto = (errores: readonly ErrorParcial[]): string =>
-  errores.map((e) => e.message).join(' · ') || 'Monday no respondió'
-
 async function leerContexto(datos: DatosRegistroCobro, cx: ConexionRegistro): Promise<ContextoRegistro> {
   const { reciboId, clienteId, lineas } = datos
   const facturaIds = lineas.flatMap((l) => (l.clase === 'factura' ? [l.factura.id] : []))
@@ -210,7 +167,6 @@ async function leerContexto(datos: DatosRegistroCobro, cx: ConexionRegistro): Pr
   ]
   const origenId = lineas.find((l) => l.clase === 'debitoPase')?.personaOrigenId ?? null
   const hayEfectivo = lineas.some((l) => l.clase === 'pago' && l.movimiento.formaPago === 'Efectivo')
-  const lista = (ids: readonly string[]) => ids.map(Number).filter((n) => Number.isFinite(n) && n > 0).join(', ')
 
   const cuenta = (alias: string, personaId: string) => `${alias}: boards(ids: [${BOARDS.ctaCte}]) {
       items_page(limit: 1, query_params: {rules: [
@@ -337,113 +293,6 @@ async function leerContexto(datos: DatosRegistroCobro, cx: ConexionRegistro): Pr
 
 /* ===== Las escrituras ===== */
 
-/** Una escritura: crea un subelemento, crea un ítem o cambia columnas de un ítem existente. */
-export type Escritura =
-  | { tipo: 'subitem'; padre: string; nombre: string; columnas: Record<string, unknown>; etiquetas?: boolean }
-  | { tipo: 'item'; board: number; nombre: string; columnas: Record<string, unknown>; etiquetas?: boolean; codigo?: string }
-  | { tipo: 'columnas'; board: number; itemId: string; columnas: Record<string, unknown> }
-
-export interface Unidad {
-  /** Identidad estable de la escritura: es lo que se anota en `hechos` para no repetirla. */
-  clave: string
-  /** Cómo se la nombra si falla. */
-  descripcion: string
-  escritura: Escritura
-  /** Archivo a subir al ítem creado, cuando entró. */
-  archivo?: { archivo: File; columna: string }
-}
-
-interface Ejecucion {
-  hechos: Record<string, Hecho>
-  fallas: string[]
-  alAvanzar: (hechos: Record<string, Hecho>) => void
-  cx: ConexionRegistro
-}
-
-/**
- * Ejecuta un lote de escrituras en UNA mutación, en el orden dado, y después sube sus archivos.
- * Lo que ya estaba hecho se saltea. Devuelve `true` si TODAS las escrituras del lote quedaron
- * hechas (los archivos no cortan: se informan aparte).
- */
-async function ejecutar(unidades: readonly Unidad[], ej: Ejecucion): Promise<boolean> {
-  const pendientes = unidades.filter((u) => !ej.hechos[u.clave])
-  let todas = true
-
-  if (pendientes.length) {
-    const variables: Record<string, unknown> = {}
-    const declaraciones: string[] = []
-    const campos = pendientes.map((u, i) => {
-      const e = u.escritura
-      variables[`c${i}`] = JSON.stringify(e.columnas)
-      declaraciones.push(`$c${i}: JSON!`)
-      if (e.tipo === 'columnas') {
-        variables[`i${i}`] = e.itemId
-        declaraciones.push(`$i${i}: ID!`)
-        return `u${i}: change_multiple_column_values(item_id: $i${i}, board_id: ${e.board}, column_values: $c${i}) { id }`
-      }
-      variables[`n${i}`] = e.nombre
-      declaraciones.push(`$n${i}: String!`)
-      const etiquetas = e.etiquetas ? 'true' : 'false'
-      if (e.tipo === 'subitem') {
-        variables[`p${i}`] = e.padre
-        declaraciones.push(`$p${i}: ID!`)
-        return `u${i}: create_subitem(parent_item_id: $p${i}, item_name: $n${i}, column_values: $c${i}, create_labels_if_missing: ${etiquetas}) { id }`
-      }
-      const codigo = e.codigo ? ` column_values(ids: ["${e.codigo}"]) { id text }` : ''
-      return `u${i}: create_item(board_id: ${e.board}, item_name: $n${i}, column_values: $c${i}, create_labels_if_missing: ${etiquetas}) { id${codigo} }`
-    })
-
-    try {
-      const { data, errores } = await ej.cx.api<Record<string, { id: string; column_values?: CV[] } | null>>(
-        `mutation (${declaraciones.join(', ')}) { ${campos.join('\n')} }`,
-        variables,
-      )
-      pendientes.forEach((u, i) => {
-        const creado = data[`u${i}`]
-        if (creado?.id) {
-          ej.hechos[u.clave] = { id: String(creado.id), codigo: creado.column_values?.[0]?.text?.trim() || undefined }
-          return
-        }
-        todas = false
-        const propios = errores.filter((e) => e.path?.[0] === `u${i}`)
-        ej.fallas.push(`${u.descripcion}: ${erroresATexto(propios.length ? propios : errores)}`)
-      })
-    } catch (e) {
-      todas = false
-      const motivo = e instanceof Error && e.message ? e.message : 'sin respuesta de Monday'
-      pendientes.forEach((u) => ej.fallas.push(`${u.descripcion}: ${motivo}`))
-    }
-    ej.alAvanzar(ej.hechos)
-  }
-
-  /* Los archivos van al ítem ya creado —las columnas `file` no viajan en `column_values`—, en
-     paralelo, y también se anotan: un reintento no los sube dos veces. */
-  const subidas = unidades.flatMap((u) => {
-    const hecho = ej.hechos[u.clave]
-    const clave = `archivo:${u.clave}`
-    if (!u.archivo || !hecho || ej.hechos[clave]) return []
-    const id = Number(hecho.id)
-    return [
-      ej.cx
-        .subir(
-          `mutation ($file: File!) { add_file_to_column(item_id: ${id}, column_id: "${u.archivo.columna}", file: $file) { id } }`,
-          u.archivo.archivo,
-        )
-        .then(() => {
-          ej.hechos[clave] = { id: hecho.id }
-        })
-        .catch((e: unknown) => {
-          ej.fallas.push(`Comprobante de ${u.descripcion}: ${e instanceof Error ? e.message : 'no se pudo subir'}`)
-        }),
-    ]
-  })
-  if (subidas.length) {
-    await Promise.all(subidas)
-    ej.alAvanzar(ej.hechos)
-  }
-  return todas
-}
-
 /* ===== El plan: qué se escribe en cada tablero ===== */
 
 /** Lo que el plan necesita saber del recibo, ya leído. */
@@ -511,27 +360,6 @@ function planCajas(en: Entorno): { porCaja: Map<string, Unidad[]>; fallas: strin
     porCaja.set(cajaId, lista)
   }
   return { porCaja, fallas }
-}
-
-/**
- * Encadena el saldo de una lista de movimientos que van al MISMO padre: el primero arranca del
- * saldo leído y cada uno del final del anterior. Los que ya estaban hechos no cuentan —su efecto
- * ya está en el saldo que se leyó—.
- */
-function encadenar(
-  unidades: readonly Unidad[],
-  hechos: Record<string, Hecho>,
-  saldo: number,
-  colSaldo: string,
-  delta: (u: Unidad) => number,
-): Unidad[] {
-  let actual = saldo
-  return unidades.map((u) => {
-    if (hechos[u.clave] || u.escritura.tipo === 'columnas') return u
-    const conSaldo = { ...u, escritura: { ...u.escritura, columnas: { ...u.escritura.columnas, [colSaldo]: actual } } }
-    actual = round2(actual + delta(u))
-    return conSaldo
-  })
 }
 
 function planCheques(en: Entorno): { unidades: Unidad[]; fallas: string[] } {
@@ -720,8 +548,6 @@ function planAplicaciones(en: Entorno, clase: 'anticipoAplicado' | 'debitoPase')
   })
 }
 
-const suma = (xs: readonly number[]) => round2(xs.reduce((acc, x) => acc + x, 0))
-
 /** Lo que el recibo declara como RECIBIDO: lo que sale de la cuenta del cliente en su movimiento. */
 function totalRecibido(datos: DatosRegistroCobro): number {
   return suma(
@@ -847,7 +673,7 @@ async function flujoCuentaOrigen(en: Entorno, ej: Ejecucion): Promise<void> {
     },
   }))
   const movidos = await ejecutar(
-    encadenar(movimientos, ej.hechos, cta.saldo, s.saldoInicial, (u) => num(String(u.escritura.columnas[s.suma] ?? 0))),
+    encadenar(movimientos, ej.hechos, cta.saldo, s.saldoInicial, (u) => importeDe(u, s.suma)),
     ej,
   )
   if (!movidos) return
@@ -881,7 +707,7 @@ export async function registrarCobro(
   conexion?: ConexionRegistro,
 ): Promise<void> {
   if (!conexion && !mondayHabilitado()) return
-  const cx = conexion ?? { api: mondayApiParcial, subir: mondaySubirArchivo }
+  const cx = conexion ?? conexionReal()
 
   const ctx = await leerContexto(datos, cx)
   const ventas = datos.lineas.flatMap((l) => (l.clase === 'factura' ? [ctx.ventas[l.factura.id]] : [])).filter(Boolean)
@@ -908,7 +734,7 @@ export async function registrarCobro(
     ...[...cajas.porCaja].map(([cajaId, unidades]) =>
       ejecutar(
         encadenar(unidades, ej.hechos, ctx.saldoCaja[cajaId] ?? 0, COL_REGISTRO.cajaSub.saldoInicial, (u) =>
-          num(String(u.escritura.columnas[COL_REGISTRO.cajaSub.ingresos] ?? 0)),
+          importeDe(u, COL_REGISTRO.cajaSub.ingresos),
         ),
         ej,
       ),

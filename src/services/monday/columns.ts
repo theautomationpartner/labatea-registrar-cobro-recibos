@@ -459,7 +459,8 @@ export const CAJA_PAGO_ANTICIPO_INDEX = 7
 export const MEDIO_ENVIO_OP_IDS: Record<'Email' | 'WhatsApp' | 'Ambos', number[]> = {
   Email: [2],
   WhatsApp: [1],
-  Ambos: [3],
+  /* El tablero ya no tiene la etiqueta "Ambos" (hoy: {"1":"Whatsapp","2":"Email"}): van las dos. */
+  Ambos: [1, 2],
 }
 
 /**
@@ -1517,3 +1518,77 @@ export const RETENCION_TIPO_INDEX: Partial<Record<FormaPago, number>> = {
   'Retencion CCSS': 2,
   'Retencion IIBB': 3,
 }
+
+/* ===== REGISTRO DEL PAGO =====
+   Lo que "Registrar Pago" escribe en los tableros que impacta una orden de pago —lo que antes hacía
+   el escenario de Make "[TAP] Cuando se registra Orden de Pago -> Impactar en Caja y Cta Cte
+   Proveedor"—. Los ids se verificaron contra el esquema de cada tablero. */
+
+export const COL_REGISTRO_PAGO = {
+  /* Subelementos de la orden (18421035618): lo que el registro LEE de cada línea. */
+  ordenPagoSub: {
+    /** "🤖ID Mov Pago" (item_id): nombra el movimiento de caja, igual que en Make. */
+    idMov: 'pulse_id_mm6k5r27',
+  },
+  /* Subelementos de "💵Cta Cte Proveedores" (18428672375). Los números son los de `COL.ctaCteSub`;
+     el "🤖Origen" y la fecha son OTRAS columnas que las de clientes. */
+  ctaCteSub: {
+    /** "🤖Origen" (board_relation → fact. compra pend, cheques y anticipos de proveedores). */
+    origen: 'board_relation_mm6ney1g',
+    /** "🤖Fecha" (date): la fecha del pago que originó el movimiento. */
+    fecha: 'date_mm7n62mc',
+  },
+  /* "🧾Cheques/eCheq en Cartera" (18425237398): lo que el pago agrega a `COL.chequeCartera`. */
+  cheque: {
+    /** "🗒️ Facturas Compras" (board_relation → 18425512689): lo que pagó el cheque. */
+    facturasCompra: 'board_relation_mm6nznnw',
+    /** "🤖 Sub. ➡️Pagos" (board_relation → subelementos de la orden): con qué línea salió. */
+    subPago: 'board_relation_mm6k5j2f',
+  },
+  /* "🔃Retenciones" (18426092199): lo que la retención PRACTICADA agrega a `COL_REGISTRO.retencion`. */
+  retencion: {
+    /** "⬅️ Pagos - PENDIENTES" (board_relation → subelementos de la orden 18421035618). */
+    subOrdenPago: 'board_relation_mm6kf5f6',
+    /** "🗒️ Facturas Compras" (board_relation → 18425512689). */
+    facturasCompra: 'board_relation_mm6njktz',
+  },
+  /* Anticipos de proveedores (18428353259): lo que se suma a `COL.anticipoProveedor`. */
+  anticipoProveedor: {
+    /** "🤖ID Anticipo" (item_id con contador): el código que nombra el movimiento de la cuenta. */
+    codigo: 'pulse_id_mm6kazb9',
+  },
+  /* Subelementos de los anticipos de proveedores (18428353265): cada aplicación del saldo. */
+  anticipoProveedorSub: {
+    importeAplicado: 'numeric_mm64r9kj',
+    /** "❓ Facturas Compra Pend de Pago" (board_relation): contra qué facturas se aplicó. */
+    facturas: 'board_relation_mm66yfjj',
+  },
+  /* Subelementos de "❓ Facturas Compra Pend de Pago" (18425513707): cada pago de la factura. */
+  factCompraSub: {
+    /** "🤖Importe Pagado $" (numbers). */
+    importePagado: 'numeric_mm60t0yw',
+    /** "🤖Fecha Pago" (date). */
+    fechaPago: 'date_mm6nk2e7',
+    /** "⬅️ Pagos - PENDIENTES" (board_relation → la orden 18421035536). */
+    orden: 'board_relation_mm6n2yay',
+  },
+} as const
+
+/**
+ * "🤖Movimiento" (color_mm5z46ht) en la cuenta de PROVEEDORES. Leídos del tablero: {"0":"Anticipo",
+ * "1":"Pago","2":"Debito x Pase de Saldo","3":"Compra Pend de Pago","4":"Credito x Pase de Saldo",
+ * "6":"Rechazo de Cheque"}. Coinciden en número con los de clientes salvo en el rótulo del 1.
+ */
+export const MOVIMIENTO_CTA_CTE_PROVEEDOR_INDEX = {
+  anticipo: 0,
+  pago: 1,
+  debitoPase: 2,
+  compraPendiente: 3,
+  creditoPase: 4,
+  rechazoCheque: 6,
+} as const
+
+/** "✋Cobrado" → "✋Pago Proveedor" en el movimiento de caja: el EGRESO de un pago. */
+export const CAJA_SUB_PAGO_PROVEEDOR_INDEX = 0
+/** "🤖Retencion" → "Aplicada": la que NOSOTROS le practicamos al proveedor al pagarle. */
+export const RETENCION_APLICADA_ID = 2

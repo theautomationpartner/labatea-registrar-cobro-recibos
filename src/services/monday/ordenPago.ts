@@ -14,7 +14,8 @@
  *      campos raíz de una `mutation` en serie y en el orden escrito, así que el orden del lote se
  *      cumple por definición del lenguaje.
  *   3) PDF — el que generó la app, a "🤖OP PDF", con "🤖Estado de Emision y Envio" en "Emitido".
- *   4) REGISTRO — "🤖Estado Registro de Pago" → "Registrar" (ver `pedirRegistroOP`).
+ *   4) REGISTRO — lo hace la app con `registrarPago` (lo que antes hacía el escenario de Make): cada
+ *      subelemento vuelve con su id y de qué salió, y con eso se impacta cada tablero.
  *
  * Sin token (modo local) no se escribe nada y se devuelven ids simulados, igual que el resto de la
  * capa de servicio: el prototipo se puede recorrer entero sin cuenta de Monday.
@@ -37,12 +38,11 @@ import {
   cajaDePago,
   CHEQUE_ORIGEN_LABEL,
   COL,
-  OP_EMISION_INDEX,
   personCol,
   TIPO_PAGO_INDEX,
 } from './columns'
 import { escribirColumnas, getProximoNroDocumento, leerNroDocumento, subirArchivoAColumna } from './documentos'
-import { pedirRegistro, REGISTRO_PAGOS } from './registro'
+import type { LineaOrdenCreada, OrigenLineaPago } from './registroPago'
 import { getProximoNroRetencion } from './retencionGanancias'
 import { mondayApi, mondayHabilitado } from './sdk'
 
@@ -294,10 +294,8 @@ export function columnasCaja(m: MovimientoCaja, nroRetencion?: string | null): R
  * que alguien pueda mandar desalineado. En una orden que cierra vale CERO EXACTO, así que cualquier
  * otra cosa en esa columna es, en sí misma, una alarma.
  *
- * El "🤖Estado Registro de Pago" NO se escribe acá, igual que el recibo no escribe el suyo al crear
- * la cabecera: pedir el registro es un acto aparte y posterior (ver `pedirRegistroOP`), porque
- * dispara la automatización que impacta la cuenta corriente. Ponerlo en el `create_item` la
- * largaría sobre un ítem que todavía no tiene un solo subelemento colgado.
+ * El "🤖Estado Registro de Pago" NO se escribe: el registro lo hace la app (`registrarPago`), sin
+ * tocar el semáforo del tablero.
  *
  * Se exporta para poder verificar el payload contra el esquema del tablero sin salir a la red.
  */
@@ -411,6 +409,8 @@ export interface AnticipoAAplicarPago {
 export interface ResultadoOrdenPago {
   /** Id del ítem creado en "⬅️ Pagos - PENDIENTES". */
   id: string
+  /** Cada subelemento creado (id vacío = no entró) y de qué salió: lo que impacta `registrarPago`. */
+  lineas: LineaOrdenCreada[]
   facturasCreadas: number
   facturasEsperadas: number
   pagosCreados: number
@@ -452,6 +452,7 @@ export async function crearOrdenDePago(datos: DatosOrdenPago): Promise<Resultado
   if (!mondayHabilitado()) {
     return {
       id: `mock-op-${Date.now()}`,
+      lineas: [],
       facturasCreadas: facturasEsperadas,
       facturasEsperadas,
       pagosCreados: pagosEsperados,
@@ -498,6 +499,7 @@ export async function crearOrdenDePago(datos: DatosOrdenPago): Promise<Resultado
               datos.vencimientoAnticipo,
               datos.detalleAnticipo,
             ),
+            origen: { clase: 'anticipo' as const, importe: round2(datos.anticipo ?? 0), detalle: datos.detalleAnticipo },
           },
         ]
       : [
@@ -507,6 +509,7 @@ export async function crearOrdenDePago(datos: DatosOrdenPago): Promise<Resultado
                como se lee la línea en el tablero, donde no hay una columna que lo aclare. */
             nombre: `Factura N° ${f.nro}`,
             columnas: columnasFacturaCompra(f.id, f.importe),
+            origen: { clase: 'factura' as const, factura: f },
           })),
           /* El ANTICIPO por SOBRANTE, después de las facturas canceladas y antes de las cajas: es
              lo último que la orden aplica, con lo que quedó cuando las facturas ya se cubrieron. Es
@@ -515,6 +518,7 @@ export async function crearOrdenDePago(datos: DatosOrdenPago): Promise<Resultado
             alias: `x${i}`,
             nombre: 'Anticipo',
             columnas: columnasAnticipoPago(m.importe),
+            origen: { clase: 'anticipo' as const, importe: round2(m.importe) },
           })),
         ]),
     /* Lo ENTREGADO. En una aplicación son los anticipos que se imputan; en el resto, las cajas. */
@@ -526,11 +530,13 @@ export async function crearOrdenDePago(datos: DatosOrdenPago): Promise<Resultado
              es el único lado que tiene esa columna. El nombre no es la trazabilidad. */
           nombre: 'Anticipo',
           columnas: columnasAnticipoAplicado(a.importe),
+          origen: { clase: 'anticipoAplicado' as const, anticipo: a },
         }))
       : entregadas.map((m, i) => ({
           alias: `p${i}`,
           nombre: m.formaPago,
           columnas: columnasCaja(m, nroRetencion),
+          origen: { clase: 'pago' as const, movimiento: m },
         }))),
   ]
 
@@ -549,28 +555,12 @@ export async function crearOrdenDePago(datos: DatosOrdenPago): Promise<Resultado
   }
   return {
     id: itemId,
+    lineas: lineas.map((l, i) => ({ ...l.origen, id: ids[i] ?? '' })),
     facturasCreadas: creados.slice(0, facturasEsperadas).filter(Boolean).length,
     facturasEsperadas,
     pagosCreados: creados.slice(facturasEsperadas).filter(Boolean).length,
     pagosEsperados,
   }
-}
-
-/**
- * Pide el REGISTRO de la orden: pone "🤖Estado Registro de Pago" en "Registrar".
- *
- * Es un acto APARTE de la creación y posterior a ella —el mismo criterio que `pedirRegistro` en el
- * recibo—: dispara la automatización que impacta la cuenta corriente del proveedor y marca las
- * facturas como pagadas, así que no puede largarse sobre un ítem sin subelementos.
- *
- * OJO con el índice: acá "Registrar" es el 3 y en el recibo es el 4. Son dos columnas distintas de
- * dos tableros distintos, y por eso cada una tiene su propio mapa (ver `OP_REGISTRO_INDEX`).
- */
-export async function pedirRegistroOP(itemId: string): Promise<void> {
-  /* El pedido es UNO solo para los dos tableros —cambian el board, la columna y el índice, no el
-     acto—, así que vive en `./registro` junto con la espera que lo sigue. Esta función queda como
-     el nombre con el que el módulo de Pagos lo pide, sin repetir la mutación. */
-  await pedirRegistro(itemId, REGISTRO_PAGOS)
 }
 
 /* ===== El número y el PDF de la orden ===== */
@@ -592,109 +582,17 @@ export async function getProximoNroOP(): Promise<string | null> {
 export const leerNroOP = (itemId: string): Promise<string> => leerNroDocumento(itemId, COL.ordenPago.nro)
 
 /**
- * Sube el PDF que generó la app a "🤖OP PDF" y deja la orden EMITIDA: "🤖Estado de Emision y Envio"
- * en "Emitido" y su "🤖Fecha de Emision OP".
+ * Sube el PDF que generó la app a "🤖OP PDF" y escribe su "🤖Fecha de Emision OP".
  *
- * NO se escribe "Emitir": ese era el disparador de la automatización que generaba el documento, y el
- * PDF ahora ya lo generó la app. Mismo criterio que `adjuntarPdfRecibo`.
+ * NO toca "🤖Estado de Envio" (`color_mm6kxyqy`): el tablero sacó de esa columna las etiquetas de la
+ * emisión —hoy sólo tiene Enviar / Enviando / Enviado / Error de Envio—, así que escribir "Emitido"
+ * (el viejo índice 1) hace que Monday rechace la escritura. La emisión ya la hizo la app.
  */
 export async function adjuntarPdfOP(itemId: string, pdf: File, fechaEmision: string): Promise<void> {
   if (!mondayHabilitado()) return
   await subirArchivoAColumna(itemId, COL.ordenPago.pdf, pdf)
-  const columnas: Record<string, unknown> = {
-    [COL.ordenPago.estadoEmision]: { index: OP_EMISION_INDEX.emitido },
-  }
   const iso = aIso(fechaEmision)
-  if (iso) columnas[COL.ordenPago.fechaEmision] = { date: iso }
-  await escribirColumnas(itemId, BOARDS.ordenesPago, columnas)
-}
-
-/* ===== La constancia de retención ===== */
-
-const esperar = (ms: number) => new Promise<void>((ok) => setTimeout(ok, ms))
-
-/**
- * El nombre de una fila de "🔃Retenciones" nombra ESA orden: el número entero, no como parte de otro
- * ("IDPAGO-01" también está adentro de "IDPAGO-010"). Se exporta para verificarlo sin red.
- */
-export function nombraLaOrden(nombre: string, nroOrden: string): boolean {
-  const nro = nroOrden.trim()
-  if (!nro) return false
-  let desde = 0
-  for (;;) {
-    const i = nombre.indexOf(nro, desde)
-    if (i === -1) return false
-    const antes = nombre[i - 1] ?? ' '
-    const despues = nombre[i + nro.length] ?? ' '
-    if (!/[\w-]/.test(antes) && !/[\w-]/.test(despues)) return true
-    desde = i + 1
-  }
-}
-
-/**
- * La fila de "🔃Retenciones" de una orden ya registrada: la crea la automatización de registro, y su
- * nombre lleva el número de la orden ("Retencion GAN - IDPAGO-010 - …"). La relación con la orden
- * viene vacía en el tablero (verificado), así que el nombre es el vínculo que hay.
- *
- * Se la busca unas veces: la automatización puede terminar de crearla un instante después de dejar
- * la orden en "Registrado". `null` = no apareció.
- */
-export async function buscarRetencionDeOrden(
-  nroOrden: string,
-  { intentos = 5, intervalo = 2000 }: { intentos?: number; intervalo?: number } = {},
-): Promise<{ id: string; nro: string } | null> {
-  if (!mondayHabilitado() || !nroOrden.trim()) return null
-  for (let i = 0; i < intentos; i++) {
-    const data = await mondayApi<{ boards: { items_page: { items: { id: string; name: string; column_values: { id: string; text: string | null }[] }[] } }[] }>(
-      `query ($nro: CompareValue!) {
-        boards(ids: [${BOARDS.retenciones}]) {
-          items_page(limit: 5, query_params: {
-            rules: [{ column_id: "name", compare_value: $nro, operator: contains_text }],
-            order_by: [{ column_id: "__creation_log__", direction: desc }]
-          }) {
-            items { id name column_values(ids: ["${COL.retencion.nro}"]) { id text } }
-          }
-        }
-      }`,
-      { nro: nroOrden.trim() },
-    )
-    /* `contains_text` es por inclusión: "IDPAGO-01" también está en "IDPAGO-010". Se exige el número
-       entero, delimitado. */
-    const fila = data.boards?.[0]?.items_page?.items?.find((it) => nombraLaOrden(it.name, nroOrden))
-    if (fila) return { id: fila.id, nro: fila.column_values?.[0]?.text?.trim() ?? '' }
-    if (i < intentos - 1) await esperar(intervalo)
-  }
-  return null
-}
-
-/**
- * Sube la CONSTANCIA de retención a su fila de "🔃Retenciones" ("🤖Retencion PDF"). Si la fila no
- * aparece, va a la columna del PDF de la ORDEN, para que el documento no se pierda.
- *
- * `regenerar`: si la fila nació con otro número que el del PDF —el certificado era una predicción—,
- * se regenera la constancia con el REAL antes de subirla. Devuelve dónde quedó.
- */
-export async function adjuntarConstanciaRetencion({
-  ordenId,
-  nroOrden,
-  constancia,
-  regenerar,
-}: {
-  ordenId: string
-  nroOrden: string
-  constancia: { pdf: File; numero: string }
-  regenerar: (certificado: string) => Promise<File>
-}): Promise<'retencion' | 'orden'> {
-  if (!mondayHabilitado()) return 'retencion'
-  const fila = await buscarRetencionDeOrden(nroOrden)
-  if (!fila) {
-    console.warn(`No apareció la fila de "Retenciones" de ${nroOrden}: la constancia se guarda en la orden.`)
-    await subirArchivoAColumna(ordenId, COL.ordenPago.pdf, constancia.pdf)
-    return 'orden'
-  }
-  const pdf = fila.nro && fila.nro !== constancia.numero ? await regenerar(fila.nro) : constancia.pdf
-  await subirArchivoAColumna(fila.id, COL.retencion.pdf, pdf)
-  return 'retencion'
+  if (iso) await escribirColumnas(itemId, BOARDS.ordenesPago, { [COL.ordenPago.fechaEmision]: { date: iso } })
 }
 
 /**
@@ -734,11 +632,12 @@ async function vincularAnticiposAplicados(
   await Promise.allSettled(escrituras)
 }
 
-/** Un subelemento a crear: con qué alias se lo pide, cómo se llama y qué columnas lleva. */
+/** Un subelemento a crear: con qué alias se lo pide, cómo se llama, qué columnas lleva y de qué sale. */
 interface SubitemACrear {
   alias: string
   nombre: string
   columnas: Record<string, unknown>
+  origen: OrigenLineaPago
 }
 
 /**

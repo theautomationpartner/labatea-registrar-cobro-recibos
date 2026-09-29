@@ -18,12 +18,9 @@
  *      —uno por anticipo del que sale saldo, con su importe y linkeado a ese anticipo— y después el
  *      CRÉDITO al destino, que es UNO solo por el total.
  *
- * Con las dos escrituras confirmadas, el REGISTRO depende del lado:
- *   · PROVEEDORES · se le pide al tablero que PROCESE el ítem —su columna de registro en
- *     "Registrar"—, y esa solicitud SÍ se espera: es el disparador de la automatización. Esperar a
- *     que el tablero lo confirme es del llamador (ver `esperarRegistro`).
- *   · CLIENTES    · no se le pide nada al tablero: el llamador lo registra desde la app con
- *     `registrarCobro`, con las patas que devuelve esta función.
+ * Con las dos escrituras confirmadas, NO se le pide nada al tablero: el llamador registra el pase
+ * desde la app con las patas que devuelve esta función —`registrarCobro` entre clientes y
+ * `registrarPago` entre proveedores—, que es lo que antes hacían los escenarios de Make.
  *
  * El orden no es cosmético: el saldo sale de una cuenta antes de entrar en otra, y los campos raíz
  * de una `mutation` se ejecutan en serie y en el orden en que están escritos. Que todas las patas
@@ -51,7 +48,6 @@ import {
   TIPO_PAGO_INDEX,
 } from './columns'
 import type { LineaReciboCreada } from './registroCobro'
-import { pedirRegistro, REGISTRO_COBROS, REGISTRO_PAGOS, type TableroDeRegistro } from './registro'
 import { mondayApi, mondayHabilitado } from './sdk'
 
 /** Relación a un ítem de otro board, o `null` si el id no sirve (para poder OMITIR la columna). */
@@ -93,8 +89,6 @@ interface TableroDePase {
   personaOrigen: string
   /** El anticipo del que sale ESE débito. */
   anticipo: string
-  /** Su semáforo de registro: el que se pone en "Registrar" y el que después se espera. */
-  registro: TableroDeRegistro
 }
 
 const TABLERO_DE_PASE: Record<RolPersona, TableroDePase> = {
@@ -117,7 +111,6 @@ const TABLERO_DE_PASE: Record<RolPersona, TableroDePase> = {
     importeCredito: COL.cobroSub.importeCobrado,
     personaOrigen: COL.cobroSub.personaOrigen,
     anticipo: COL.cobroSub.anticipoAplicado,
-    registro: REGISTRO_COBROS,
   },
   /* PROVEEDORES · "⬅️ Pagos - PENDIENTES". Mismo movimiento del otro lado: el débito consume el
      saldo a favor NUESTRO con un proveedor ("Importe Cancelado") y el crédito lo deja a favor en la
@@ -139,17 +132,8 @@ const TABLERO_DE_PASE: Record<RolPersona, TableroDePase> = {
     importeCredito: COL.ordenPagoSub.importeEntregado,
     personaOrigen: COL.ordenPagoSub.personaOrigen,
     anticipo: COL.ordenPagoSub.anticipoAplicado,
-    registro: REGISTRO_PAGOS,
   },
 }
-
-/**
- * En qué tablero hay que esperar la confirmación de un pase. Lo consulta la pantalla que cierra la
- * operación: pide el registro este módulo, pero el que espera —con la pantalla tapada— es ella, así
- * que necesita saber a qué columna mirar sin tener que conocer los tableros.
- */
-export const tableroDeRegistroDelPase = (rol: RolPersona): TableroDeRegistro =>
-  TABLERO_DE_PASE[rol].registro
 
 /** Un débito del pase: de qué anticipo sale el saldo y por cuánto. */
 export interface DebitoDePase {
@@ -198,21 +182,22 @@ export interface DatosPase {
   acreditado: number
 }
 
-/** El pase escrito: su ítem y, del lado de CLIENTES, sus dos patas para registrarlo desde la app. */
+/** Una pata del pase ya creada: el débito de un anticipo del origen o el crédito al destino. */
+export type LineaPaseCreada = Extract<LineaReciboCreada, { clase: 'debitoPase' | 'creditoPase' }>
+
+/** El pase escrito: su ítem y sus dos patas, para registrarlo desde la app. */
 export interface PaseEscrito {
   id: string
   /**
-   * Los subelementos creados (débitos y crédito). Del lado de clientes el registro lo hace la app
-   * con `registrarCobro`; del de proveedores lo sigue haciendo el tablero y esto viene vacío.
+   * Los subelementos creados (débitos y crédito), con su id. Son los mismos de los dos lados del
+   * mostrador: los registra `registrarCobro` entre clientes y `registrarPago` entre proveedores.
    */
-  lineas: LineaReciboCreada[]
+  lineas: LineaPaseCreada[]
 }
 
 /**
- * Escribe el pase y devuelve el ítem creado.
- *
- * Del lado de CLIENTES no se pide el registro al tablero: el llamador lo registra con
- * `registrarCobro` (lo que antes hacía el escenario de Make). Del de PROVEEDORES se sigue pidiendo.
+ * Escribe el pase y devuelve el ítem creado, con sus patas. No se le pide el registro al tablero:
+ * lo hace el llamador desde la app (lo que antes hacían los escenarios de Make).
  *
  * Un fallo en cualquiera de las dos solicitudes se propaga: el llamador lo comunica y NO da la
  * operación por cerrada. Con la cabecera escrita y los subítems no, queda un ítem sin sus dos patas
@@ -315,17 +300,9 @@ export async function registrarPaseDeSaldo(datos: DatosPase): Promise<PaseEscrit
     variables,
   )
 
-  /* PROVEEDORES: con el ítem y sus patas escritas, se le pide al tablero que lo procese. Se ESPERA:
-     si el pedido no entra, la automatización nunca arranca y el pase queda escrito pero sin
-     registrar —y el llamador se quedaría esperando una confirmación que nadie va a dar—. */
-  if (rol === 'proveedor') {
-    await pedirRegistro(itemId, tablero.registro)
-    return { id: itemId, lineas: [] }
-  }
-
-  /* Del lado de clientes, las patas con su id: es lo que `registrarCobro` impacta en los anticipos
-     y en las dos cuentas corrientes. */
-  const lineasCreadas: LineaReciboCreada[] = [
+  /* Las patas con su id: es lo que el registro impacta en los anticipos y en las dos cuentas
+     corrientes. */
+  const lineasCreadas: LineaPaseCreada[] = [
     ...debitos.map((d, i) => ({
       clase: 'debitoPase' as const,
       id: creados[`d${i}`]?.id ?? '',

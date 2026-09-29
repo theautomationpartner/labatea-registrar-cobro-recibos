@@ -22,12 +22,12 @@ import type { Cliente } from '@/types'
 import { hoy } from '@/lib/dates'
 import {
   ErrorRegistroCobro,
-  esperarRegistro,
+  ErrorRegistroPago,
   getSaldosCliente,
   mondayHabilitado,
   registrarCobro,
+  registrarPago,
   registrarPaseDeSaldo,
-  tableroDeRegistroDelPase,
   type Hecho,
   type PaseEscrito,
 } from '@/services/monday'
@@ -81,8 +81,8 @@ export function PaseDestinoView() {
      conexión rechazada de la ventana global de error —la operación SÍ salió—, y decirlo mal haría
      que se reintente algo que ya está en Monday. */
   const [avisoRegistro, setAvisoRegistro] = useState<string | null>(null)
-  /* Pase entre CLIENTES: lo que su registro no pudo impactar. Se informa acá, sin escribir estados
-     ni updates en Monday. */
+  /* Lo que el registro del pase no pudo impactar. Se informa acá, sin escribir estados ni updates en
+     Monday. */
   const [falloRegistro, setFalloRegistro] = useState<string[] | null>(null)
   /* El pase ya escrito y lo que su registro ya impactó: un reintento NO vuelve a escribir el pase,
      sólo registra lo que faltó. */
@@ -163,16 +163,15 @@ export function PaseDestinoView() {
   /**
    * Cierra la operación en DOS tiempos, y los dos se esperan:
    *
-   *   1. se escribe el pase en Monday y se le pide al tablero que lo registre;
-   *   2. se espera a que el tablero lo confirme ("🤖Estado Registro de Cobro" → "Registrado").
+   *   1. se escribe el pase en Monday (la cabecera y sus patas);
+   *   2. la app lo registra en los anticipos y en las dos cuentas corrientes —`registrarCobro` entre
+   *      clientes y `registrarPago` entre proveedores—, lo que antes hacían los escenarios de Make.
    *
-   * Los efectos del cierre —reiniciar la app— se aplican SÓLO después del paso 2. El ítem escrito
-   * no alcanza: el registro lo hace la automatización, así que darlo por bueno al terminar la
-   * escritura sería anunciar un final que el tablero todavía no produjo.
+   * Los efectos del cierre —reiniciar la app— se aplican SÓLO después del paso 2.
    *
    * Por eso los dos fallos se cuentan distinto: si no se pudo escribir, la operación no salió y se
-   * reintenta; si salió y no se confirmó, el pase YA está en Monday y lo que corresponde es ir a
-   * mirarlo, no volver a mandarlo.
+   * reintenta; si salió y el registro no entró entero, el pase YA está en Monday y el reintento
+   * retoma sólo lo que faltó.
    */
   const finalizar = async () => {
     if (registrando) return
@@ -211,28 +210,31 @@ export function PaseDestinoView() {
       const pase = paseRef.current
       escrito = true
 
+      /* El registro lo hace la app, de los dos lados del mostrador: el débito en los anticipos y la
+         cuenta de origen, y el crédito en la cuenta destino. */
+      if (mondayHabilitado() && pase.lineas.length === 0) {
+        throw new Error('El pase está escrito, pero la app no tiene sus subelementos para registrarlo.')
+      }
+      const alAvanzar = (hechos: Record<string, Hecho>) => {
+        pase.hechos = { ...hechos }
+      }
       if (rol === 'cliente') {
-        /* Entre CLIENTES el registro lo hace la app —lo que antes hacía el escenario de Make—: el
-           débito en los anticipos y la cuenta de origen, y el crédito en la cuenta destino. */
-        if (mondayHabilitado() && pase.lineas.length === 0) {
-          throw new Error('El pase está escrito, pero la app no tiene sus subelementos para registrarlo.')
-        }
         await registrarCobro(
           { reciboId: pase.id, tipo: 'pase', clienteId: clienteDestino.id, fechaRecibo: hoy(), lineas: pase.lineas },
           pase,
-          (hechos) => {
-            pase.hechos = { ...hechos }
-          },
+          alAvanzar,
         )
       } else {
-        /* Entre PROVEEDORES lo sigue registrando el tablero: hasta que la columna llega a
-           "Registrado" la pantalla sigue tapada. */
-        await esperarRegistro(pase.id, tableroDeRegistroDelPase(rol))
+        await registrarPago(
+          { ordenId: pase.id, tipo: 'pase', proveedorId: clienteDestino.id, fechaPago: hoy(), lineas: pase.lineas },
+          pase,
+          alAvanzar,
+        )
       }
 
-      /* Registro CONFIRMADO por Monday: ESO cierra la operación. La app vuelve a su estado inicial
-         en vez de mostrar un cartel de éxito —el pase ya está en el tablero, y dejar la pantalla del
-         destino con un mensaje sólo invitaría a seguir tocando algo que ya terminó—. */
+      /* Registro CONFIRMADO: ESO cierra la operación. La app vuelve a su estado inicial en vez de
+         mostrar un cartel de éxito —el pase ya está en el tablero, y dejar la pantalla del destino
+         con un mensaje sólo invitaría a seguir tocando algo que ya terminó—. */
       dispatch({ type: 'reset' })
     } catch (e) {
       setRegistrando(false)
@@ -244,7 +246,7 @@ export function PaseDestinoView() {
       /* Salió pero no se confirmó. Se dice con el mensaje de lo que efectivamente pasó —el error del
          tablero o el tiempo vencido—, y no se reinicia la app: el pase está escrito y hay que
          mirarlo en Monday antes de tocar nada. */
-      if (e instanceof ErrorRegistroCobro) {
+      if (e instanceof ErrorRegistroCobro || e instanceof ErrorRegistroPago) {
         setFalloRegistro(e.fallas)
         return
       }

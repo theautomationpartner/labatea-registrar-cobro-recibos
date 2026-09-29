@@ -65,7 +65,6 @@ import {
   cajaDeFormaPago,
   CHEQUE_ORIGEN_LABEL,
   COL,
-  ESTADO_EMISION_INDEX,
   personCol,
   TIPO_COBRO_INDEX,
 } from './columns'
@@ -698,23 +697,17 @@ export async function getProximoNroRecibo(): Promise<string | null> {
 export const leerNroRecibo = (itemId: string): Promise<string> => leerNroDocumento(itemId, COL.cobro.nro)
 
 /**
- * Sube el PDF que generó la app a "🤖 Recibo PDF" y deja el recibo EMITIDO: "🤖Estado de Emision" en
- * "Emitido" y su "🤖Fecha de Emsion".
+ * Sube el PDF que generó la app a "🤖 Recibo PDF" y escribe su "🤖Fecha de Emsion".
  *
- * NO se escribe "A emitir": ese era el disparador de la automatización que generaba el PDF, y el PDF
- * ahora ya lo generó la app. Escribirlo haría que el tablero generara OTRO documento encima.
- *
- * Mismo esquema que `adjuntarPdfPresupuesto` en la app de operaciones de venta.
+ * NO toca "🤖Estado de Emision" (`color_mkwbzd3f`): la emisión la hace la app, así que no hace
+ * falta marcar "Emitido", y "A emitir" haría que el tablero generara OTRO documento encima. Mismo
+ * criterio que `adjuntarPdfOP` en la orden de pago.
  */
 export async function adjuntarPdfRecibo(itemId: string, pdf: File, fechaEmision: string): Promise<void> {
   if (!mondayHabilitado()) return
   await subirArchivoAColumna(itemId, COL.cobro.pdf, pdf)
-  const columnas: Record<string, unknown> = {
-    [COL.cobro.estadoEmision]: { index: ESTADO_EMISION_INDEX.emitido },
-  }
   const fecha = fechaCol(fechaEmision)
-  if (fecha) columnas[COL.cobro.fechaEmision] = fecha
-  await escribirColumnas(itemId, BOARDS.cobros, columnas)
+  if (fecha) await escribirColumnas(itemId, BOARDS.cobros, { [COL.cobro.fechaEmision]: fecha })
 }
 
 /** Un subelemento a crear: con qué alias se lo pide, cómo se llama y qué columnas lleva. */

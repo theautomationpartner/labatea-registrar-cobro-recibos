@@ -1,4 +1,5 @@
 import type { AvanceRegistroCobro } from '@/services/monday/registroCobro'
+import type { AvanceRegistroPago } from '@/services/monday/registroPago'
 
 /** Modelo de dominio. La capa de servicio (Monday) debe devolver exactamente estas formas. */
 
@@ -444,10 +445,16 @@ export interface ComprobanteEmitido<D> {
   /**
    * Hasta dónde llegó "Registrar", para que un reintento retome sin duplicar nada: el ítem ya creado
    * es `reciboId` / `ordenPagoId`; acá, si ya se subió el PDF y si el ítem quedó INCOMPLETO (le faltan
-   * subitems: no se le sube el PDF ni se le pide el registro). En el RECIBO, además, `cobro`: los
-   * subelementos creados y lo que "Registrar Cobro" ya impactó en cada tablero (ver `registrarCobro`).
+   * subitems: no se le sube el PDF ni se hace el registro). Además, los subelementos creados y lo
+   * que el registro ya impactó en cada tablero: `cobro` en el RECIBO (ver `registrarCobro`) y `pago`
+   * en la ORDEN DE PAGO (ver `registrarPago`).
    */
-  registro: { pdfSubido: boolean; incompleto: string[] | null; cobro?: AvanceRegistroCobro }
+  registro: {
+    pdfSubido: boolean
+    incompleto: string[] | null
+    cobro?: AvanceRegistroCobro
+    pago?: AvanceRegistroPago
+  }
   /**
    * Sólo la ORDEN DE PAGO que practicó una retención de Ganancias: la CONSTANCIA que sale junto con
    * ella, con el número de certificado que lleva. Se abre, se envía y se registra con la orden.

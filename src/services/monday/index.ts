@@ -21,6 +21,18 @@ export * from './cobranza'
 export * from './cuentas'
 export * from './recibos'
 export * from './registroCobro'
+/* El registro del pago comparte con el del cobro los tipos del motor (`Hecho`, `ConexionRegistro`):
+   se exportan una sola vez, desde `./registroCobro`. */
+export {
+  ErrorRegistroPago,
+  registrarPago,
+  type AvanceRegistroPago,
+  type ConstanciaARegistrar,
+  type DatosRegistroPago,
+  type LineaOrdenCreada,
+  type OrigenLineaPago,
+  type TipoRegistroPago,
+} from './registroPago'
 export * from './registro'
 export * from './envio'
 export * from './documentos'
