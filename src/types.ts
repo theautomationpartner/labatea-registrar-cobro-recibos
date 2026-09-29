@@ -372,19 +372,15 @@ export interface CobroState {
 /* ===== Emisión del recibo ===== */
 
 /**
- * En qué anda la emisión, desde el punto de vista de la PANTALLA:
+ * En qué anda la emisión, desde el punto de vista de la PANTALLA. Emitir es generar el documento EN
+ * LA APP (ver `EmisionRecibo`):
  *
- *   idle      · todavía no se pidió nada.
- *   creando   · se está escribiendo el recibo y sus subelementos en Monday.
- *   emitiendo · el recibo ya está escrito y se le pidió la emisión al tablero; se espera su PDF.
- *   emitido   · el tablero cerró la emisión con éxito.
- *   error     · falló algo (la escritura, la lectura del estado, o el propio tablero).
- *
- * `creando` y `emitiendo` se ven casi igual en pantalla, pero NO son lo mismo: en la primera la
- * app está escribiendo y en la segunda está esperando a Monday. Separarlas es lo que permite decir
- * con precisión qué pasó cuando algo falla.
+ *   idle      · todavía no se emitió.
+ *   creando   · se está generando el PDF.
+ *   emitido   · el documento está listo.
+ *   error     · la app no pudo generarlo.
  */
-export type FaseEmision = 'idle' | 'creando' | 'emitiendo' | 'emitido' | 'error'
+export type FaseEmision = 'idle' | 'creando' | 'emitido' | 'error'
 
 /** Qué falló en la emisión, cuando falló. */
 export interface ErrorEmision {
@@ -395,36 +391,83 @@ export interface ErrorEmision {
 }
 
 /**
- * Estado de la emisión del recibo. Vive en el estado GLOBAL —y no en el hook que la conduce— por la
- * misma razón que `documentoEnviado`: el recibo se emite UNA vez, y esa marca tiene que sobrevivir
- * a la navegación del stepper. Con la fase adentro del componente, volver un paso y regresar la
- * devolvía a `idle` y la pantalla volvía a ofrecer emitir un recibo que ya estaba en Monday.
+ * Estado de la emisión de un documento (recibo, orden de pago, resumen). Emitir es GENERAR EL PDF EN
+ * LA APP —no escribe nada en Monday: eso lo hace "Registrar"—:
+ *   · idle    · todavía no se emitió.
+ *   · creando · se está generando el PDF.
+ *   · emitido · el PDF está listo: se puede ver, enviar y registrar.
+ *   · error   · la app no pudo generarlo. No quedó nada a medias, así que se puede reintentar.
+ *
+ * Vive en el estado GLOBAL —y no en la vista— por la misma razón que `documentoEnviado`: tiene que
+ * sobrevivir a la navegación del stepper.
  */
 export interface EmisionRecibo {
   fase: FaseEmision
-  /** Etiqueta del estado de emisión que publica el tablero, tal cual: la pantalla no inventa estados. */
+  /** Cómo se nombra el estado en pantalla ("Generando PDF", "Emitido"). */
   estado: string
   error: ErrorEmision | null
 }
 
-/** Los documentos del resumen de cta cte que dejan un PDF en la cuenta. */
+/** Los documentos del resumen de cta cte: el resumen y, si se incluye, el estado de cuenta. */
 export type DocumentoResumen = 'resumen' | 'estado'
 
+/** Un archivo emitido del resumen de cta cte: qué documento es, en qué formato, y el archivo. */
+export interface ArchivoCtaCte {
+  documento: DocumentoResumen
+  formato: 'pdf' | 'xlsx'
+  archivo: File
+}
+
 /**
- * El contador del botón "Ver / Imprimir" del resumen: qué documentos dejó la emisión y cuáles ya se
- * abrieron. El número del botón es la diferencia.
+ * Un RECIBO o una ORDEN DE PAGO emitidos EN LA APP: el PDF que se generó y los datos con los que se
+ * va a registrar en Monday. Viajan juntos porque son la misma foto: lo que se registra tiene que ser
+ * exactamente lo que dice el documento que se le mandó al cliente o al proveedor.
  */
-export interface PdfsResumen {
-  emitidos: DocumentoResumen[]
-  abiertos: DocumentoResumen[]
-  /** Ya se leyó la columna con la emisión TERMINADA: el conteo es el final y no hace falta repetirlo. */
-  listo: boolean
+export interface ComprobanteEmitido<D> {
+  /** El número con el que salió el PDF ("RECIBO-125"). */
+  numero: string
+  /** La fecha con la que salió, en dd/MM/yyyy. */
+  fechaEmision: string
+  pdf: File
+  /** Lo que "Registrar" escribe en Monday: el ítem y sus subitems. */
+  datos: D
+  /**
+   * Huella de lo que había en pantalla al emitir. Si el usuario vuelve y cambia algo, deja de
+   * coincidir y la etapa pide volver a emitir antes de registrar (ver `firmaDe`).
+   */
+  firma: string
+  /**
+   * Hasta dónde llegó "Registrar", para que un reintento retome sin duplicar nada: el ítem ya creado
+   * es `reciboId` / `ordenPagoId`; acá, si ya se subió el PDF y si el ítem quedó INCOMPLETO (le faltan
+   * subitems: no se le sube el PDF ni se le pide el registro).
+   */
+  registro: { pdfSubido: boolean; incompleto: string[] | null }
+  /**
+   * Sólo la ORDEN DE PAGO que practicó una retención de Ganancias: la CONSTANCIA que sale junto con
+   * ella, con el número de certificado que lleva. Se abre, se envía y se registra con la orden.
+   */
+  constancia?: { pdf: File; numero: string } | null
+}
+
+/** El RESUMEN DE CTA CTE emitido en la app: sus archivos (PDF y/o Excel) y lo que registra. */
+export interface ResumenEmitido<D> {
+  /** Cómo se identifica en el envío: el número de la cuenta ("CTACTEC-003"). */
+  numero: string
+  /** La fecha con la que salió, en dd/MM/yyyy. */
+  fechaEmision: string
+  /** En el orden en que se abren: primero los PDF (resumen, estado) y después los Excel. */
+  archivos: ArchivoCtaCte[]
+  datos: D
+  firma: string
 }
 
 /* ===== Envío del recibo ===== */
 
 /** Canal por el que sale el documento. "Ambos" manda por los dos. */
 export type MedioEnvio = 'Email' | 'WhatsApp' | 'Ambos'
+
+/** Canal por el que sale un documento a UN contacto. */
+export type CanalEnvio = 'email' | 'whatsapp'
 
 /** Contacto del cliente, del board de Contactos, al que se le puede enviar el recibo. */
 export interface Contacto {
@@ -433,6 +476,11 @@ export interface Contacto {
   /** ID del ítem en Monday: el que se linkea como destinatario. */
   itemId?: string
   name: string
+  /**
+   * Sólo el nombre de pila ("✋Nombre", sin el apellido): el saludo del WhatsApp. Sin él, se toma la
+   * primera palabra de `name`.
+   */
+  primerNombre?: string
   phone: string
   email: string
   ini: string
@@ -443,7 +491,8 @@ export interface Contacto {
   ok: boolean
 }
 
-export type LogTipo = 'ok' | 'err' | 'info'
+/** 'warn': algo salió a medias (un envío parcial: por un canal sí y por el otro no). */
+export type LogTipo = 'ok' | 'err' | 'info' | 'warn'
 
 /** Registro de lo que pasó con el envío. Se muestra como una entrada por resultado. */
 export interface LogEntry {
@@ -892,6 +941,11 @@ export interface MovimientosDelPeriodo {
    * resumen. `null` = el cliente no tiene cuenta corriente asignada en el tablero de Personas.
    */
   ctaCteId: string | null
+  /**
+   * "🤖ID Cta Cte" de esa cuenta ("CTACTEC-003"): el "Cuenta Nº" de los documentos del resumen. Vacío
+   * sin cuenta o si el tablero no lo trae.
+   */
+  ctaCteNro: string
   /** Movimientos del período, en el orden de la cuenta. */
   movimientos: MovimientoCtaCte[]
   /**

@@ -1,18 +1,17 @@
 /**
- * RESUMEN DE CTA CTE: lectura de los movimientos de la cuenta corriente del cliente y pedido de
- * generación del resumen. Tablero "💵Cta Cte Cliente" (18421858736).
+ * RESUMEN DE CTA CTE: lectura de los movimientos de la cuenta corriente del cliente y registro del
+ * resumen emitido. Tablero "💵Cta Cte Cliente" (18421858736).
  *
  * La cuenta es UN ítem por cliente y cada movimiento es un SUBELEMENTO suyo (18421858762). La app
- * NO escribe ningún movimiento: los lee, los filtra por período y los muestra. Lo único que escribe
- * es sobre el ítem de la cuenta, para pedirle al tablero que genere el archivo:
+ * NO escribe ningún movimiento: los lee, los filtra por período y los muestra.
  *
- *   1. "🤖Formato Archivo Resumen Cta Cte" con el formato elegido (Excel o PDF);
- *   2. "🤖Estado Resumen Cta Cte" en "Generar", que dispara la automatización;
- *   3. se sigue esa misma columna hasta que el tablero la cierre en "Generado" o "Error - Ver Update".
- *
- * Es el mismo esquema que la emisión del recibo: la app escribe una sola vez y después sólo mira.
+ * Los archivos del resumen los genera la APP al emitir (ver `features/documentos`) y el envío lo
+ * despacha el escenario de Make. Lo único que se escribe en Monday es "Registrar Resumen": los
+ * archivos sobre el ítem de la cuenta y la actividad del envío en el timeline del cliente (ver
+ * `registrarResumenCtaCte`).
  */
 import { FACTURAS_PENDIENTES, MERCADERIA_PEND_FACTURAR_MOCK, MOVIMIENTOS_CTA_CTE_MOCK } from '@/data/mock'
+import { contenidoActividadResumen, tituloActividadResumen } from '@/lib/actividadResumen'
 import { round2 } from '@/lib/format'
 import {
   comprobanteDeMovimiento,
@@ -22,6 +21,7 @@ import {
   type ClaseMovimiento,
 } from '@/lib/resumenCtaCte'
 import type {
+  ArchivoCtaCte,
   Cliente,
   FacturaAdeudada,
   FormatoResumen,
@@ -32,30 +32,18 @@ import type {
   TramoVencimiento,
 } from '@/types'
 import {
+  ACTIVIDAD_ENVIO_RESUMEN,
   BOARDS,
   COL,
-  ESTADO_ENVIO_RESUMEN_INDEX,
-  ESTADO_RESUMEN_INDEX,
   ESTADO_VENCIMIENTO_INDEX,
   FACT_PENDIENTE_ESTADO_INDEX,
   FORMATO_RESUMEN_IDS,
   MEDIO_ENVIO_RESUMEN_IDS,
   MOVIMIENTO_CTA_CTE_CLIENTE_INDEX,
 } from './columns'
+import { escribirColumnas, subirArchivoAColumna, type ArchivoSubido } from './documentos'
 import { num, sumaMirror } from './parse'
-import { cabecerasPropias, mondayApi, mondayHabilitado, verificarRespuesta } from './sdk'
-/* La elección del archivo es la MISMA que usa la función de Vercel: el módulo es puro, sin nada de
-   Node, para que en desarrollo lo use el navegador. */
-import {
-  COL_ARCHIVO_RESUMEN,
-  CONSULTA_ARCHIVOS,
-  pdfDelDocumento,
-  pdfsNuevos,
-  sinPdf,
-  type ArchivoCtaCte,
-  type DocumentoArchivo,
-} from '../../../api/_archivoResumen'
-
+import { mondayApi, mondayHabilitado } from './sdk'
 /* ===== Forma de las respuestas =====
    Tipos locales y no los de `parse`: acá los vinculados vienen SIN `column_values` (sólo interesa
    de qué tablero son y cómo se llaman), y declararlos como si los trajeran sería mentirle al
@@ -148,14 +136,14 @@ async function getCtaCteDeCliente(clienteId: string): Promise<string | null> {
  */
 async function getCuenta(
   ctaCteId: string,
-): Promise<{ subelementos: Subelemento[]; mercaderiaPendFacturar: number }> {
+): Promise<{ subelementos: Subelemento[]; mercaderiaPendFacturar: number; nro: string }> {
   const s = COL.ctaCteSub
   const data = await mondayApi<{
     items: { column_values: ValorColumna[]; subitems: Subelemento[] | null }[]
   }>(
     `query ($ids: [ID!]) {
       items(ids: $ids) {
-        column_values(ids: ["${COL.ctaCte.remitosPendFacturar}"]) { id text }
+        column_values(ids: ["${COL.ctaCte.remitosPendFacturar}","${COL.ctaCte.nro}"]) { id text }
         subitems {
           id name
           column_values(ids: ["${s.movimiento}","${s.fechaEmision}","${s.saldoInicial}","${s.suma}","${s.resta}","${s.saldoFinal}","${s.origen}"]) {
@@ -172,7 +160,11 @@ async function getCuenta(
   const cuenta = data.items?.[0]
   return {
     subelementos: cuenta?.subitems ?? [],
-    mercaderiaPendFacturar: importe(cuenta?.column_values?.[0]),
+    /* Por id y no por posición: la API no garantiza el orden de las columnas pedidas. */
+    mercaderiaPendFacturar: importe(
+      cuenta?.column_values?.find((c) => c.id === COL.ctaCte.remitosPendFacturar),
+    ),
+    nro: cuenta?.column_values?.find((c) => c.id === COL.ctaCte.nro)?.text?.trim() ?? '',
   }
 }
 
@@ -335,9 +327,11 @@ export async function getMovimientosCtaCte(
   if (!mondayHabilitado()) return movimientosMock(cliente, periodo)
 
   const ctaCteId = await getCtaCteDeCliente(cliente.id)
-  if (!ctaCteId) return { ctaCteId: null, movimientos: [], sinFecha: 0, mercaderiaPendFacturar: 0 }
+  if (!ctaCteId) {
+    return { ctaCteId: null, ctaCteNro: '', movimientos: [], sinFecha: 0, mercaderiaPendFacturar: 0 }
+  }
 
-  const { subelementos, mercaderiaPendFacturar } = await getCuenta(ctaCteId)
+  const { subelementos, mercaderiaPendFacturar, nro } = await getCuenta(ctaCteId)
   const s = COL.ctaCteSub
 
   let sinFecha = 0
@@ -404,7 +398,7 @@ export async function getMovimientosCtaCte(
     }
   })
 
-  return { ctaCteId, movimientos, sinFecha, mercaderiaPendFacturar }
+  return { ctaCteId, ctaCteNro: nro, movimientos, sinFecha, mercaderiaPendFacturar }
 }
 
 /** Modo local: los movimientos de prueba, pasados por el MISMO filtro y las mismas reglas de nombre. */
@@ -440,7 +434,13 @@ function movimientosMock(
     saldoFinal: round2(m.saldoInicial + m.ventas - m.cobros),
     esVentaPendiente: m.clase === 'venta' && Boolean(m.factura),
   }))
-  return { ctaCteId: 'ctacte-mock', movimientos, sinFecha, mercaderiaPendFacturar: MERCADERIA_PEND_FACTURAR_MOCK }
+  return {
+    ctaCteId: 'ctacte-mock',
+    ctaCteNro: 'CTACTEC-001',
+    movimientos,
+    sinFecha,
+    mercaderiaPendFacturar: MERCADERIA_PEND_FACTURAR_MOCK,
+  }
 }
 
 /* ===== Facturas que debe ===== */
@@ -642,212 +642,221 @@ export const columnasDatosResumen = (
   [COL.ctaCte.incluyeEstadoResumen]: incluyeEstado ? { checked: 'true' } : null,
 })
 
-/** Pone "🤖Estado Resumen Cta Cte" en "Generar". Ese cambio es el que dispara la automatización. */
-export async function pedirGeneracionResumen(ctaCteId: string): Promise<void> {
+/* ===== Registro del resumen emitido ===== */
+
+/** Lo que "Registrar Resumen" necesita: sobre qué cuenta, en qué formato y de qué período. */
+export interface DatosRegistroResumen {
+  ctaCteId: string
+  /**
+   * El cliente en Personas: el dueño del timeline donde se crea la actividad del envío (el
+   * "🤖Personas" de la cuenta, que es el que usaba el escenario).
+   */
+  clienteId: string
+  formato: FormatoResumen
+  /** Las dos puntas del período del resumen, en ISO (yyyy-MM-dd). */
+  periodo: { desde: string; hasta: string }
+  /** En el paso 1 se eligió INCLUIR el estado de la cuenta corriente. */
+  incluyeEstado: boolean
+}
+
+/** A quiénes se les envió el resumen y por dónde: lo que la actividad deja asentado. */
+export interface EnvioDelResumen {
+  medio: MedioEnvio
+  contactos: readonly { itemId: string; nombre: string }[]
+}
+
+/**
+ * Hasta dónde llegó un "Registrar Resumen" que se cortó. Cada paso que ya se hizo NO se repite al
+ * reintentar: volver a crear la actividad del timeline dejaría DOS actividades del mismo envío.
+ */
+export interface AvanceRegistroResumen {
+  /** Los archivos ya subidos a "🤖Resumen Cta Cte", con su link. */
+  archivos: ArchivoSubido[] | null
+  /** La actividad del timeline ya se creó: desde cuándo buscar su ítem en "Actividades". */
+  actividadDesde: string | null
+}
+
+export const AVANCE_REGISTRO_RESUMEN_INICIAL: AvanceRegistroResumen = { archivos: null, actividadDesde: null }
+
+/** Cuántas veces, y cada cuánto, se busca en "Actividades" el ítem de la actividad recién creada. */
+const BUSQUEDA_ACTIVIDAD = { intentos: 8, esperaMs: 2500 }
+/** Margen contra la diferencia de reloj entre la PC y Monday al comparar fechas de creación. */
+const MARGEN_RELOJ_MS = 2 * 60 * 1000
+
+const esperar = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+/** El formato de fecha que pide `create_timeline_item`: ISO 8601 sin milisegundos. */
+const timestampActividad = (d: Date): string => d.toISOString().replace(/\.\d{3}Z$/, 'Z')
+
+/** En qué paso se cortó un "Registrar Resumen": lo que la ventana de la app le cuenta al usuario. */
+export type PasoRegistroResumen = 'archivos' | 'actividad' | 'completar'
+
+/**
+ * El registro no se pudo terminar. NO se deja rastro en Monday —ni update ni cambio de estado—: el
+ * aviso es sólo de la app, con el paso en el que se cortó.
+ */
+export class ErrorRegistroResumen extends Error {
+  constructor(
+    readonly paso: PasoRegistroResumen,
+    readonly causa: unknown,
+  ) {
+    super(`No se pudo registrar el resumen (paso: ${paso}): ${causa instanceof Error ? causa.message : String(causa)}`)
+    this.name = 'ErrorRegistroResumen'
+  }
+}
+
+/** Corre un paso y, si falla, lo marca con su nombre. */
+async function paso<T>(nombre: PasoRegistroResumen, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (e) {
+    throw e instanceof ErrorRegistroResumen ? e : new ErrorRegistroResumen(nombre, e)
+  }
+}
+
+/**
+ * "Registrar Resumen": deja asentado en Monday el resumen que la app emitió Y ENVIÓ. Hace lo que antes
+ * hacía el escenario de Make "Cuando 🤖Estado de Registro Actividad cambia a Registrar", más la carga
+ * de los archivos que antes hacía el de generación:
+ *
+ *   1. en la cuenta, los datos del pedido —formato, período, si incluye el estado—, los contactos y
+ *      el medio del envío, y los archivos emitidos en "🤖Resumen Cta Cte" REEMPLAZANDO los de la
+ *      emisión anterior;
+ *   2. la actividad "Envío de Resumen de cuenta corriente" en el timeline del cliente, con el título
+ *      y el contenido del escenario (ver `lib/actividadResumen`);
+ *   3. el ítem que Monday crea para esa actividad en "Actividades": se lo busca —tarda unos segundos
+ *      en aparecer— y se le asignan los contactos, "Completado" y el modo de carga "Automatico".
+ *
+ * NO toca "🤖Estado Resumen Cta Cte" ni "🤖Estado de Registro Actividad Resumen Cta Cte", ni deja updates: si algo falla, lanza un
+ * `ErrorRegistroResumen` y el aviso lo muestra la app. Tampoco escribe "Generar" ni "Registrar", los
+ * disparadores de los escenarios de Make viejos.
+ *
+ * Reanudable: `avance` dice qué pasos ya se hicieron y `alAvanzar` avisa cada uno que se completa, así
+ * un reintento no vuelve a crear la actividad.
+ */
+export async function registrarResumenCtaCte(
+  datos: DatosRegistroResumen,
+  archivos: readonly ArchivoCtaCte[],
+  envio: EnvioDelResumen,
+  avance: AvanceRegistroResumen = AVANCE_REGISTRO_RESUMEN_INICIAL,
+  alAvanzar: (avance: AvanceRegistroResumen) => void = () => {},
+): Promise<void> {
   if (!mondayHabilitado()) return
+  const { ctaCteId, clienteId, formato, periodo, incluyeEstado } = datos
+  const contactoIds = envio.contactos.map((c) => Number(c.itemId)).filter((n) => Number.isFinite(n) && n > 0)
+  let actual = avance
+  const avanzar = (parcial: Partial<AvanceRegistroResumen>) => {
+    actual = { ...actual, ...parcial }
+    alAvanzar(actual)
+  }
+
+  /* 1 · La cuenta. La columna de archivos se vacía primero: sin esto, los de este resumen se sumarían
+     a los del anterior y la cuenta quedaría con dos resúmenes mezclados. */
+  if (!actual.archivos) {
+    const subidos = await paso('archivos', async () => {
+      await escribirColumnas(ctaCteId, BOARDS.ctaCte, {
+        ...columnasDatosResumen(formato, periodo, incluyeEstado),
+        [COL.ctaCte.archivoResumen]: { clear_all: true },
+        [COL.ctaCte.contactosResumen]: { item_ids: contactoIds },
+        [COL.ctaCte.medioEnvioResumen]: { ids: MEDIO_ENVIO_RESUMEN_IDS[envio.medio] },
+      })
+      // En serie: la columna los muestra en el orden en que llegan.
+      const lista: ArchivoSubido[] = []
+      for (const a of archivos) {
+        const subido = await subirArchivoAColumna(ctaCteId, COL.ctaCte.archivoResumen, a.archivo)
+        lista.push(subido ?? { id: '', nombre: a.archivo.name, url: '' })
+      }
+      return lista
+    })
+    avanzar({ archivos: subidos })
+  }
+
+  /* 2 · La actividad en el timeline del cliente. */
+  if (!actual.actividadDesde) {
+    const ahora = new Date()
+    await paso('actividad', () =>
+      crearActividadTimeline(clienteId, {
+        titulo: tituloActividadResumen({ periodo, contactos: envio.contactos.map((c) => c.nombre) }),
+        contenido: contenidoActividadResumen({
+          archivos: actual.archivos ?? [],
+          remitente: ACTIVIDAD_ENVIO_RESUMEN.remitente,
+        }),
+        timestamp: timestampActividad(ahora),
+      }),
+    )
+    avanzar({ actividadDesde: new Date(ahora.getTime() - MARGEN_RELOJ_MS).toISOString() })
+  }
+
+  /* 3 · Su ítem en "Actividades": los contactos, completada y cargada en automático. */
+  await paso('completar', async () => {
+    const actividadId = await buscarActividadCreada(clienteId, actual.actividadDesde!)
+    if (!actividadId) {
+      throw new Error('El ítem de la actividad todavía no aparece en el tablero de Actividades.')
+    }
+    await escribirColumnas(actividadId, BOARDS.actividades, {
+      [COL.actividad.contactos]: { item_ids: contactoIds },
+      [COL.actividad.estado]: { label: 'Completado' },
+      [COL.actividad.modoCarga]: { label: 'Automatico' },
+    })
+  })
+}
+
+/** `create_timeline_item`: la actividad personalizada del envío, en el timeline de la persona. */
+async function crearActividadTimeline(
+  personaId: string,
+  a: { titulo: string; contenido: string; timestamp: string },
+): Promise<void> {
   await mondayApi(
-    `mutation ($id: ID!, $board: ID!, $cv: JSON!) {
-      change_multiple_column_values(item_id: $id, board_id: $board, column_values: $cv) { id }
+    `mutation ($item: ID!, $tipo: String!, $titulo: String!, $contenido: String, $ts: ISO8601DateTime!) {
+      create_timeline_item(
+        item_id: $item
+        custom_activity_id: $tipo
+        title: $titulo
+        content: $contenido
+        timestamp: $ts
+      ) { id }
     }`,
     {
-      id: ctaCteId,
-      board: BOARDS.ctaCte,
-      cv: JSON.stringify({ [COL.ctaCte.estadoResumen]: { index: ESTADO_RESUMEN_INDEX.generar } }),
+      item: personaId,
+      tipo: ACTIVIDAD_ENVIO_RESUMEN.customActivityId,
+      titulo: a.titulo,
+      contenido: a.contenido,
+      ts: a.timestamp,
     },
   )
 }
 
 /**
- * En qué anda la generación, según el tablero, reducida a lo que le importa a quien espera. Una
- * columna vacía o todavía en "Generar" cuenta como en curso: la automatización recién arranca.
+ * El ítem que Monday crea en "Actividades" para la actividad recién creada: el ÚLTIMO de la persona
+ * con el tipo "Envío de Resumen", siempre que haya nacido DESPUÉS de crear la actividad —uno anterior
+ * es la actividad de otro envío, y completarlo sería pisar la de otro resumen—.
  *
- * En modo local no hay tablero que genere nada, así que se responde "Generado" de una.
+ * Monday lo crea unos segundos después de la actividad (el escenario esperaba 10 s), así que se lo
+ * busca varias veces antes de darse por vencido. `null` = no apareció.
  */
-export async function getEstadoResumenCtaCte(
-  ctaCteId: string,
-): Promise<{ fase: 'en-curso' | 'emitido' | 'error'; label: string }> {
-  if (!mondayHabilitado()) return { fase: 'emitido', label: 'Generado' }
-  const data = await mondayApi<{ items: { column_values: ValorColumna[] }[] }>(
-    `query ($ids: [ID!]) {
-      items(ids: $ids) {
-        column_values(ids: ["${COL.ctaCte.estadoResumen}"]) { id text ... on StatusValue { index } }
-      }
-    }`,
-    { ids: [ctaCteId] },
-  )
-  const cv = data.items?.[0]?.column_values?.[0]
-  const label = cv?.text?.trim() ?? ''
-  if (cv?.index === ESTADO_RESUMEN_INDEX.generado) return { fase: 'emitido', label }
-  if (cv?.index === ESTADO_RESUMEN_INDEX.error) return { fase: 'error', label }
-  return { fase: 'en-curso', label }
-}
-
-/* ===== PDF del resumen emitido ===== */
-
-/** Los archivos de "🤖Resumen Cta Cte" de la cuenta. Sin conexión a Monday (mock), ninguno. */
-export async function archivosDelResumen(ctaCteId: string): Promise<ArchivoCtaCte[]> {
-  if (!mondayHabilitado()) return []
-  const data = await mondayApi<{ items: { assets: ArchivoCtaCte[] }[] }>(CONSULTA_ARCHIVOS, {
-    ids: [ctaCteId],
-    col: [COL_ARCHIVO_RESUMEN],
-  })
-  return data.items?.[0]?.assets ?? []
-}
-
-/**
- * La FOTO de la columna al pedir la emisión, por cuenta: los ids de los archivos que ya estaban. Con
- * ella se sabe después qué PDF generó ESTA emisión (ver `pdfsNuevos`).
- *
- * Vive en el módulo y no en el estado de la app porque no es un dato de la pantalla: es la referencia
- * contra la que se compara, y tiene que sobrevivir a ir y volver entre etapas. Una emisión nueva la
- * reemplaza.
- */
-const archivosAlEmitir = new Map<string, ReadonlySet<string>>()
-
-/**
- * Toma la foto. Si la columna no se puede leer, la foto se descarta: no hay con qué comparar, y
- * después cuenta cualquier PDF que esté. No corta la emisión: el resumen se puede generar igual.
- */
-export async function recordarArchivosAlEmitir(ctaCteId: string): Promise<void> {
-  try {
-    const archivos = await archivosDelResumen(ctaCteId)
-    archivosAlEmitir.set(ctaCteId, new Set(archivos.map((a) => a.id)))
-  } catch {
-    archivosAlEmitir.delete(ctaCteId)
-  }
-}
-
-/** Qué documentos de esta emisión, ya terminada, dejaron su PDF en la columna. */
-export async function pdfsDeLaEmision(
-  ctaCteId: string,
-  documentos: readonly DocumentoArchivo[],
-): Promise<DocumentoArchivo[]> {
-  const archivos = await archivosDelResumen(ctaCteId)
-  return pdfsNuevos(archivos, archivosAlEmitir.get(ctaCteId) ?? null, documentos)
-}
-
-/**
- * El PDF de un documento de la última emisión, tal cual quedó en "🤖Resumen Cta Cte" de la cuenta,
- * para abrirlo en una pestaña e imprimirlo desde ahí.
- *
- * En producción lo baja `/api/resumen-archivo`: el enlace de Monday lo serviría como descarga (ver
- * el encabezado de esa función). En desarrollo no hay funciones serverless: el archivo se elige acá,
- * con el token de desarrollo, y se baja por el proxy de Vite (`/monday-files`).
- */
-export async function pdfDeResumen(ctaCteId: string, documento: DocumentoArchivo): Promise<Blob> {
-  if (import.meta.env.DEV) return pdfDeResumenEnLocal(ctaCteId, documento)
-  const res = await fetch('/api/resumen-archivo', {
-    method: 'POST',
-    headers: await cabecerasPropias({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ ctaCteId, documento }),
-  })
-  /* Como en la emisión: los rechazos de seguridad levantan su ventana, y el resto de los errores son
-     de este PDF y se cuentan al lado del botón. */
-  if (res.status === 401 || res.status === 403 || res.status === 429) {
-    await verificarRespuesta(res, 'PDF del resumen')
-  }
-  if (!res.ok) {
-    const cuerpo = (await res.json().catch(() => ({}))) as { error?: string }
-    throw new Error(
-      res.status === 404 && cuerpo.error ? cuerpo.error : 'No pudimos abrir el PDF. Probá de nuevo en unos minutos.',
-    )
-  }
-  return res.blob()
-}
-
-async function pdfDeResumenEnLocal(ctaCteId: string, documento: DocumentoArchivo): Promise<Blob> {
-  if (!mondayHabilitado()) throw new Error('Sin conexión a Monday no hay un PDF para mostrar.')
-  const archivo = pdfDelDocumento(await archivosDelResumen(ctaCteId), documento)
-  if (!archivo) throw new Error(sinPdf(documento))
-  const url = new URL(archivo.public_url)
-  if (url.hostname !== 'files-monday-com.s3.amazonaws.com') {
-    throw new Error(`El PDF está en ${url.hostname}, que el proxy de desarrollo no cubre.`)
-  }
-  const res = await fetch(`/monday-files${url.pathname}${url.search}`)
-  if (!res.ok) throw new Error(`No pudimos traer el PDF (HTTP ${res.status}).`)
-  return res.blob()
-}
-
-/* ===== Envío del resumen ===== */
-
-/**
- * Despacho del resumen ya generado. Como en el recibo, la app NO manda el mail ni el WhatsApp: deja
- * escrito en la cuenta a quiénes y por dónde, y una automatización de Monday lo despacha.
- *
- *   1. "🤖Medio de Envio" (Email siempre; Whatsapp también si se tildó) y "🤖Contactos" con los
- *      destinatarios elegidos, en UNA sola mutación: son el mismo dato para la automatización, y
- *      escribirlos por separado abría un instante con el medio puesto y sin destinatarios;
- *   2. "🤖Estado de Envio Resumen Cta Cte" en "Enviar", que dispara la automatización;
- *   3. se sigue esa columna hasta que el tablero la cierre en "Enviado" o "Error de Envio".
- *
- * El estado se pone en "Enviar" DESPUÉS de los destinatarios, y es lo que evita además leer como
- * éxito un "Enviado" que quedó de un envío anterior sobre la misma cuenta.
- */
-export async function enviarResumenCtaCte({
-  itemId,
-  medio,
-  contactoIds,
-  onProgreso,
-  intentos = 30,
-  intervalo = 2000,
-}: {
-  itemId: string
-  medio: MedioEnvio
-  contactoIds: readonly string[]
-  onProgreso: (estado: string) => void
-  intentos?: number
-  intervalo?: number
-}): Promise<'ok' | 'error-envio'> {
-  const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms))
-
-  /* En modo local no hay automatización: se simula el ciclo, como el resto del prototipo. */
-  if (!mondayHabilitado()) {
-    onProgreso('Enviando')
-    await esperar(1200)
-    onProgreso('Enviado')
-    return 'ok'
-  }
-
-  const cv: Record<string, unknown> = {
-    [COL.ctaCte.medioEnvioResumen]: { ids: MEDIO_ENVIO_RESUMEN_IDS[medio] },
-  }
-  /* Sólo ids numéricos válidos: la relación los pide como números, y uno que no lo sea haría rebotar
-     la mutación entera. Sin destinatarios se OMITE la columna, igual que el resto de la capa. */
-  const ids = contactoIds.map(Number).filter((n) => Number.isFinite(n) && n > 0)
-  if (ids.length > 0) cv[COL.ctaCte.contactosResumen] = { item_ids: ids }
-
-  const cambiar = (valores: Record<string, unknown>) =>
-    mondayApi(
-      `mutation ($id: ID!, $board: ID!, $cv: JSON!) {
-        change_multiple_column_values(item_id: $id, board_id: $board, column_values: $cv) { id }
-      }`,
-      { id: itemId, board: BOARDS.ctaCte, cv: JSON.stringify(valores) },
-    )
-
-  await cambiar(cv)
-  await cambiar({ [COL.ctaCte.estadoEnvioResumen]: { index: ESTADO_ENVIO_RESUMEN_INDEX.enviar } })
-
-  /* Si se agotan los intentos sin un estado final, NO se da por enviado: lo único cierto es que el
-     tablero no lo confirmó. */
-  let ultimaEtiqueta = ''
-  for (let i = 0; i < intentos; i++) {
-    await esperar(intervalo)
-    const data = await mondayApi<{ items: { column_values: ValorColumna[] }[] }>(
-      `query ($ids: [ID!]) {
-        items(ids: $ids) {
-          column_values(ids: ["${COL.ctaCte.estadoEnvioResumen}"]) { id text ... on StatusValue { index } }
+async function buscarActividadCreada(personaId: string, desdeIso: string): Promise<string | null> {
+  const desde = Date.parse(desdeIso)
+  for (let intento = 0; intento < BUSQUEDA_ACTIVIDAD.intentos; intento++) {
+    await esperar(BUSQUEDA_ACTIVIDAD.esperaMs)
+    const data = await mondayApi<{ boards: { items_page: { items: { id: string; created_at: string }[] } }[] }>(
+      `query {
+        boards(ids: [${BOARDS.actividades}]) {
+          items_page(
+            limit: 1
+            query_params: {
+              rules: [
+                {column_id: "${COL.actividad.persona}", compare_value: [${Number(personaId)}], operator: any_of}
+                {column_id: "${COL.actividad.tipo}", compare_value: [${ACTIVIDAD_ENVIO_RESUMEN.tipoIndex}], operator: any_of}
+              ]
+              operator: and
+              order_by: [{column_id: "__creation_log__", direction: desc}]
+            }
+          ) { items { id created_at } }
         }
       }`,
-      { ids: [itemId] },
     )
-    const estado = data.items?.[0]?.column_values?.[0]
-    const etiqueta = estado?.text?.trim() ?? ''
-    if (etiqueta && etiqueta !== ultimaEtiqueta) {
-      ultimaEtiqueta = etiqueta
-      onProgreso(etiqueta)
-    }
-    if (estado?.index === ESTADO_ENVIO_RESUMEN_INDEX.enviado) return 'ok'
-    if (estado?.index === ESTADO_ENVIO_RESUMEN_INDEX.error) return 'error-envio'
+    const item = data.boards?.[0]?.items_page?.items?.[0]
+    if (item && (!Number.isFinite(desde) || Date.parse(item.created_at) >= desde)) return item.id
   }
-  return 'error-envio'
+  return null
 }

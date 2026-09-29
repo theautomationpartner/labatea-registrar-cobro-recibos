@@ -4,8 +4,8 @@
  * los movimientos, la limpieza del nombre de un movimiento, la caché de la lista y qué invalida un
  * resumen ya emitido—. Mismo criterio que `rechazos.test.tsx`: no reemplaza probar la app en Monday.
  */
-import { pdfDelDocumento, pdfsNuevos, type ArchivoCtaCte } from '../api/_archivoResumen'
-import { pendientesDeAbrir } from '@/features/resumen/VerPdfResumen'
+import { pendientesDeAbrir } from '@/features/shared/VerImprimirPdf'
+import { nombreEstadoCtaCte, nombreResumenCtaCte } from '@/features/documentos/generarDocumentos'
 import { renderToString } from 'react-dom/server'
 import { createElement, type ComponentType } from 'react'
 import { DispatchContext, StateContext } from '@/state/context'
@@ -26,7 +26,6 @@ import { ComprobantesPendientes } from '@/features/resumen/ComprobantesPendiente
 import { DetalleMovimientos } from '@/features/resumen/DetalleMovimientos'
 import { ResumenCtaCteView } from '@/features/resumen/ResumenCtaCteView'
 import { comprobanteEnviable } from '@/features/shared/comprobantesEnviables'
-import { RESUMEN_CTA_CTE_EMISIBLE } from '@/features/shared/emisiones'
 import { CLIENTES } from '@/data/mock'
 import { etiquetaDePaso, etiquetasDe, numeroDePaso, pasoAnterior, siguientePaso } from '@/lib/pasos'
 import { operacionesPermitidas } from '@/lib/permisos'
@@ -57,13 +56,27 @@ import {
 import { sumaMirror } from '@/services/monday/parse'
 import {
   COL,
-  ESTADO_ENVIO_RESUMEN_INDEX,
   ESTADO_RESUMEN_INDEX,
   FACT_PENDIENTE_ESTADO_INDEX,
   FORMATO_RESUMEN_IDS,
-  MEDIO_ENVIO_RESUMEN_IDS,
 } from '@/services/monday/columns'
-import type { CriterioResumen, MovimientosDelPeriodo } from '@/types'
+import type { DatosRegistroResumen } from '@/services/monday/resumenCtaCte'
+import type { ArchivoCtaCte, CriterioResumen, MovimientosDelPeriodo, ResumenEmitido } from '@/types'
+
+/** Un archivo emitido de mentira: lo que importa es su nombre y su formato. */
+const archivoEmitido = (documento: ArchivoCtaCte['documento'], formato: ArchivoCtaCte['formato']): ArchivoCtaCte => ({
+  documento,
+  formato,
+  archivo: new File(['x'], `${documento}.${formato}`, { type: formato === 'pdf' ? 'application/pdf' : 'application/octet-stream' }),
+})
+/** El resumen emitido en la app: resumen y estado en PDF. */
+const resumenEmitido = (ctaCteId: string): ResumenEmitido<DatosRegistroResumen> => ({
+  numero: 'CTACTEC-001',
+  fechaEmision: '14/09/2026',
+  archivos: [archivoEmitido('resumen', 'pdf'), archivoEmitido('estado', 'pdf')],
+  datos: { ctaCteId, clienteId: '1', formato: 'PDF', periodo: { desde: '2026-07-16', hasta: '2026-09-14' }, incluyeEstado: true },
+  firma: 'firma-de-prueba',
+})
 
 const aplicar = (estado: AppState, acciones: Action[]): AppState =>
   acciones.reduce((acc, a) => reducer(acc, a), estado)
@@ -385,7 +398,7 @@ const conLista = aplicar(conCliente, [{ type: 'setMovimientosCtaCte', resultado:
 chequear('caché', 'la lista vigente se guarda con su clave', conLista.movimientosCtaCteClave === clave && conLista.ctaCteId === 'ctacte-mock')
 chequear('caché', 'la clave son las dos puntas del período, no el criterio', clave === `${cliente.id}·${periodo60.desde}·${periodo60.hasta}`)
 
-const tardia: MovimientosDelPeriodo = { ctaCteId: 'x', movimientos: [], sinFecha: 0, mercaderiaPendFacturar: 0 }
+const tardia: MovimientosDelPeriodo = { ctaCteId: 'x', ctaCteNro: '', movimientos: [], sinFecha: 0, mercaderiaPendFacturar: 0 }
 const conTardia = aplicar(conLista, [
   { type: 'setMovimientosCtaCte', resultado: tardia, clave: claveMovimientosCtaCte(cliente.id, periodoDeRango('ultimos15')) },
 ])
@@ -393,25 +406,43 @@ chequear('caché', 'una respuesta de OTRO período que llega tarde se descarta',
 
 const emitido = aplicar(conLista, [
   { type: 'setResumenFormato', formato: 'PDF' },
-  { type: 'setResumenCtaCteId', id: 'ctacte-mock' },
   { type: 'setEmisionResumen', emision: { fase: 'emitido' } },
+  { type: 'setResumenDoc', doc: resumenEmitido('ctacte-mock') },
   { type: 'setDocumentoEnviado', value: true },
 ])
-chequear('emisión', 'con el resumen emitido la operación ya no está en curso', !hayOperacionEnCurso(emitido))
+/* Emitir ya no cierra nada: los archivos están en la app y todavía no se registraron en la cuenta. */
+chequear('emisión', 'emitido pero sin registrar, la operación sigue en curso', hayOperacionEnCurso(emitido))
+chequear('emisión', 'registrado sobre la cuenta, ya no', !hayOperacionEnCurso(aplicar(emitido, [{ type: 'setResumenCtaCteId', id: 'ctacte-mock' }])))
 chequear('emisión', 'sin emitir, sí', hayOperacionEnCurso(conLista))
-chequear('emisión', 'emitido, el formato no se cambia', aplicar(emitido, [{ type: 'setResumenFormato', formato: 'Excel' }]).resumenFormato === 'PDF')
+{
+  /* Como en la app de ventas: emitido, el formato se puede cambiar, y eso deja viejos los archivos —se
+     descartan con su envío y se vuelve a emitir—. */
+  const otroFormato = aplicar(emitido, [{ type: 'setResumenFormato', formato: 'Excel' }])
+  chequear(
+    'emisión',
+    'emitido, cambiar el formato descarta la emisión y su envío',
+    otroFormato.resumenFormato === 'Excel' && otroFormato.resumenDoc === null && otroFormato.emisionResumen.fase === 'idle' && !otroFormato.documentoEnviado,
+  )
+  chequear('emisión', 'generándose, el formato no se cambia', aplicar(emitido, [{ type: 'setEmisionResumen', emision: { fase: 'creando' } }, { type: 'setResumenFormato', formato: 'Excel' }]).resumenFormato === 'PDF')
+}
 
 const otroPeriodo = aplicar(emitido, [{ type: 'setResumenRango', rango: 'ultimos30' }])
 chequear(
   'emisión',
   'cambiar la ventana deja el resumen sin emitir y el envío por hacer',
-  otroPeriodo.emisionResumen.fase === 'idle' && otroPeriodo.resumenCtaCteId === null && !otroPeriodo.documentoEnviado,
+  otroPeriodo.emisionResumen.fase === 'idle' && otroPeriodo.resumenDoc === null && !otroPeriodo.documentoEnviado,
 )
 const otrasFechas = aplicar(emitido, [{ type: 'setResumenDesde', fecha: '2026-01-01' }])
-chequear('emisión', 'y cambiar una fecha, también', otrasFechas.emisionResumen.fase === 'idle' && otrasFechas.resumenCtaCteId === null)
+chequear('emisión', 'y cambiar una fecha, también', otrasFechas.emisionResumen.fase === 'idle' && otrasFechas.resumenDoc === null)
+const descartado = aplicar(emitido, [{ type: 'descartarEmision', documento: 'resumen' }])
+chequear(
+  'emisión',
+  'descartar la emisión (los datos cambiaron) vuelve a emitir y a enviar de cero',
+  descartado.resumenDoc === null && descartado.emisionResumen.fase === 'idle' && !descartado.documentoEnviado,
+)
 chequear('emisión', 'el período se puede volver a dejar sin elegir', aplicar(conLista, [{ type: 'setResumenRango', rango: null }]).resumenRango === null)
 
-const generando = aplicar(conLista, [{ type: 'setEmisionResumen', emision: { fase: 'emitiendo' } }])
+const generando = aplicar(conLista, [{ type: 'setEmisionResumen', emision: { fase: 'creando' } }])
 chequear('emisión', 'generándose, no se cambia el período', aplicar(generando, [{ type: 'setResumenRango', rango: 'ultimos15' }]).resumenRango === 'ultimos60')
 chequear('emisión', 'ni las fechas', aplicar(generando, [{ type: 'setResumenHasta', fecha: '2026-01-01' }]).resumenHasta === '')
 chequear('emisión', 'ni se cambia de cliente', aplicar(generando, [{ type: 'setCliente', cliente: CLIENTES[1] }]).cliente?.id === cliente.id)
@@ -428,12 +459,19 @@ chequear(
 const envio = comprobanteEnviable('resumenCtaCte')
 chequear('envío', 'sólo contactos con "Resumen Cta Cte"', envio.etiquetaContacto === 'Resumen Cta Cte' && envio.exigeContactoQueAcepta === true)
 chequear('envío', 'Email siempre y WhatsApp opcional, como en VENTAS', envio.modoEnvio === 'emailConWhatsapp')
-chequear('envío', 'no se envía hasta que el tablero termina de generarlo', !envio.emitido(generando) && envio.emitido(emitido))
-chequear('emisión', 'un error del tablero se puede reintentar', RESUMEN_CTA_CTE_EMISIBLE.reemitibleTrasError === true)
+chequear('envío', 'no se envía hasta que la app termina de generarlo', !envio.emitido(generando) && envio.emitido(emitido))
+{
+  const doc = envio.documento(emitido)
+  chequear(
+    'envío',
+    'por el escenario de Make, como RESUMEN CTA CTE, con TODOS sus archivos',
+    doc?.tipo === 'RESUMEN CTA CTE' && doc.numero === 'CTACTEC-001' && doc.archivos.map((a) => a.name).join() === 'resumen.pdf,estado.pdf',
+  )
+}
 chequear(
   'tablero',
   'ids de formato (Ambos = PDF y Excel) y estado',
-  JSON.stringify(FORMATO_RESUMEN_IDS) === '{"PDF":[1],"Excel":[2],"Ambos":[1,2]}' && ESTADO_RESUMEN_INDEX.generar === 3,
+  JSON.stringify(FORMATO_RESUMEN_IDS) === '{"PDF":[1],"Excel":[2],"Ambos":[1,2]}' && ESTADO_RESUMEN_INDEX.generado === 1,
 )
 
 /* ===== Paginado y totales (los usan las tablas de cobranza y del estado de cuenta) ===== */
@@ -521,7 +559,7 @@ chequear('paso 3', 'ofrece Excel, PDF y Ambos', paso2.includes('>Excel<') && pas
 chequear('paso 3', 'muestra el comprobante a generar y el envío con WhatsApp opcional', paso2.includes('Comprobante a generar') && paso2.includes('envío por WhatsApp'))
 chequear('paso 3', 'la card del comprobante nace cerrada', paso2.includes('aria-expanded="false"'))
 chequear('paso 3', 'la ficha nombra el período elegido', paso2.includes(rotuloCriterio(criterioResumen(conLista))))
-chequear('paso 3', 'la bajada no nombra a Monday', paso2.includes('Emití el resumen de cuenta corriente y enviáselo al cliente.'))
+chequear('paso 3', 'la bajada no nombra a Monday', paso2.includes('Emití el resumen de cuenta corriente, enviáselo al cliente y registralo.'))
 chequear('paso 3', 'la ficha ya no muestra la fecha de emisión', !paso2.includes('Fecha de Emisión'))
 chequear(
   'paso 3',
@@ -532,7 +570,7 @@ chequear(
 )
 /* "Ver / Imprimir (0)" está desde antes de emitir, deshabilitado: todavía no hay ningún PDF. */
 {
-  const btnVer = /<button[^>]*res-pdf-btn[^>]*>/.exec(paso2)?.[0] ?? ''
+  const btnVer = /<button[^>]*ver-pdf-btn[^>]*>/.exec(paso2)?.[0] ?? ''
   chequear('ver / imprimir', 'el botón está antes de emitir, debajo del de emitir', btnVer !== '' && paso2.indexOf('Emitir Resumen Cta Cte') < paso2.indexOf('Ver / Imprimir'))
   chequear('ver / imprimir', 'y nace deshabilitado, en (0)', btnVer.includes(' disabled=""') && paso2.includes('Ver / Imprimir (0)'))
   const conError = pintar(
@@ -541,28 +579,31 @@ chequear(
     ]),
     ResumenCtaCteView,
   )
-  const iEmitir = conError.indexOf('Reintentar la emisión')
+  const iEmitir = conError.indexOf('Error de emisión')
   const iVer = conError.indexOf('Ver / Imprimir')
   const iError = conError.indexOf('MENSAJE-DE-PRUEBA')
   chequear('ver / imprimir', 'el error de la emisión va DEBAJO de "Ver / Imprimir", no entre los dos botones', iEmitir > -1 && iEmitir < iVer && iVer < iError)
   /* El número es lo que queda por abrir: (2) → abre el resumen → (1) → abre el estado → (0). */
-  const ambos = ['resumen', 'estado'] as const
+  const ambos = [archivoEmitido('resumen', 'pdf').archivo, archivoEmitido('estado', 'pdf').archivo]
+  const nombres = (fs: File[]) => fs.map((f) => f.name).join()
   chequear(
     'ver / imprimir',
     'cuenta hacia abajo, primero el resumen y después el estado',
-    pendientesDeAbrir(ambos, []).join() === 'resumen,estado' &&
-      pendientesDeAbrir(ambos, ['resumen']).join() === 'estado' &&
-      pendientesDeAbrir(ambos, ['resumen', 'estado']).length === 0,
+    nombres(pendientesDeAbrir(ambos, 0)) === 'resumen.pdf,estado.pdf' &&
+      nombres(pendientesDeAbrir(ambos, 1)) === 'estado.pdf' &&
+      pendientesDeAbrir(ambos, 2).length === 0,
   )
-  chequear('ver / imprimir', 'si sólo salió el resumen, arranca en (1)', pendientesDeAbrir(['resumen'], []).length === 1)
+  chequear('ver / imprimir', 'si sólo salió el resumen, arranca en (1)', pendientesDeAbrir([ambos[0]], 0).length === 1)
+  chequear('ver / imprimir', 'sin emitir no hay nada que abrir', pendientesDeAbrir(null, 0).length === 0)
 }
 
 /* El contador vive en el estado de la app: ir a otra etapa y volver no lo pierde. */
 {
   const emitido = aplicar(conLista, [
+    { type: 'setResumenFormato', formato: 'PDF' },
     { type: 'setEmisionResumen', emision: { fase: 'emitido', estado: 'Generado' } },
-    { type: 'setResumenPdfs', pdfs: { emitidos: ['resumen', 'estado'], listo: true } },
-    { type: 'setResumenPdfs', pdfs: { abiertos: ['resumen'] } },
+    { type: 'setResumenDoc', doc: resumenEmitido('ctacte-mock') },
+    { type: 'setPdfsAbiertos', value: 1 },
   ])
   const idaYVuelta = aplicar(emitido, [
     { type: 'goto', paso: 'configResumen' },
@@ -571,13 +612,39 @@ chequear(
   chequear(
     'ver / imprimir',
     'ir a la etapa anterior y volver mantiene el contador',
-    pendientesDeAbrir(idaYVuelta.resumenPdfs.emitidos, idaYVuelta.resumenPdfs.abiertos).join() === 'estado' &&
-      pintar(idaYVuelta, ResumenCtaCteView).includes('Ver / Imprimir (1)'),
+    idaYVuelta.pdfsAbiertos === 1 && pintar(idaYVuelta, ResumenCtaCteView).includes('Ver / Imprimir (1)'),
   )
   const reintento = aplicar(emitido, [{ type: 'setEmisionResumen', emision: { fase: 'creando' } }])
-  chequear('ver / imprimir', 'una emisión nueva lo vuelve a cero', reintento.resumenPdfs.emitidos.length === 0 && reintento.resumenPdfs.abiertos.length === 0)
-  chequear('ver / imprimir', 'y cerrar la operación también', aplicar(emitido, [{ type: 'reset' }]).resumenPdfs.emitidos.length === 0)
-  chequear('ver / imprimir', 'y cambiar de cliente también', aplicar(emitido, [{ type: 'setCliente', cliente: CLIENTES[1] }]).resumenPdfs.emitidos.length === 0)
+  chequear('ver / imprimir', 'una emisión nueva lo vuelve a cero', reintento.pdfsAbiertos === 0)
+  chequear('ver / imprimir', 'y cerrar la operación también', aplicar(emitido, [{ type: 'reset' }]).resumenDoc === null)
+  chequear('ver / imprimir', 'y cambiar de cliente también', aplicar(emitido, [{ type: 'setCliente', cliente: CLIENTES[1] }]).resumenDoc === null)
+  chequear('registrar', 'el botón de cierre registra el resumen', pintar(emitido, ResumenCtaCteView).includes('Registrar Resumen'))
+}
+
+/* "Descargar Excel (n)": un solo botón para los Excel, con la misma cuenta que "Ver / Imprimir". */
+{
+  const conExcels = {
+    ...resumenEmitido('ctacte-mock'),
+    archivos: [
+      archivoEmitido('resumen', 'pdf'),
+      archivoEmitido('estado', 'pdf'),
+      archivoEmitido('resumen', 'xlsx'),
+      archivoEmitido('estado', 'xlsx'),
+    ],
+  }
+  const ambos = aplicar(conLista, [
+    { type: 'setResumenFormato', formato: 'Ambos' },
+    { type: 'setEmisionResumen', emision: { fase: 'emitido', estado: 'Generado' } },
+    { type: 'setResumenDoc', doc: conExcels },
+  ])
+  const html = pintar(ambos, ResumenCtaCteView)
+  chequear('descargar excel', 'con Ambos están los dos botones, con su cuenta', html.includes('Ver / Imprimir (2)') && html.includes('Descargar Excel (2)'))
+  chequear('descargar excel', 'ya no hay un botón por documento', !html.includes('Descargar Resumen de Cta Cte') && !html.includes('Descargar Estado de Cta Cte'))
+  const unoBajado = aplicar(ambos, [{ type: 'setExcelsDescargados', value: 1 }])
+  chequear('descargar excel', 'cada descarga resta uno', pintar(unoBajado, ResumenCtaCteView).includes('Descargar Excel (1)'))
+  chequear('descargar excel', 'una emisión nueva lo vuelve a cero', aplicar(unoBajado, [{ type: 'setEmisionResumen', emision: { fase: 'creando' } }]).excelsDescargados === 0)
+  const soloPdf = aplicar(ambos, [{ type: 'setResumenDoc', doc: resumenEmitido('ctacte-mock') }])
+  chequear('descargar excel', 'con formato PDF no aparece', !pintar({ ...soloPdf, resumenFormato: 'PDF' }, ResumenCtaCteView).includes('Descargar Excel'))
 }
 
 /* Sin la lista leída todavía, la card no inventa números: los muestra en "--". */
@@ -700,21 +767,16 @@ chequear(
     ['Total a vencer (al día)', 'Total vencido', 'Deuda total pendiente'].every((c) => cuerpoEstado.includes(c)),
 )
 
-/* ===== Columnas del envío ===== */
+/* ===== Columnas del registro ===== */
 
-chequear('envío', 'medio: Email siempre, Whatsapp sumado', JSON.stringify(MEDIO_ENVIO_RESUMEN_IDS) === '{"Email":[1],"WhatsApp":[2],"Ambos":[1,2]}')
 chequear(
-  'envío',
-  'columnas de medio, contactos y estado',
-  COL.ctaCte.medioEnvioResumen === 'dropdown_mm76hb6t' &&
-    COL.ctaCte.contactosResumen === 'board_relation_mm767f4p' &&
-    COL.ctaCte.estadoEnvioResumen === 'color_mm76ca15',
+  'registro',
+  'formato, estado y archivos sobre la cuenta',
+  COL.ctaCte.formatoResumen === 'dropdown_mm76p5gd' && COL.ctaCte.estadoResumen === 'color_mm76s2eq' && COL.ctaCte.archivoResumen === 'file_mm76gr2x',
 )
-chequear('envío', 'la app pide "Enviar" y espera Enviado / Error de Envio', ESTADO_ENVIO_RESUMEN_INDEX.enviar === 3 && ESTADO_ENVIO_RESUMEN_INDEX.enviado === 1 && ESTADO_ENVIO_RESUMEN_INDEX.error === 2)
-chequear('emisión', 'formato y "Generar" sobre la cuenta', COL.ctaCte.formatoResumen === 'dropdown_mm76p5gd' && COL.ctaCte.estadoResumen === 'color_mm76s2eq')
 chequear(
   'emisión',
-  'EMITIR escribe formato + Fecha Desde + Fecha Hasta + Incluye Estado (INCLUIR = tildado) en una sola mutación',
+  'REGISTRAR escribe formato + Fecha Desde + Fecha Hasta + Incluye Estado (INCLUIR = tildado) en una sola mutación',
   JSON.stringify(columnasDatosResumen('Ambos', periodoDeRango('ultimos30', HOY), true)) ===
     '{"dropdown_mm76p5gd":{"ids":[1,2]},"date_mm7643hk":{"date":"2026-08-15"},"date_mm76jbba":{"date":"2026-09-14"},"boolean_mm767m9h":{"checked":"true"}}',
 )
@@ -736,54 +798,15 @@ chequear(
   ) === '{"dropdown_mm76p5gd":{"ids":[1]},"date_mm7643hk":{"date":"2026-01-01"},"date_mm76jbba":{"date":"2026-03-01"},"boolean_mm767m9h":null}',
 )
 
-/* ── El PDF para imprimir ─────────────────────────────────────────────────────────────────────── */
+/* ── Los archivos que genera la app ─────────────────────────────────────────────────────────── */
 
-const archivo = (name: string, created_at: string): ArchivoCtaCte => ({
-  id: `id-${name}`,
-  name,
-  file_extension: name.slice(name.lastIndexOf('.')),
-  public_url: `https://files/${name}`,
-  created_at,
-})
-/* Los nombres, tal cual los dejó el escenario en una cuenta real. */
-const COLUMNA = [
-  archivo('Resumen_Cta_Cte-Periodo-25_07_2026-23-09-2026.pdf', '2026-09-23T12:00:34Z'),
-  archivo('Estado_Cta_Cte-Fecha-23-09-2026.xlsx', '2026-09-23T12:00:57Z'),
-  archivo('Resumen Cta Cte-Periodo-25-07-2026-23-09-2026.xlsx', '2026-09-23T12:01:15Z'),
-]
-chequear('pdf', 'el resumen: su PDF, no su Excel', pdfDelDocumento(COLUMNA, 'resumen')?.name.endsWith('.pdf') === true)
-chequear('pdf', 'el estado sólo en Excel → sin PDF', pdfDelDocumento(COLUMNA, 'estado') === null)
+/* Empiezan igual que los que dejaba el escenario de Make: así se los sigue reconociendo por el nombre. */
 chequear(
-  'pdf',
-  'el estado con espacios en el nombre también se encuentra',
-  pdfDelDocumento([...COLUMNA, archivo('Estado Cta Cte-Fecha-23-09-2026.pdf', '2026-09-23T12:02:00Z')], 'estado') !== null,
+  'archivos',
+  'el resumen se llama como lo llamaba Make',
+  nombreResumenCtaCte({ desde: '2025-09-24', hasta: '2026-09-24' }) === 'Resumen_Cta_Cte-Periodo-24-09-2025-24-09-2026',
 )
-chequear(
-  'pdf',
-  'si quedó uno viejo, el más nuevo',
-  pdfDelDocumento(
-    [archivo('Resumen_Cta_Cte-viejo.pdf', '2026-08-01T10:00:00Z'), ...COLUMNA],
-    'resumen',
-  )?.name === COLUMNA[0].name,
-)
-chequear('pdf', 'columna vacía → sin PDF', pdfDelDocumento([], 'resumen') === null)
-
-/* Qué salió de ESTA emisión: los PDFs que no estaban en la foto de antes de pedirla. */
-{
-  const resumenViejo = archivo('Resumen_Cta_Cte-viejo.pdf', '2026-08-01T10:00:00Z')
-  const estadoViejo = archivo('Estado_Cta_Cte-viejo.pdf', '2026-08-01T10:00:00Z')
-  const resumenNuevo = archivo('Resumen_Cta_Cte-nuevo.pdf', '2026-09-24T10:00:00Z')
-  const foto = new Set([resumenViejo.id, estadoViejo.id])
-  const ambos = ['resumen', 'estado'] as const
-  chequear(
-    'pdf',
-    'salió el resumen y el estado no: sólo el resumen, aunque quede el PDF del estado anterior',
-    pdfsNuevos([resumenViejo, estadoViejo, resumenNuevo], foto, ambos).join() === 'resumen',
-  )
-  chequear('pdf', 'la emisión no dejó nada nuevo → nada que ofrecer', pdfsNuevos([resumenViejo, estadoViejo], foto, ambos).length === 0)
-  chequear('pdf', 'el estado no pedido no se ofrece', pdfsNuevos(COLUMNA, new Set(), ['resumen']).join() === 'resumen')
-  chequear('pdf', 'sin foto, cuenta cualquier PDF que esté', pdfsNuevos([resumenViejo, estadoViejo], null, ambos).join() === 'resumen,estado')
-}
+chequear('archivos', 'y el estado de cuenta, con la fecha del día', nombreEstadoCtaCte('2026-09-24') === 'Estado_Cta_Cte-Fecha-24-09-2026')
 
 if (fallas > 0) {
   console.error(`\n${fallas} chequeo(s) fallaron`)

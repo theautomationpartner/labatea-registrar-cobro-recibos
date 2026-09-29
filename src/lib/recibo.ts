@@ -14,12 +14,6 @@ import { esAnticipoDeCobro, esChequeDeCobro, esPagoConTarjeta, esRetencion } fro
 import type { Imputaciones } from '@/lib/cobros'
 import type { FacturaPendiente, MovimientoPago } from '@/types'
 
-/**
- * Número del recibo. Es un valor de maqueta: el definitivo lo asigna Monday al crear el ítem en
- * "➡️Recibos y Cobros", igual que el número de comprobante lo asigna la facturación.
- */
-export const NRO_RECIBO = '0001-00001236'
-
 /** Marca de un dato que el tablero no tiene cargado. La misma en las dos tablas del documento. */
 export const SIN_DATO = '—'
 
@@ -113,15 +107,16 @@ export interface Recibo {
 }
 
 /**
- * NRO DE COMPROBANTE del renglón: el número con el que se identifica el pago, y sólo lo tienen
- * tres medios —el cheque su número, la tarjeta su cupón y la retención el número del certificado—.
+ * NRO DE COMPROBANTE del renglón: el número con el que se identifica el pago —el cheque su número,
+ * la transferencia el de la operación bancaria, la tarjeta su cupón y la retención el número del
+ * certificado—. Es el mismo que imprimía el recibo de Make.
  *
- * El EFECTIVO y la TRANSFERENCIA no llevan ninguno: lo que respalda a la transferencia es un
- * archivo adjunto, y el nombre de ese archivo no es un número de comprobante. Ponerlo ahí llenaba
- * la columna con algo que el documento no declara.
+ * El EFECTIVO no lleva ninguno. De la transferencia va el NÚMERO que cargó el usuario, nunca el
+ * nombre del archivo adjunto, que no es un número de comprobante.
  */
 export function comprobanteDePago(m: MovimientoPago): string {
   if (esChequeDeCobro(m.formaPago)) return m.numeroCheque?.trim() ?? ''
+  if (m.formaPago === 'Transferencia') return m.nroComprobanteTransferencia?.trim() ?? ''
   if (esPagoConTarjeta(m.formaPago)) return m.numeroCupon?.trim() ?? ''
   if (esRetencion(m.formaPago)) return m.nroComprobanteRetencion?.trim() ?? ''
   return ''

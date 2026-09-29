@@ -33,7 +33,7 @@ export function CardDocumentoCtaCte({
   children,
 }: CardDocumentoCtaCteProps) {
   const { abierta, abriendo, cerrando, visible, alternar } = usePlegable(false)
-  const enCurso = fase === 'creando' || fase === 'emitiendo'
+  const enCurso = fase === 'creando'
   const emitido = fase === 'emitido'
 
   return (

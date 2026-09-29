@@ -92,6 +92,23 @@ export const BOARDS = {
    * tablero—; se lee para saber con qué número va a nacer la próxima (ver `getProximoNroRetencion`).
    */
   retenciones: 18426092199,
+  /**
+   * "Actividades" (E&A): el ítem que Monday crea por cada actividad del timeline de una persona. Acá
+   * termina "Registrar Resumen": la actividad del envío del resumen se completa con sus contactos.
+   */
+  actividades: 18420688236,
+} as const
+
+/**
+ * La actividad "Envío de Resumen de cuenta corriente" del timeline de Personas: el tipo de actividad
+ * personalizada con el que se crea (`custom_activity_id`) y el índice con el que aparece en el
+ * "activity_type" del tablero de Actividades. Los mismos del escenario de Make que la registraba.
+ */
+export const ACTIVIDAD_ENVIO_RESUMEN = {
+  customActivityId: '537b9bfb-b89c-4912-8b03-67745a89f7ce',
+  tipoIndex: 3,
+  /** "Enviado desde" del contenido de la actividad. */
+  remitente: 'info@labatea',
 } as const
 
 export const SITUACION_CLIENTE_INDEX = {
@@ -281,8 +298,8 @@ export const FORMATO_RESUMEN_IDS: Record<FormatoResumen, number[]> = {
  * Índices de "🤖Estado Resumen Cta Cte" (color_mm76s2eq) de la cuenta corriente. Leídos del
  * tablero: {"0":"Generando","1":"Generado","2":"Error - Ver Update","3":"Generar"}.
  *
- * La app escribe UNO solo —"Generar"—, que es lo que dispara la automatización; el resto lo mueve el
- * tablero y la app sólo los lee.
+ * "Generar" es el disparador de la automatización que armaba los archivos con Make. La app ya NO lo
+ * escribe —los archivos los genera ella— y tampoco toca esta columna.
  */
 export const ESTADO_RESUMEN_INDEX = {
   generar: 3,
@@ -596,9 +613,9 @@ export const COL = {
     /** "🤖TOTAL $ Diferencia" (numbers): cancelado − recibido. En un cobro que cierra, 0. */
     diferencia: 'numeric_mm5xfznj',
     /**
-     * "🤖Estado de Emision" (status): el semáforo de la emisión del PDF y TAMBIÉN el del envío
-     * (comparten columna). La app lo pone en "A emitir" y en "Enviar"; el resto lo mueve el
-     * TABLERO (ver `ESTADO_EMISION_INDEX` y `ENVIO_RECIBO_INDEX`).
+     * "🤖Estado de Emision" (status): el semáforo de la emisión del PDF y del envío (comparten
+     * columna). Desde que el PDF lo genera la app y el envío lo despacha Make, la app sólo la deja en
+     * "Emitido" al registrar el cobro (ver `ESTADO_EMISION_INDEX`).
      */
     estadoEmision: 'color_mkwbzd3f',
     /**
@@ -621,8 +638,10 @@ export const COL = {
      * muestra en pantalla: es un dato del documento, no de la operación en curso.
      */
     saldoConCobro: 'numeric_mm6e1hz3',
-    /** "🤖 Recibo PDF" (file): el documento a enviar. Vacío = todavía no se generó. */
+    /** "🤖 Recibo PDF" (file): el PDF que generó la app. Se sube al registrar el cobro. */
     pdf: 'file_mkwbkp1d',
+    /** "🤖Fecha de Emsion" (date): la fecha con la que salió el recibo. Se escribe al registrarlo. */
+    fechaEmision: 'date_mm7aakp7',
     /** "🤖Fecha de Envio al Cliente" (date): la completa el tablero al despachar. */
     fechaEnvio: 'date_mkwbdyj6',
   },
@@ -761,6 +780,10 @@ export const COL = {
     enviarPor: 'dropdown_mm6k2mmh',
     /** "🤖ID Orden de Pago" (item_id con prefijo): el código que ve el usuario ("IDPAGO-07"). */
     nro: 'pulse_id_mm6k11zc',
+    /** "🤖OP PDF" (file): el PDF que generó la app. Se sube al registrar el pago. */
+    pdf: 'file_mm6mhhy7',
+    /** "🤖Fecha de Emision OP" (date): la fecha con la que salió la orden. Se escribe al registrarla. */
+    fechaEmision: 'date_mm6kzpb1',
   },
   /* Subelementos de la orden (18421035618). El MISMO board recibe los dos tipos de línea, y cada
      uno completa su propio juego de columnas —siempre con "🤖Caja" como rótulo de qué es—:
@@ -920,10 +943,15 @@ export const COL = {
      */
     incluyeEstadoResumen: 'boolean_mm767m9h',
     /**
-     * "🤖Estado Resumen Cta Cte" (status): el semáforo de la generación del resumen. La app lo pone
-     * en "Generar" y lo mueve el TABLERO (ver `ESTADO_RESUMEN_INDEX`).
+     * "🤖Estado Resumen Cta Cte" (status): en qué quedó el resumen. Desde que los archivos los genera
+     * la app, NO se escribe (ver `ESTADO_RESUMEN_INDEX`).
      */
     estadoResumen: 'color_mm76s2eq',
+    /**
+     * "🤖Resumen Cta Cte" (file): los archivos del último resumen —resumen y estado de cuenta, en PDF
+     * y/o Excel—. "Registrar Resumen" los reemplaza por los que generó la app.
+     */
+    archivoResumen: 'file_mm76gr2x',
     /** "🤖Medio de Envio" (dropdown multi-valor): Email y/o Whatsapp. Ver `MEDIO_ENVIO_RESUMEN_IDS`. */
     medioEnvioResumen: 'dropdown_mm76hb6t',
     /** "🤖Contactos" (board_relation → Contactos 18420688239): a quiénes se les manda el resumen. */
@@ -934,6 +962,19 @@ export const COL = {
      * `ESTADO_ENVIO_RESUMEN_INDEX`).
      */
     estadoEnvioResumen: 'color_mm76ca15',
+  },
+  /** Tablero "Actividades" (18420688236): el ítem de cada actividad del timeline. */
+  actividad: {
+    /** "Persona" (board_relation → Personas): de quién es la actividad. */
+    persona: 'board_relation_mm588ws8',
+    /** Tipo de actividad (ver `ACTIVIDAD_ENVIO_RESUMEN.tipoIndex`). */
+    tipo: 'activity_type',
+    /** "✋Contactos" (board_relation → Contactos): a quiénes se les envió. */
+    contactos: 'board_relation_mm58wj7q',
+    /** "✋Estado De Actividad" (status): se deja en "Completado". */
+    estado: 'activity_status',
+    /** "🤖Modo de Carga" (status): "Automatico", porque la cargó la app y no una persona. */
+    modoCarga: 'color_mm7eaytq',
   },
   /**
    * SUBELEMENTOS de la cuenta corriente: un ítem por MOVIMIENTO de la cuenta. Los ids son los MISMOS
@@ -1052,6 +1093,11 @@ export const COL = {
      * prefijo. Verificado contra el board.
      */
     nro: 'pulse_id_mm646680',
+    /**
+     * "🤖Retencion PDF" (file): la constancia de la retención. Desde que la genera la app, "Registrar
+     * Pago" la sube acá, a la fila que crea la automatización de registro.
+     */
+    pdf: 'file_mm64e4d8',
   },
   anticipoProveedor: {
     /** "🤖Proveedor" (board_relation → Personas): de quién es el anticipo. Es por donde se filtra. */
@@ -1236,10 +1282,9 @@ export function cajaDeFormaPago(forma: FormaPago): { index: number } | { label: 
 }
 
 /**
- * Índices de "🤖Estado de Emision" (color_mkwbzd3f) del recibo. Es un semáforo COMPARTIDO: la app
- * escribe UNA sola vez —"A emitir", que dispara la automatización— y de ahí en más sólo lo LEE.
- * El tablero lo mueve a "Emitiendo" mientras genera el PDF y lo cierra en "Emitido" o en
- * "Error - Emision".
+ * Índices de "🤖Estado de Emision" (color_mkwbzd3f) del recibo. "A emitir" era el disparador de la
+ * automatización que generaba el PDF con Make: la app ya NO lo escribe —el PDF lo genera ella— y, al
+ * registrar el cobro, deja el recibo directamente en "Emitido".
  *
  * Leídos del tablero: {"0":"Emitiendo","1":"Emitido","2":"Error - Emision","3":"A emitir",
  * "4":"Enviar","6":"Enviando","7":"Enviado","8":"Error - Enviar","9":"Emitio Cancelacion",

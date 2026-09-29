@@ -12,16 +12,21 @@ interface StepperProps {
   maxReached?: number
   /** Navegar al paso `index`. Sin este callback, el stepper no es interactivo. */
   onStep?: (index: number) => void
+  /**
+   * El paso ACTUAL ya se completó: se dibuja tildado, como los anteriores. Lo usa la etapa de emitir
+   * y enviar, que es la última y no tiene un "siguiente" que la deje atrás.
+   */
+  currentDone?: boolean
 }
 
-const stateOf = (index: number, current: number) =>
-  index < current ? 'done' : index === current ? 'cur' : 'off'
+const stateOf = (index: number, current: number, currentDone: boolean) =>
+  index < current || (index === current && currentDone) ? 'done' : index === current ? 'cur' : 'off'
 
 /**
  * Barra de etapas: el número en el círculo y, debajo, el NOMBRE de la etapa. Los nombres los decide
  * `lib/pasos`, así que el componente no sabe nada del recorrido.
  */
-export function Stepper({ steps, current, className = '', maxReached, onStep }: StepperProps) {
+export function Stepper({ steps, current, className = '', maxReached, onStep, currentDone = false }: StepperProps) {
   // Tope navegable: hasta el paso más avanzado alcanzado (o, si no se pasó, sólo hasta el actual).
   const limite = Math.max(maxReached ?? current, current)
   // Un paso es navegable si hay handler, no es el actual y ya fue alcanzado (≤ límite).
@@ -30,7 +35,7 @@ export function Stepper({ steps, current, className = '', maxReached, onStep }: 
   return (
     <div className={`stepper ${className}`}>
       {steps.map((label, i) => {
-        const state = stateOf(i, current)
+        const state = stateOf(i, current, currentDone)
         const nav = puedeIr(i)
         // Los pasos futuros (no alcanzados) quedan bloqueados; el actual no navega (ya estás ahí).
         const bloqueado = !!onStep && i > limite
@@ -41,7 +46,7 @@ export function Stepper({ steps, current, className = '', maxReached, onStep }: 
               role={nav ? 'button' : undefined}
               tabIndex={nav ? 0 : undefined}
               aria-disabled={bloqueado || undefined}
-              aria-current={state === 'cur' ? 'step' : undefined}
+              aria-current={i === current ? 'step' : undefined}
               /* El nombre ya está impreso; el rótulo accesible le suma el ordinal, que en pantalla
                  vive en el círculo. El `title` sólo aparece cuando hay algo MÁS que decir: por qué
                  el paso está bloqueado. Repetir el nombre en un tooltip no aporta nada. */

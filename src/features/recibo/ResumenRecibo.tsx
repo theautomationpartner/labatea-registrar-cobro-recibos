@@ -24,6 +24,8 @@ export interface RotulosResumen {
   entregado: string
   /** Rótulo del botón en su estado inicial. */
   botón: string
+  /** Rótulo del botón con el documento ya emitido. */
+  emitido: string
 }
 
 /** Los rótulos del RECIBO. Rigen si no se pasa ninguno: es el circuito original. */
@@ -35,6 +37,7 @@ export const ROTULOS_RESUMEN_RECIBO: RotulosResumen = {
   fecha: 'Fecha de Emisión',
   entregado: 'Total recibido',
   botón: 'Emitir el recibo',
+  emitido: 'Recibo emitido',
 }
 
 /** Los rótulos de la ORDEN DE PAGO: la misma ficha con el vocabulario del egreso. */
@@ -46,6 +49,7 @@ export const ROTULOS_RESUMEN_OP: RotulosResumen = {
   fecha: 'Fecha de PAGO',
   entregado: 'Total Entregado',
   botón: 'EMITIR ORDEN DE PAGO',
+  emitido: 'Orden de pago emitida',
 }
 
 interface ResumenReciboProps {
@@ -61,18 +65,27 @@ interface ResumenReciboProps {
   /** TOTAL CANCELADO: lo que suman las facturas que el recibo cancela. */
   totalCancelado: number
   /**
-   * En qué anda la emisión. Gobierna el botón: es su ÚNICA fuente de verdad, y el botón es el
-   * único lugar donde esta ficha muestra el progreso —girando con "Emitiendo…"—. El seguimiento
-   * detallado del tablero se ve en la card del documento, no acá.
+   * Días promedio de cobro, ya formateados ("20/06/2026 (44 Dias)", ver `lib/diasPromedio`). Sin
+   * valor el renglón no se muestra: un anticipo o una orden de pago no tienen facturas que medir.
+   */
+  diasPromedio?: string
+  /**
+   * En qué anda la emisión —la generación del PDF en la app—. Gobierna el botón: es su ÚNICA fuente
+   * de verdad.
    */
   fase: FaseEmision
   /** Qué falló, cuando falló. */
   error: ErrorEmision | null
-  /** El intento se puede repetir sin duplicar nada (no llegó a crearse el recibo). */
-  puedeReintentar: boolean
   onEmitir: () => void
+  /**
+   * El documento ya empezó a registrarse en Monday: no se puede volver a emitir (se crearía otro
+   * ítem). Sin esto, emitido el botón sigue habilitado para REEMITIR.
+   */
+  bloqueado?: boolean
   /** Cómo se nombra la operación. Por defecto, la del RECIBO. */
   rotulos?: RotulosResumen
+  /** Lo que va pegado debajo del botón de emisión: "Ver / Imprimir (1)" y sus avisos. */
+  children?: ReactNode
 }
 
 interface FilaProps {
@@ -111,17 +124,16 @@ export function ResumenRecibo({
   fechaEmision,
   totalRecibido,
   totalCancelado,
+  diasPromedio,
   fase,
   error,
-  puedeReintentar,
   onEmitir,
+  bloqueado = false,
   rotulos = ROTULOS_RESUMEN_RECIBO,
+  children,
 }: ResumenReciboProps) {
   const { usuario } = useApp()
-  /* "creando" (se escribe el recibo) y "emitiendo" (lo genera el tablero) se muestran igual: para
-     el usuario es un solo momento de espera. La diferencia importa cuando algo falla, y ahí la
-     dice el mensaje de error, no el botón. */
-  const enCurso = fase === 'creando' || fase === 'emitiendo'
+  const enCurso = fase === 'creando'
 
   return (
     <div className="card resumen-recibo">
@@ -147,6 +159,11 @@ export function ResumenRecibo({
         <Fila label={rotulos.fecha} requerido={false}>
           {fechaEmision}
         </Fila>
+        {diasPromedio !== undefined && (
+          <Fila label="Dias promedio" requerido={false}>
+            {diasPromedio}
+          </Fila>
+        )}
         {/* Lo que se movió de dinero, sumando todas sus líneas. */}
         <Fila label={rotulos.entregado} requerido={false} tono="verde">
           {money(totalRecibido)}
@@ -157,30 +174,41 @@ export function ResumenRecibo({
         </Fila>
       </div>
 
-      {/* El botón ES el estado de la emisión: en curso gira, emitido pasa a verde con el tilde y
-          fallado pasa a rojo. Con el recibo ya creado no se vuelve a emitir —se duplicaría—, así
-          que sólo se rehabilita cuando el intento no llegó a escribir nada. */}
+      {/* El botón ES el estado de la emisión: mientras se genera el PDF gira, emitido pasa a verde
+          con el tilde y fallado pasa a rojo. Emitir no escribe nada en Monday —eso es "Registrar"—,
+          así que un error siempre se puede reintentar, y un documento emitido se puede VOLVER A
+          EMITIR (para corregir un error): el mismo botón lo hace. */}
       <button
         type="button"
         className={`btn-generar ${enCurso ? 'btn-generar--curso' : ''} ${
           fase === 'emitido' ? 'btn-generar--ok' : ''
         } ${fase === 'error' ? 'btn-generar--err' : ''}`}
-        disabled={enCurso || fase === 'emitido' || (fase === 'error' && !puedeReintentar)}
+        disabled={enCurso || bloqueado}
         aria-busy={enCurso}
+        title={
+          enCurso
+            ? undefined
+            : bloqueado
+              ? 'El documento ya se está registrando en Monday: no se puede volver a emitir'
+              : fase === 'emitido'
+                ? 'Tocá para volver a emitir con los datos actuales'
+                : fase === 'error'
+                  ? 'Tocá para reintentar la emisión'
+                  : undefined
+        }
         onClick={onEmitir}
       >
         {enCurso ? (
           <>
-            <i className="fas fa-circle-notch fa-spin" /> Emitiendo...
+            <i className="fas fa-circle-notch fa-spin" /> Generando PDF...
           </>
         ) : fase === 'emitido' ? (
           <>
-            <i className="fas fa-check" /> Emitido correctamente
+            <i className="fas fa-check" /> {rotulos.emitido}
           </>
         ) : fase === 'error' ? (
           <>
-            <i className="fas fa-triangle-exclamation" />{' '}
-            {puedeReintentar ? 'Reintentar la emisión' : 'No se pudo emitir'}
+            <i className="fas fa-xmark" /> Error de emisión
           </>
         ) : (
           <>
@@ -189,8 +217,11 @@ export function ResumenRecibo({
         )}
       </button>
 
-      {/* Falló: el ESTADO arriba (la etiqueta del tablero o el momento en que se cortó) y debajo el
-          mensaje concreto, que en las excepciones es el que se capturó en el `catch`. */}
+      {/* Siempre debajo de emitir: "Ver / Imprimir", que se habilita con el PDF generado. */}
+      {children}
+
+      {/* Falló: el ESTADO arriba y debajo el mensaje concreto. Va DEBAJO de los dos botones, nunca
+          entre ellos. */}
       {fase === 'error' && error && (
         <div className="rec-error" role="alert">
           <p className="rec-error-estado">

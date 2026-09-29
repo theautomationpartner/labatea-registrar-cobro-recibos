@@ -3,6 +3,7 @@ import { Stepper } from '@/components/ui/Stepper'
 import { SelectoresContexto } from '@/features/shared/TopSelectors'
 import { etiquetasDe, indiceDePaso, pasosDe } from '@/lib/pasos'
 import { etiquetasPago, indiceDePasoPago, pasosDePago } from '@/lib/pasosPago'
+import { etapaDeEmisionCompleta } from '@/state/appState'
 import { useApp, useDispatch } from '@/state/hooks'
 
 interface PasoHeaderProps {
@@ -40,6 +41,7 @@ interface PasoHeaderProps {
  * bloqueados. El destino de cada índice sale del recorrido (mismo orden que las etiquetas).
  */
 export function PasoHeader({ actual, pasos = true, children }: PasoHeaderProps) {
+  const state = useApp()
   const {
     operacionApp,
     paso,
@@ -48,8 +50,10 @@ export function PasoHeader({ actual, pasos = true, children }: PasoHeaderProps) 
     pasoPagoMaxIdx,
     tipoOperacion,
     tipoOperacionPago,
-  } = useApp()
+  } = state
   const dispatch = useDispatch()
+  /* La etapa de emitir y enviar se tilda cuando el documento se emitió y se envió o se registró. */
+  const actualCompleto = actual === undefined && etapaDeEmisionCompleta(state)
 
   /* Qué recorrido dibuja el stepper. Se decide por el MÓDULO y no por el paso: Cobros y Pagos son
      operaciones independientes, con etapas propias y estado propio, así que cada una navega por su
@@ -88,6 +92,7 @@ export function PasoHeader({ actual, pasos = true, children }: PasoHeaderProps) 
             className={`stepper--tight ${pasos ? '' : 'stepper--fantasma'}`}
             maxReached={pasos ? maxAlcanzado : 0}
             onStep={pasos ? irAPaso : undefined}
+            currentDone={pasos && actualCompleto}
           />
         </div>
       </div>

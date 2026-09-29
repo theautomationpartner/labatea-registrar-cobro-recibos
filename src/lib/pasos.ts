@@ -146,7 +146,7 @@ export const DESCRIPCION: Record<Paso, string> = {
   cliente: 'Elegí qué vas a cobrar y buscá el cliente de la operación.',
   ventas: 'Elegí las facturas pendientes del cliente e indicá cuánto se cancela de cada una.',
   cobro: 'Registrá el cobro: medio de pago, importe e imputación sobre las ventas seleccionadas.',
-  recibo: 'Emití el recibo en Monday y enviáselo al cliente.',
+  recibo: 'Emití el recibo, enviáselo al cliente y registrá el cobro.',
   anticipoOrigen: 'Elegí el anticipo de la cuenta origen cuyo saldo se va a pasar a otra cuenta.',
   /* Sin importe a la vista —nadie llegó al paso todavía— se describe el paso, no la operación en
      curso. La versión con el número la arma la vista con `descripcionDestino`. */
@@ -156,7 +156,7 @@ export const DESCRIPCION: Record<Paso, string> = {
     'Buscá al proveedor al que se le había endosado el cheque: se le vuelve a deber su importe.',
   configResumen:
     'Indicá cómo se van a obtener los movimientos de la cuenta del cliente para generar el resumen.',
-  resumenCtaCte: 'Emití el resumen de cuenta corriente y enviáselo al cliente.',
+  resumenCtaCte: 'Emití el resumen de cuenta corriente, enviáselo al cliente y registralo.',
 }
 
 /** Bajadas que PISAN a las de `DESCRIPCION` en un RESUMEN DE CTA CTE. */
@@ -178,13 +178,13 @@ const DESCRIPCION_RECHAZOS: Partial<Record<Paso, string>> = {
 /** Bajadas que PISAN a las de `DESCRIPCION` al aplicar un anticipo contra facturas. */
 const DESCRIPCION_APLICACION: Partial<Record<Paso, string>> = {
   cobro: 'Elegí los anticipos del cliente e indicá cuánto se aplica de cada saldo a favor.',
-  recibo: 'Emití el recibo de la aplicación en Monday y enviáselo al cliente.',
+  recibo: 'Emití el recibo de la aplicación, enviáselo al cliente y registrá el cobro.',
 }
 
 /** Bajadas que PISAN a las de `DESCRIPCION` en el recorrido del anticipo. */
 const DESCRIPCION_ANTICIPO: Partial<Record<Paso, string>> = {
   cobro: 'Cargá el importe que entrega el cliente a cuenta y con qué medios lo entrega.',
-  recibo: 'Emití el recibo del anticipo en Monday y enviáselo al cliente.',
+  recibo: 'Emití el recibo del anticipo, enviáselo al cliente y registrá el cobro.',
 }
 
 /** La bajada de la etapa en ESTA operación. */

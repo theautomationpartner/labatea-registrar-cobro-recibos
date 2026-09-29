@@ -1,5 +1,9 @@
 /**
- * Emisión del recibo: lo ÚNICO que esta app escribe en Monday.
+ * Registro del recibo en Monday: lo que hace "Registrar Cobro", DESPUÉS de que la app emitió el PDF.
+ *
+ * El ítem nace recién acá —emitir sólo genera el documento en el navegador (ver
+ * `features/documentos`)—, y se escribe con los MISMOS datos con los que se generó el PDF, así el
+ * tablero dice exactamente lo que dice el documento que recibió el cliente.
  *
  * Son DOS solicitudes, no más:
  *
@@ -34,8 +38,8 @@
  * Después de eso quedan los comprobantes adjuntos, que no son una mutación más: las columnas `file`
  * necesitan el id del subelemento ya creado y viajan por multipart.
  *
- * Si la escritura falla, la excepción se propaga y corta acá: un recibo al que le faltan líneas no
- * tiene que llegar a pedir su emisión (ver `pedirEmision`).
+ * Si la escritura falla, la excepción se propaga y corta acá: a un recibo al que le faltan líneas no
+ * se le sube el PDF ni se le pide el registro (ver `adjuntarPdfRecibo` y `pedirRegistro`).
  *
  * Sin token (modo local) no se escribe nada y se devuelven ids simulados, igual que el resto de la
  * capa de servicio: el prototipo se puede recorrer entero sin cuenta de Monday.
@@ -65,7 +69,7 @@ import {
   personCol,
   TIPO_COBRO_INDEX,
 } from './columns'
-import { byId, type MondayItem } from './parse'
+import { escribirColumnas, getProximoNroDocumento, leerNroDocumento, subirArchivoAColumna } from './documentos'
 import { mondayApi, mondayHabilitado, mondaySubirArchivo } from './sdk'
 
 /**
@@ -409,13 +413,13 @@ export const reciboCompleto = (r: ResultadoRecibo): boolean =>
 /* ===== La orquestación ===== */
 
 /**
- * Emite el recibo: crea la cabecera y, con su id, las dos tandas de subelementos.
+ * Crea el recibo: la cabecera y, con su id, las dos tandas de subelementos.
  *
  * Devuelve cuántos subítems entraron de cada tipo. Un faltante NO se convierte en excepción: el
  * recibo ya existe en el tablero y hay que poder decirlo con precisión —"entraron 3 de 4 facturas"—
  * en vez de dejar al usuario con un error genérico y un recibo a medias que no sabe que se creó.
  */
-export async function emitirRecibo(datos: DatosRecibo): Promise<ResultadoRecibo> {
+export async function crearRecibo(datos: DatosRecibo): Promise<ResultadoRecibo> {
   const { clienteId, nombreCliente, vendedorId, facturas, movimientos } = datos
 
   /* Un ANTICIPO no cancela facturas: en el lugar de sus subítems va UNA sola línea, la del importe
@@ -638,7 +642,7 @@ export async function emitirRecibo(datos: DatosRecibo): Promise<ResultadoRecibo>
 
   /* --- Los comprobantes adjuntos, que necesitan el id de su subelemento ya creado ---
      Son best-effort: que falle una subida no invalida el recibo, que ya quedó escrito con todos
-     sus datos. Van igual ANTES de devolver, para que la emisión encuentre el ítem completo.
+     sus datos. Van igual ANTES de devolver, para que el registro encuentre el ítem completo.
 
      La correspondencia es por POSICIÓN contra `medios`, que se armó a partir de esta misma lista
      reordenada: cada índice cae sobre su propio subítem. `idsMedios` sale por alias, así que el
@@ -657,89 +661,44 @@ export async function emitirRecibo(datos: DatosRecibo): Promise<ResultadoRecibo>
   }
 }
 
-/* ===== La emisión del PDF: pedirla y seguirla ===== */
+/* ===== El número y el PDF del recibo ===== */
 
 /**
- * Pide la EMISIÓN del recibo: pone "🤖Estado de Emision" en "A emitir".
- *
- * Es la única escritura de la app sobre esa columna, y el disparador de la automatización que
- * genera el PDF. De ahí en más la mueve el tablero —"Emitiendo", "Emitido" o "Error - Emision"— y
- * la app sólo la lee (ver `getEstadoEmision`): se pide y se espera en la MISMA columna, porque son
- * el principio y el final de un solo trabajo.
- *
- * Se escribe por ÍNDICE y no por etiqueta, igual que el resto de las columnas status: el índice es
- * la identidad de la opción en el board, así que un cambio de rótulo no puede desviar la operación
- * a otro estado.
+ * Número del recibo en modo local (sin Monday): el prototipo tiene que poder emitir un PDF igual.
  */
-export async function pedirEmision(itemId: string): Promise<void> {
+export const NRO_RECIBO_MOCK = 'RECIBO-001'
+
+/**
+ * El número con el que va a nacer el próximo recibo ("🤖ID Recibo": "RECIBO-124" → "RECIBO-125"). Lo
+ * necesita el PDF, que se genera ANTES de crear el ítem. Es una predicción: ver
+ * `getProximoNroDocumento`. OJO: el mismo tablero recibe los recibos de la app de ventas.
+ */
+export async function getProximoNroRecibo(): Promise<string | null> {
+  if (!mondayHabilitado()) return NRO_RECIBO_MOCK
+  return getProximoNroDocumento(BOARDS.cobros, COL.cobro.nro)
+}
+
+/** El "🤖ID Recibo" que Monday le asignó al recibo ya creado. */
+export const leerNroRecibo = (itemId: string): Promise<string> => leerNroDocumento(itemId, COL.cobro.nro)
+
+/**
+ * Sube el PDF que generó la app a "🤖 Recibo PDF" y deja el recibo EMITIDO: "🤖Estado de Emision" en
+ * "Emitido" y su "🤖Fecha de Emsion".
+ *
+ * NO se escribe "A emitir": ese era el disparador de la automatización que generaba el PDF, y el PDF
+ * ahora ya lo generó la app. Escribirlo haría que el tablero generara OTRO documento encima.
+ *
+ * Mismo esquema que `adjuntarPdfPresupuesto` en la app de operaciones de venta.
+ */
+export async function adjuntarPdfRecibo(itemId: string, pdf: File, fechaEmision: string): Promise<void> {
   if (!mondayHabilitado()) return
-  await mondayApi(
-    `mutation ($id: ID!, $board: ID!, $cv: JSON!) {
-      change_multiple_column_values(item_id: $id, board_id: $board, column_values: $cv) { id }
-    }`,
-    {
-      id: itemId,
-      board: BOARDS.cobros,
-      cv: JSON.stringify({
-        [COL.cobro.estadoEmision]: { index: ESTADO_EMISION_INDEX.aEmitir },
-      }),
-    },
-  )
-}
-
-/**
- * En qué anda la emisión del PDF, según el tablero. Los diez estados de la columna se reducen acá
- * a los TRES que le importan a quien espera: sigue en curso, cerró bien o cerró mal.
- *
- * La traducción se hace en el servicio —y no en la pantalla— para que los índices de Monday no se
- * filtren fuera de esta capa: quien consume esto no tiene por qué saber que "Emitido" es el 1.
- */
-export type FaseEmisionBoard = 'en-curso' | 'emitido' | 'error'
-
-export interface EstadoEmision {
-  fase: FaseEmisionBoard
-  /** Etiqueta tal cual la muestra el tablero ("Emitiendo", "Emitido", "Error - Emision"). */
-  label: string
-}
-
-/**
- * Lee "🤖Estado de Emision" del recibo. Es la consulta que se repite mientras se espera al
- * tablero: devuelve en qué anda —con lo que se decide— y la etiqueta —que es lo que se le muestra
- * al usuario, para que la pantalla diga exactamente lo mismo que el board—.
- *
- * Una columna vacía o un ítem que no se pudo leer cuentan como "en curso", NO como error: recién
- * empezó y el tablero todavía no la movió. Lo que corta la espera es el estado terminal o el tope
- * de tiempo de quien sondea, nunca una lectura ambigua.
- *
- * En modo local no hay tablero que emita nada, así que se responde "Emitido" de una: el prototipo
- * tiene que poder recorrerse entero sin cuenta de Monday.
- */
-export async function getEstadoEmision(itemId: string): Promise<EstadoEmision> {
-  if (!mondayHabilitado()) return { fase: 'emitido', label: 'Emitido' }
-
-  const data = await mondayApi<{ items: MondayItem[] }>(
-    `query ($id: [ID!]) {
-      items(ids: $id) {
-        id
-        column_values(ids: ["${COL.cobro.estadoEmision}"]) {
-          id text
-          ... on StatusValue { index }
-        }
-      }
-    }`,
-    { id: [itemId] },
-  )
-
-  const item = data.items?.[0]
-  const cv = item ? byId(item)[COL.cobro.estadoEmision] : undefined
-  const index = cv?.index ?? null
-  const fase: FaseEmisionBoard =
-    index === ESTADO_EMISION_INDEX.emitido
-      ? 'emitido'
-      : index === ESTADO_EMISION_INDEX.error
-        ? 'error'
-        : 'en-curso'
-  return { fase, label: cv?.text?.trim() ?? '' }
+  await subirArchivoAColumna(itemId, COL.cobro.pdf, pdf)
+  const columnas: Record<string, unknown> = {
+    [COL.cobro.estadoEmision]: { index: ESTADO_EMISION_INDEX.emitido },
+  }
+  const fecha = fechaCol(fechaEmision)
+  if (fecha) columnas[COL.cobro.fechaEmision] = fecha
+  await escribirColumnas(itemId, BOARDS.cobros, columnas)
 }
 
 /** Un subelemento a crear: con qué alias se lo pide, cómo se llama y qué columnas lleva. */

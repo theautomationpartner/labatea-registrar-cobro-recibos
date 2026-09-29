@@ -1,12 +1,17 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { AvisoModal } from '@/components/ui/AvisoModal'
 import { ModalCargando } from '@/components/ui/ModalCargando'
+import { generarConstanciaRetencionPdf, generarOrdenPagoPdf } from '@/features/documentos/generarDocumentos'
+import { LOGO_DOCUMENTOS } from '@/features/documentos/pdf/comun'
+import { DocumentoDesactualizado } from '@/features/recibo/DocumentoDesactualizado'
 import { ReciboAGenerar, ROTULOS_DOC_OP } from '@/features/recibo/ReciboAGenerar'
 import { ResumenRecibo, ROTULOS_RESUMEN_OP } from '@/features/recibo/ResumenRecibo'
-import { useEmision } from '@/features/recibo/useEmisionRecibo'
 import { EnviarDocumento } from '@/features/shared/EnviarDocumento'
-import { ORDEN_PAGO_EMISIBLE } from '@/features/shared/emisiones'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
+import { useReemision } from '@/features/shared/useReemision'
+import { VerImprimirPdf } from '@/features/shared/VerImprimirPdf'
+import type { DatosConstanciaRetencionPdf, DatosOrdenPagoPdf } from '@/lib/documentoComprobante'
+import { firmaDe } from '@/lib/firma'
 import { RetencionAGenerar, type LineaRetencion } from './RetencionAGenerar'
 import { armarOrdenDePago, esRetencionGAN } from '@/lib/pagosProveedor'
 import { pagosDeAnticipos } from '@/lib/recibo'
@@ -16,28 +21,41 @@ import {
   numeroDePasoPago,
   pasoAnteriorPago,
 } from '@/lib/pasosPago'
-import type { DatosOrdenPago } from '@/services/monday'
-import { esperarRegistro, REGISTRO_PAGOS } from '@/services/monday'
-import { nombreAnticipoPago, pedirRegistroOP } from '@/services/monday/ordenPago'
+import {
+  adjuntarConstanciaRetencion,
+  adjuntarPdfOP,
+  crearOrdenDePago,
+  getProximoNroRetencion,
+  esperarRegistro,
+  getProximoNroOP,
+  leerNroOP,
+  nombreAnticipoPago,
+  ordenPagoCompleta,
+  pedirRegistroOP,
+  REGISTRO_PAGOS,
+  type DatosOrdenPago,
+  type ResultadoOrdenPago,
+} from '@/services/monday'
 import { useApp, useDispatch } from '@/state/hooks'
 
-/**
- * Número de la orden. Es un valor de maqueta, igual que `NRO_RECIBO`: el definitivo lo asigna
- * Monday al crear el ítem ("🤖ID Orden de Pago", con su prefijo IDPAGO).
- */
-const NRO_ORDEN = 'IDPAGO-00001'
+/** Qué subelementos faltaron, nombrados como los nombra la orden de pago. */
+export const faltantesOrdenPago = (r: ResultadoOrdenPago): string[] =>
+  [
+    r.facturasCreadas < r.facturasEsperadas &&
+      `Facturas de compra canceladas: entraron ${r.facturasCreadas} de ${r.facturasEsperadas}`,
+    r.pagosCreados < r.pagosEsperados && `Cajas entregadas: entraron ${r.pagosCreados} de ${r.pagosEsperados}`,
+  ].filter((x): x is string => typeof x === 'string')
 
 /**
  * Etapa 4 de PAGOS: la orden de pago —resumen a la izquierda, documento a la derecha—.
  *
- * Es el paso 4 de Cobros pieza por pieza: el resumen, la card del documento y el bloque de envío son
- * LOS MISMOS componentes, con los rótulos del egreso (ver `ROTULOS_RESUMEN_OP` y `ROTULOS_DOC_OP`).
- * Hasta el ciclo de la emisión es el mismo hook: lo que cambia —qué se escribe, en qué tablero y
- * cómo se lo nombra— vive en `ORDEN_PAGO_EMISIBLE`, no acá.
+ * Es el paso 4 de Cobros pieza por pieza: el resumen, la card del documento, el "Ver / Imprimir" y
+ * el bloque de envío son LOS MISMOS componentes, con los rótulos del egreso. Y los dos momentos
+ * también son los mismos:
  *
- * Esta etapa NO decide nada: las facturas canceladas y las cajas ya quedaron cerradas en las etapas
- * 2 y 3, y la etapa 3 no deja llegar hasta acá si la diferencia no está en cero exacto. Lo único que
- * se hace es mostrar el documento que sale de eso, emitirlo y enviarlo.
+ *   1. "Emitir orden de pago" genera el PDF EN LA APP. No toca Monday.
+ *   2. "Registrar Pago" crea la orden con sus subitems, le sube ese PDF y le pide al tablero que
+ *      registre el pago (lo que impacta la cuenta corriente del proveedor).
  */
 export function OrdenPagoView() {
   const {
@@ -53,6 +71,9 @@ export function OrdenPagoView() {
     anticipos,
     aplicaciones,
     ordenPagoId,
+    ordenPagoDoc,
+    emisionOP,
+    emisionNro,
   } = useApp()
   const esAnticipo = tipoOperacionPago === 'anticipo'
   const esAplicacion = tipoOperacionPago === 'aplicacion'
@@ -71,10 +92,7 @@ export function OrdenPagoView() {
   )
   /* El detalle de la CONSTANCIA de retención, si la orden practicó alguna. Cada movimiento de
      retención es una línea; el comprobante de origen son las facturas que formaron su base —las
-     mismas que se están pagando—, que es lo que la constancia declara.
-
-     Los tres datos del cálculo viajan en el propio movimiento desde que se agregó a la tabla, así
-     que acá no se recalcula nada: se muestra lo que se practicó. */
+     mismas que se están pagando—, que es lo que la constancia declara. */
   const lineasRetencion = useMemo<LineaRetencion[]>(() => {
     const retenciones = pago.movimientos.filter((m) => esRetencionGAN(m.formaPago))
     if (retenciones.length === 0) return []
@@ -93,23 +111,21 @@ export function OrdenPagoView() {
   }, [pago.movimientos, facturasCompra, imputacionesPago])
 
   const dispatch = useDispatch()
-  // Aviso al intentar cerrar la operación sin haber emitido la orden.
+  // Aviso al intentar registrar sin haber emitido la orden.
   const [aviso, setAviso] = useState(false)
-  /* El registro está en vuelo: desde que se lo pide hasta que el tablero lo confirma. Tapa la
-     pantalla con `ModalCargando` y frena un segundo click, porque es la escritura que impacta la
-     cuenta corriente del proveedor y repetirla la pediría dos veces.
-
-     Es ESTADO y no una ref: la pantalla sí depende de esto —la ventana se muestra mientras dura—,
-     así que el re-render es exactamente lo que hace falta. */
+  // Aviso al intentar registrar con datos que cambiaron después de emitir.
+  const [avisoCambios, setAvisoCambios] = useState(false)
+  /* El registro está en vuelo: tapa la pantalla con `ModalCargando` y frena un segundo click, porque
+     es la escritura que impacta la cuenta corriente del proveedor. */
   const [registrando, setRegistrando] = useState(false)
   /* La orden quedó escrita y pedida, pero el tablero no confirmó su registro. NO se reinicia la
      app: el ítem está en Monday y hay que mirarlo antes de tocar nada. */
   const [avisoRegistro, setAvisoRegistro] = useState('')
-  /* Todo el ciclo de la emisión —escritura, pedido al tablero y seguimiento del estado— vive en el
-     hook, con el adaptador de la orden. Su estado lo guarda en el estado GLOBAL, así que volver un
-     paso y regresar reencuentra la orden emitida en vez de reofrecer la emisión. */
-  const { fase, estado, error, incompleto, puedeReintentar, emitir, limpiarIncompleto } =
-    useEmision<DatosOrdenPago>(ORDEN_PAGO_EMISIBLE)
+  // Monday le dio a la orden otro número que el del PDF enviado.
+  const [numeroCambiado, setNumeroCambiado] = useState<{ emitido: string; real: string } | null>(null)
+  const [verIncompleto, setVerIncompleto] = useState(false)
+  // Cerrojo sincrónico contra el doble click en "Emitir".
+  const emitiendoRef = useRef(false)
 
   /* En una APLICACIÓN las líneas de lo entregado son los anticipos imputados: no sale plata, se
      cubren las facturas con el saldo a favor que ya teníamos. De ahí sale el TOTAL ENTREGADO, que
@@ -126,90 +142,301 @@ export function OrdenPagoView() {
   )
 
   /* En un ANTICIPO no hay facturas que cancelar: lo que el documento declara es el importe
-     entregado a cuenta, así que ése es su TOTAL CANCELADO (el que `armarOrdenDePago` deriva de los
-     comprobantes daría 0, que sería decir que la orden no cancela nada). Es la misma corrección que
-     hace la vista del recibo. */
+     entregado a cuenta, así que ése es su TOTAL CANCELADO. Es la misma corrección que hace la vista
+     del recibo. */
   const totalCancelado = esAnticipo ? importeAnticipo : orden.totalCancelado
+  /* La línea del anticipo sale con el MISMO nombre con el que se escribe el subelemento —"Anticipo ·
+     <detalle>"— y con el vencimiento cargado: en la card y en el PDF. */
+  /* La fecha de EMISIÓN del anticipo es la del pago: el anticipo nace con esta orden, que ahora se
+     emite en la app (antes la ponía el tablero al emitir). */
+  const lineaAnticipo = esAnticipo
+    ? {
+        importe: importeAnticipo,
+        nombre: nombreAnticipoPago(detalleAnticipo),
+        emision: pago.fecha,
+        vencimiento: vencimientoAnticipo,
+      }
+    : null
 
   const anterior = pasoAnteriorPago('orden', tipoOperacionPago)
 
-  const emitirOrden = () => {
-    if (!proveedor) return
-    void emitir({
-      proveedorId: proveedor.id,
-      nombreProveedor: proveedor.name,
-      vendedorId: usuario?.id ?? null,
-      /* SÓLO las facturas: el anticipo también figura entre los comprobantes cancelados del
-         documento, pero no es un ítem del tablero de facturas de compra y el servicio arma su línea
-         por su cuenta a partir de los movimientos. Mandarlo acá lo escribiría dos veces —y con una
-         relación que no linkea nada—. Es el mismo filtro que hace la vista del recibo. */
-      facturas: orden.comprobantes
-        .filter((c) => !c.esAnticipo)
-        .map((c) => ({ id: c.id, nro: c.nro, importe: c.cancelado })),
-      /* En una aplicación no hay cajas: lo que cubre las facturas son los anticipos. */
-      movimientos: esAplicacion ? [] : pago.movimientos,
-      tipo: esAnticipo ? 'anticipo' : esAplicacion ? 'aplicacion' : 'facturas',
-      /* Los tres datos del anticipo viajan juntos: describen la misma línea del documento. */
-      anticipo: esAnticipo ? importeAnticipo : undefined,
-      detalleAnticipo: esAnticipo ? detalleAnticipo : undefined,
-      vencimientoAnticipo: esAnticipo ? vencimientoAnticipo : undefined,
-      anticiposAplicados: esAplicacion ? anticiposAplicados : undefined,
-    })
+  /** Lo que "Registrar Pago" escribe en Monday. Se congela al emitir (`ordenPagoDoc.datos`). */
+  const datos = useMemo<DatosOrdenPago | null>(
+    () =>
+      proveedor
+        ? {
+            proveedorId: proveedor.id,
+            nombreProveedor: proveedor.name,
+            vendedorId: usuario?.id ?? null,
+            /* SÓLO las facturas: el anticipo también figura entre los comprobantes cancelados del
+               documento, pero no es un ítem del tablero de facturas de compra y el servicio arma su
+               línea por su cuenta a partir de los movimientos. */
+            facturas: orden.comprobantes
+              .filter((c) => !c.esAnticipo)
+              .map((c) => ({ id: c.id, nro: c.nro, importe: c.cancelado })),
+            /* En una aplicación no hay cajas: lo que cubre las facturas son los anticipos. */
+            movimientos: esAplicacion ? [] : pago.movimientos,
+            tipo: esAnticipo ? 'anticipo' : esAplicacion ? 'aplicacion' : 'facturas',
+            /* Los tres datos del anticipo viajan juntos: describen la misma línea del documento. */
+            anticipo: esAnticipo ? importeAnticipo : undefined,
+            detalleAnticipo: esAnticipo ? detalleAnticipo : undefined,
+            vencimientoAnticipo: esAnticipo ? vencimientoAnticipo : undefined,
+            anticiposAplicados: esAplicacion ? anticiposAplicados : undefined,
+          }
+        : null,
+    [
+      proveedor,
+      usuario,
+      orden.comprobantes,
+      esAplicacion,
+      esAnticipo,
+      pago.movimientos,
+      importeAnticipo,
+      detalleAnticipo,
+      vencimientoAnticipo,
+      anticiposAplicados,
+    ],
+  )
+  const firma = useMemo(() => firmaDe({ datos, fecha: pago.fecha }), [datos, pago.fecha])
+  const desactualizado = ordenPagoDoc !== null && ordenPagoDoc.firma !== firma
+
+  /** Lo que lleva el PDF, con el número que se le pase. Sale de la MISMA card que ve el usuario. */
+  const datosPdf = (numero: string): Omit<DatosOrdenPagoPdf, 'nombre'> | null =>
+    proveedor && {
+      variante: esAnticipo ? 'anticipo' : esAplicacion ? 'aplicacion' : 'facturas',
+      numero,
+      // La fecha del PAGO es la del día en que se opera, la misma que lleva la operación.
+      fechaEmision: pago.fecha,
+      titular: proveedor,
+      documento: orden,
+      anticipo: lineaAnticipo,
+      logoSrc: LOGO_DOCUMENTOS,
+    }
+
+  /**
+   * Lo que lleva la CONSTANCIA de retención, con su número de certificado y el de la orden que la
+   * practicó. Sale de la MISMA card "Retención a generar" (`lineasRetencion`).
+   */
+  const datosConstancia = (
+    certificado: string,
+    refOrdenPago: string,
+  ): Omit<DatosConstanciaRetencionPdf, 'nombre'> | null =>
+    proveedor && {
+      certificado,
+      fechaRetencion: pago.fecha,
+      refOrdenPago,
+      retenido: proveedor,
+      retenciones: lineasRetencion.map((l) => ({
+        regimen: l.regimen,
+        comprobante_origen: l.comprobante,
+        monto_base: l.baseImponible,
+        alicuota: l.alicuota,
+        monto_retenido: l.retenido,
+      })),
+      logoSrc: LOGO_DOCUMENTOS,
+    }
+
+  /**
+   * "Emitir orden de pago": pide el número con el que va a nacer la orden y genera su PDF con lo que
+   * muestra la card —y, si la orden practicó una retención de Ganancias, también la CONSTANCIA de
+   * retención—. NO escribe en Monday —eso lo hace `registrar`—, así que se puede VOLVER A EMITIR: el
+   * documento nuevo reemplaza al anterior y el envío vuelve a cero (ver `useReemision`).
+   */
+  const emitir = async () => {
+    const pdf0 = datosPdf('')
+    if (!pdf0 || !datos || ordenPagoId || emitiendoRef.current) return
+    emitiendoRef.current = true
+    dispatch({ type: 'setEmisionOP', emision: { fase: 'creando', estado: 'Generando PDF', error: null } })
+    let numero: string | null = null
+    /* El número de certificado de la constancia, si la orden retuvo: se predice igual que el de la
+       orden, y es el mismo que después se escribe en la línea de la retención. */
+    let certificado: string | null = null
+    try {
+      numero = await getProximoNroOP()
+      if (!numero) throw new Error('sin número')
+      if (lineasRetencion.length > 0) {
+        certificado = await getProximoNroRetencion()
+        if (!certificado) throw new Error('sin número de retención')
+      }
+    } catch {
+      dispatch({
+        type: 'setEmisionOP',
+        emision: {
+          fase: 'error',
+          estado: '',
+          error: {
+            estado: 'No se pudo obtener el número de la orden',
+            mensaje:
+              'No pudimos leer en Monday el número con el que va a salir la orden de pago (o su constancia de retención). Tocá el botón para reintentar.',
+          },
+        },
+      })
+      emitiendoRef.current = false
+      return
+    }
+    try {
+      const datosRet = certificado ? datosConstancia(certificado, numero) : null
+      const [pdf, pdfConstancia] = await Promise.all([
+        /* La línea de la retención lleva en "Nro de comprobante" el certificado de su constancia. */
+        generarOrdenPagoPdf({
+          ...pdf0,
+          numero,
+          documento: certificado
+            ? {
+                ...pdf0.documento,
+                pagos: pdf0.documento.pagos.map((p) =>
+                  esRetencionGAN(p.descripcion) ? { ...p, comprobante: certificado as string } : p,
+                ),
+              }
+            : pdf0.documento,
+        }),
+        datosRet ? generarConstanciaRetencionPdf(datosRet) : Promise.resolve(null),
+      ])
+      dispatch({
+        type: 'setOrdenPagoDoc',
+        doc: {
+          numero,
+          fechaEmision: pago.fecha,
+          pdf,
+          /* La línea de la retención se escribe con el MISMO número que dice la constancia. */
+          datos: certificado ? { ...datos, nroRetencion: certificado } : datos,
+          firma,
+          registro: { pdfSubido: false, incompleto: null },
+          constancia: pdfConstancia && certificado ? { pdf: pdfConstancia, numero: certificado } : null,
+        },
+      })
+      dispatch({ type: 'setEmisionOP', emision: { fase: 'emitido', estado: 'Emitido', error: null } })
+    } catch (e) {
+      console.error('No se pudo generar el PDF de la orden de pago', e)
+      dispatch({
+        type: 'setEmisionOP',
+        emision: {
+          fase: 'error',
+          estado: '',
+          error: {
+            estado: 'Error de emisión',
+            mensaje:
+              'La app no está pudiendo generar el PDF de la orden de pago. Tocá el botón para reintentar; si vuelve a fallar, contactate con el soporte de TAP.',
+          },
+        },
+      })
+    } finally {
+      emitiendoRef.current = false
+    }
   }
 
   /**
-   * Cierra la operación y deja la app lista para el próximo pago. Con la orden sin emitir el botón
-   * sigue activo a propósito: la ventana explica por qué no se puede cerrar, en vez de dejar un
-   * botón muerto sin motivo (mismo criterio que el resto de los pasos).
-   *
-   * Antes de cerrar le PIDE al tablero que registre el pago —"🤖Estado Registro de Pago" en
-   * "Registrar"—, que es lo que dispara la automatización que impacta la cuenta corriente del
-   * proveedor y marca las facturas como pagadas. Va acá y no al crear la orden porque necesita que
-   * el ítem tenga ya todos sus subelementos colgados.
-   *
-   * Se ESPERA la respuesta en vez de largarla y cerrar: si la escritura falla, la operación queda
-   * a medio camino —la orden existe y el documento se emitió, pero nada impactó en la cuenta— y el
-   * usuario ya se fue a la pantalla siguiente, sin nada que le avise. Por eso el cierre sólo ocurre
-   * cuando el pedido entró; si no, se avisa y el botón queda disponible para reintentar.
+   * "Registrar Pago": el ÚNICO lugar donde la orden nace en Monday. Mismo recorrido que el del
+   * recibo —orden con sus subitems, PDF, pedido de registro y espera—, contra "⬅️ Pagos -
+   * PENDIENTES". Retoma donde quedó si un paso falla.
    */
-  const finalizar = async () => {
-    if (fase !== 'emitido') {
+  const registrar = async () => {
+    if (!ordenPagoDoc) {
       setAviso(true)
       return
     }
-    if (registrando) return
-    /* Sin id no hay a quién pedirle el registro. No debería pasar —la orden emitida siempre dejó su
-       ítem—, pero de darse, cerrar igual es mejor que dejar al usuario encerrado en la etapa. */
-    if (!ordenPagoId) {
-      dispatch({ type: 'reset' })
+    if (desactualizado) {
+      setAvisoCambios(true)
       return
     }
+    if (ordenPagoDoc.registro.incompleto) {
+      setVerIncompleto(true)
+      return
+    }
+    if (registrando) return
     setRegistrando(true)
-    /* Marca el corte entre los DOS tiempos, igual que en el recibo: con el pedido ya escrito, un
-       fallo posterior no se puede comunicar como "no se pudo pedir el registro". */
     let pedido = false
+    let accion = 'registrar la orden de pago'
     try {
-      await pedirRegistroOP(ordenPagoId)
+      let id = ordenPagoId
+      if (!id) {
+        const creada = await crearOrdenDePago(ordenPagoDoc.datos)
+        id = creada.id
+        dispatch({ type: 'setOrdenPagoId', id })
+        if (!ordenPagoCompleta(creada)) {
+          dispatch({
+            type: 'avanceRegistro',
+            documento: 'ordenPago',
+            avance: { incompleto: faltantesOrdenPago(creada) },
+          })
+          setRegistrando(false)
+          setVerIncompleto(true)
+          return
+        }
+      }
+
+      let cambio: { emitido: string; real: string } | null = null
+      // El número con el que quedó la orden en Monday: lo nombra la fila de la retención.
+      let nroReal = ordenPagoDoc.numero
+      if (!ordenPagoDoc.registro.pdfSubido) {
+        accion = 'subir el PDF de la orden de pago'
+        /* El número del PDF era una predicción: si Monday le dio otro, en el tablero queda el PDF
+           con el REAL. */
+        const real = await leerNroOP(id)
+        let pdf = ordenPagoDoc.pdf
+        if (real && real !== ordenPagoDoc.numero) {
+          const conReal = datosPdf(real)
+          if (conReal) pdf = await generarOrdenPagoPdf(conReal)
+          cambio = { emitido: ordenPagoDoc.numero, real }
+        }
+        if (real) nroReal = real
+        await adjuntarPdfOP(id, pdf, ordenPagoDoc.fechaEmision)
+        dispatch({ type: 'avanceRegistro', documento: 'ordenPago', avance: { pdfSubido: true } })
+      }
+
+      accion = 'pedir el registro del pago'
+      await pedirRegistroOP(id)
       pedido = true
       /* El tablero tiene que decir que lo registró: se sondea "🤖Estado Registro de Pago" hasta que
-         llegue a "Registrado". La que impacta la cuenta corriente del proveedor y marca las
-         facturas como pagadas es la automatización, no la app. */
-      await esperarRegistro(ordenPagoId, REGISTRO_PAGOS)
+         llegue a "Registrado". La que impacta la cuenta corriente del proveedor es la automatización. */
+      await esperarRegistro(id, REGISTRO_PAGOS)
+      /* Con el pago registrado, la automatización ya creó la fila de la retención en "🔃Retenciones":
+         ahí va la constancia. Es best-effort —el pago ya está registrado—: si falla, se avisa en la
+         consola y no se deja al usuario trabado en la etapa. */
+      const constancia = ordenPagoDoc.constancia
+      if (constancia) {
+        await adjuntarConstanciaRetencion({
+          ordenId: id,
+          nroOrden: nroReal,
+          constancia,
+          regenerar: async (certificado) => {
+            const d = datosConstancia(certificado, nroReal)
+            return d ? generarConstanciaRetencionPdf(d) : constancia.pdf
+          },
+        }).catch((e) => console.error('No se pudo subir la constancia de retención', e))
+      }
+      if (cambio) {
+        setRegistrando(false)
+        setNumeroCambiado(cambio)
+        return
+      }
       dispatch({ type: 'reset' })
     } catch (e) {
       setRegistrando(false)
       if (!pedido) {
-        // No salió: se puede reintentar sin duplicar nada.
-        dispatch({ type: 'errorMonday', accion: 'pedir el registro del pago' })
+        dispatch({ type: 'errorMonday', accion })
         return
       }
       setAvisoRegistro(
         e instanceof Error && e.message.trim()
           ? e.message
-          : 'La orden quedó emitida en Monday, pero el tablero no confirmó el registro del pago.',
+          : 'La orden quedó creada en Monday, pero el tablero no confirmó el registro del pago.',
       )
     }
   }
+
+  /* Reemisión, con el mismo criterio que la app de ventas: el botón de emitir sigue habilitado, y un
+     PDF que quedó viejo (se cambiaron datos en un paso anterior) se descarta solo. */
+  const descartar = useCallback(() => dispatch({ type: 'descartarEmision', documento: 'ordenPago' }), [dispatch])
+  const { pedirEmision, modal: modalReemision } = useReemision({
+    nombre: 'la orden de pago',
+    emitido: ordenPagoDoc !== null,
+    firmaEmitida: ordenPagoDoc?.firma ?? null,
+    firmaActual: firma,
+    creado: ordenPagoId !== null,
+    descartar,
+    emitir: () => void emitir(),
+  })
 
   return (
     <section className="view recibo-v2 paso-layout">
@@ -235,12 +462,24 @@ export function OrdenPagoView() {
               fechaEmision={pago.fecha}
               totalRecibido={orden.totalEntregado}
               totalCancelado={totalCancelado}
-              fase={fase}
-              error={error}
-              puedeReintentar={puedeReintentar}
-              onEmitir={emitirOrden}
+              fase={emisionOP.fase}
+              error={emisionOP.error}
+              onEmitir={pedirEmision}
+              bloqueado={ordenPagoId !== null}
               rotulos={ROTULOS_RESUMEN_OP}
-            />
+            >
+              {/* La orden y, si retuvo, su constancia: "Ver / Imprimir (2)". */}
+              <VerImprimirPdf
+                archivos={
+                  ordenPagoDoc
+                    ? ordenPagoDoc.constancia
+                      ? [ordenPagoDoc.pdf, ordenPagoDoc.constancia.pdf]
+                      : [ordenPagoDoc.pdf]
+                    : null
+                }
+              />
+              {desactualizado && ordenPagoId !== null && <DocumentoDesactualizado documento="la orden de pago" />}
+            </ResumenRecibo>
 
             {/* Columna derecha: el documento y, debajo, su envío al proveedor. */}
             <div className="recibo-col-der">
@@ -249,21 +488,9 @@ export function OrdenPagoView() {
                   Es exactamente el mismo interruptor que usa el recibo. */}
               <ReciboAGenerar
                 recibo={orden}
-                fase={fase}
-                estado={estado}
-                /* La línea sale con el MISMO nombre con el que se va a escribir el subelemento
-                   —"Anticipo · <detalle>"— y con el vencimiento cargado, que es como la publica el
-                   PDF de la orden. La emisión la pone el tablero al emitir, así que acá va vacía y
-                   se muestra marcada como sin dato. */
-                anticipo={
-                  esAnticipo
-                    ? {
-                        importe: importeAnticipo,
-                        nombre: nombreAnticipoPago(detalleAnticipo),
-                        vencimiento: vencimientoAnticipo,
-                      }
-                    : null
-                }
+                fase={emisionOP.fase}
+                estado={emisionOP.estado}
+                anticipo={lineaAnticipo}
                 rotulos={ROTULOS_DOC_OP}
                 /* En una APLICACIÓN la tabla de lo entregado lista los anticipos imputados, no
                    cajas: acá no salió plata, se usó la que ya estaba a favor nuestro. */
@@ -275,9 +502,10 @@ export function OrdenPagoView() {
               </ReciboAGenerar>
 
               {/* El MISMO bloque de envío del recibo. La clave elige el comprobante del catálogo, y
-                  de ahí sale todo lo propio de la orden: de qué ítem se despacha, que los contactos
-                  son los del PROVEEDOR y que sin uno que la acepte el envío queda inhabilitado. */}
-              <EnviarDocumento documento="ordenPago" numero={NRO_ORDEN} />
+                  de ahí sale todo lo propio de la orden: que los contactos son los del PROVEEDOR y
+                  que sin uno que la acepte el envío queda inhabilitado. */}
+              {/* Por documento emitido: uno nuevo es otro documento, y el envío arranca de cero. */}
+              <EnviarDocumento key={`emision-${emisionNro}`} documento="ordenPago" />
             </div>
           </div>
         )}
@@ -298,48 +526,74 @@ export function OrdenPagoView() {
               type="button"
               className="btn btn-primary"
               disabled={registrando}
-              onClick={() => void finalizar()}
+              title={ordenPagoDoc ? undefined : 'Emití la orden de pago para poder registrar el pago.'}
+              onClick={() => void registrar()}
             >
-              <i className="fas fa-flag-checkered" /> Finalizar Operación
+              <i className="fas fa-flag-checkered" /> Registrar Pago
             </button>
           </div>
         </div>
       </div>
 
-      {/* La MISMA ventana —y los mismos estilos— con los que se registra un cobro y con los que la
-          app de operaciones de venta registra una venta. */}
+      {/* La MISMA ventana —y los mismos estilos— con los que se registra un cobro. */}
       {registrando && (
         <ModalCargando
           titulo="Registrando pago en el sistema"
-          detalle="Estamos registrando el pago, espera unos segundos y no salgas de la app"
+          detalle="Estamos registrando la orden de pago en el sistema junto a sus cajas, sus facturas y su PDF. Espera unos segundos y no salgas de la app"
         />
       )}
 
       {/* El pago salió pero el tablero no lo confirmó. Se nombra así, sin prometer nada: lo único
           seguro es que el ítem está escrito y que su registro no cerró. */}
+      {modalReemision}
+
       {avisoRegistro && (
         <AvisoModal titulo="El registro no se confirmó" onClose={() => setAvisoRegistro('')}>
           {avisoRegistro} Revisá la orden en Monday antes de volver a intentarlo.
         </AvisoModal>
       )}
 
+      {numeroCambiado && (
+        <AvisoModal
+          titulo="La orden quedó registrada con otro número"
+          onClose={() => {
+            setNumeroCambiado(null)
+            dispatch({ type: 'reset' })
+          }}
+        >
+          El pago se registró correctamente, pero Monday le asignó el número{' '}
+          <strong>{numeroCambiado.real}</strong> y el PDF se había emitido como{' '}
+          <strong>{numeroCambiado.emitido}</strong> (otra orden tomó ese número en el medio). En
+          Monday quedó el PDF con el número correcto; si ya se lo enviaste al proveedor, reenviáselo
+          desde el tablero.
+        </AvisoModal>
+      )}
+
       {aviso && (
         <AvisoModal titulo="Todavía no emitiste la orden de pago" onClose={() => setAviso(false)}>
-          El pago no queda cerrado hasta que se emite su orden. Emitila desde el resumen y después
-          finalizá la operación.
+          El pago no se puede registrar hasta que se emite su orden. Emitila desde el resumen y
+          después registrá el pago.
+        </AvisoModal>
+      )}
+
+      {avisoCambios && (
+        <AvisoModal titulo="La orden emitida ya no coincide" onClose={() => setAvisoCambios(false)}>
+          Cambiaste datos del pago después de emitir la orden, así que el PDF ya no dice lo que se
+          registraría. Volvé a emitirla desde el resumen antes de registrar el pago.
         </AvisoModal>
       )}
 
       {/* La orden se creó a medias: se nombra exactamente qué no entró. */}
-      {incompleto && (
+      {verIncompleto && ordenPagoDoc?.registro.incompleto && (
         <AvisoModal
           titulo="La orden de pago quedó incompleta"
-          faltantes={incompleto}
-          onClose={limpiarIncompleto}
+          faltantes={ordenPagoDoc.registro.incompleto}
+          onClose={() => setVerIncompleto(false)}
         >
           La orden se creó en Monday, pero no entraron todos sus subelementos, así que
-          <strong> no se pidió su emisión</strong>: el documento saldría sin esas líneas.
-          Completala en el tablero y emitila desde ahí; volver a emitirla desde acá la duplicaría.
+          <strong> no se le subió el PDF ni se pidió su registro</strong>: el pago quedaría
+          registrado sin esas líneas. Completala en el tablero y registrala desde ahí; volver a
+          registrarla desde acá la duplicaría.
         </AvisoModal>
       )}
     </section>

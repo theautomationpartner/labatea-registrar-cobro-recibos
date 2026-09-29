@@ -3,25 +3,25 @@ import { Fila } from '@/features/recibo/ResumenRecibo'
 import { money } from '@/lib/format'
 import { FORMATOS_RESUMEN, OPCIONES_ESTADO_CTA_CTE } from '@/lib/resumenCtaCte'
 import { useApp, useDispatch } from '@/state/hooks'
+import type { ReactNode } from 'react'
 import type { Cliente, ErrorEmision, FaseEmision, FormatoResumen } from '@/types'
-import { VerPdfResumen } from './VerPdfResumen'
 
 interface FichaResumenCtaCteProps {
   cliente: Pick<Cliente, 'name' | 'cuit'>
-  /** El ítem de la cuenta corriente: de ahí se baja el PDF generado. */
-  ctaCteId: string | null
   /** El período elegido en el paso 1, ya nombrado (ver `rotuloCriterio`). Vacío = sin período. */
   rotuloPeriodo: string
   /** Con qué saldo termina la cuenta en el período: el del último movimiento. */
   saldoFinal: number
   /** "🤖Remito Pends de Facturar" de la cuenta corriente (numeric_mm5f2npa). */
   mercaderiaPendFacturar: number
+  /** En qué anda la emisión —la generación de los archivos en la app—. */
   fase: FaseEmision
   error: ErrorEmision | null
-  puedeReintentar: boolean
   /** Se intentó emitir sin formato: el selector queda en rojo hasta que se elija uno. */
   marcarFormato: boolean
   onEmitir: () => void
+  /** Lo que va pegado debajo del botón de emisión: "Ver / Imprimir" y la descarga del Excel. */
+  children?: ReactNode
 }
 
 /**
@@ -32,19 +32,18 @@ interface FichaResumenCtaCteProps {
  */
 export function FichaResumenCtaCte({
   cliente,
-  ctaCteId,
   rotuloPeriodo,
   saldoFinal,
   mercaderiaPendFacturar,
   fase,
   error,
-  puedeReintentar,
   marcarFormato,
   onEmitir,
+  children,
 }: FichaResumenCtaCteProps) {
   const { usuario, resumenEstadoCtaCte, resumenFormato } = useApp()
   const dispatch = useDispatch()
-  const enCurso = fase === 'creando' || fase === 'emitiendo'
+  const enCurso = fase === 'creando'
   const formatoEnFalta = marcarFormato && !resumenFormato
 
   return (
@@ -84,8 +83,8 @@ export function FichaResumenCtaCte({
 
       <hr className="rsep" />
 
-      {/* FORMATO del archivo: obligatorio y antes del botón. Con la generación en curso o ya emitida
-          queda fijo: el archivo es del formato que se pidió. */}
+      {/* FORMATO del archivo: obligatorio y antes del botón. Con la generación en curso queda fijo;
+          cambiarlo con el resumen ya emitido descarta sus archivos y vuelve a "Emitir". */}
       <div className="res-formato">
         <label htmlFor="res-formato" className="rlabel">
           Formato<span className="rreq">*</span>
@@ -96,7 +95,8 @@ export function FichaResumenCtaCte({
             resumenFormato ? '' : 'res-sel--ph'
           }`}
           aria-invalid={formatoEnFalta || undefined}
-          disabled={enCurso || fase === 'emitido'}
+          // Se puede cambiar con el resumen emitido: sus archivos se descartan y se vuelve a emitir.
+          disabled={enCurso}
           value={resumenFormato ?? ''}
           onChange={(e) =>
             dispatch({ type: 'setResumenFormato', formato: e.target.value as FormatoResumen })
@@ -113,20 +113,30 @@ export function FichaResumenCtaCte({
         </select>
       </div>
 
-      {/* El botón ES el estado de la generación, igual que en el recibo. Un error se puede reintentar:
-          pedir de nuevo el resumen no duplica nada en el tablero. */}
+      {/* El botón ES el estado de la generación, igual que en el recibo. Emitir no escribe en Monday
+          —eso es "Registrar Resumen"—, así que un error siempre se puede reintentar. */}
       <button
         type="button"
         className={`btn-generar btn-mayus ${enCurso ? 'btn-generar--curso' : ''} ${
           fase === 'emitido' ? 'btn-generar--ok' : ''
         } ${fase === 'error' ? 'btn-generar--err' : ''}`}
-        disabled={enCurso || fase === 'emitido' || (fase === 'error' && !puedeReintentar)}
+        // Emitido sigue habilitado: se puede volver a emitir para corregir un error.
+        disabled={enCurso}
         aria-busy={enCurso}
+        title={
+          enCurso
+            ? undefined
+            : fase === 'emitido'
+              ? 'Tocá para volver a emitir con los datos actuales'
+              : fase === 'error'
+                ? 'Tocá para reintentar la emisión'
+                : undefined
+        }
         onClick={onEmitir}
       >
         {enCurso ? (
           <>
-            <i className="fas fa-circle-notch fa-spin" /> Emitiendo...
+            <i className="fas fa-circle-notch fa-spin" /> Generando archivos...
           </>
         ) : fase === 'emitido' ? (
           <>
@@ -134,8 +144,7 @@ export function FichaResumenCtaCte({
           </>
         ) : fase === 'error' ? (
           <>
-            <i className="fas fa-triangle-exclamation" />{' '}
-            {puedeReintentar ? 'Reintentar la emisión' : 'No se pudo emitir'}
+            <i className="fas fa-xmark" /> Error de emisión
           </>
         ) : (
           <>
@@ -144,24 +153,18 @@ export function FichaResumenCtaCte({
         )}
       </button>
 
-      {/* "Ver / Imprimir", siempre debajo de emitir: se habilita cuando la emisión deja algún PDF. Los
-          mensajes —el error de la emisión y los del PDF— van DEBAJO de los dos botones, nunca entre
-          ellos. */}
-      <VerPdfResumen
-        ctaCteId={ctaCteId}
-        formato={resumenFormato}
-        incluyeEstado={resumenEstadoCtaCte === 'INCLUIR'}
-        fase={fase}
-      >
-        {fase === 'error' && error && (
-          <div className="rec-error" role="alert">
-            <p className="rec-error-estado">
-              <i className="fas fa-circle-exclamation" /> {error.estado}
-            </p>
-            <p className="rec-error-msg">{error.mensaje}</p>
-          </div>
-        )}
-      </VerPdfResumen>
+      {/* "Ver / Imprimir" y la descarga del Excel, siempre debajo de emitir. Los mensajes van DEBAJO
+          de los botones, nunca entre ellos. */}
+      {children}
+
+      {fase === 'error' && error && (
+        <div className="rec-error" role="alert">
+          <p className="rec-error-estado">
+            <i className="fas fa-circle-exclamation" /> {error.estado}
+          </p>
+          <p className="rec-error-msg">{error.mensaje}</p>
+        </div>
+      )}
     </div>
   )
 }

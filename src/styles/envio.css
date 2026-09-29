@@ -428,3 +428,38 @@
 .enviar-aviso--err {
   color: var(--red);
 }
+
+/* Envío PARCIAL: salió por un canal y no por el otro. Amarillo, como el botón. */
+.enviar-aviso--warn {
+  color: #b45309;
+}
+
+/* ===== Estado del envío de cada contacto =====
+   El círculo a la derecha del tacho: gris sin enviar, girando mientras se manda, verde con tilde si
+   le llegó y rojo con cruz si no. Es el mismo de la app de operaciones de venta. */
+.cobro-ok {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #e6e9ef;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.cobro-ok.on {
+  background: var(--green);
+}
+.cobro-ok.err {
+  background: var(--red);
+}
+/* Mientras se envía: el mismo hueco de 24px, sin disco, con el anillo girando, para que la fila no
+   salte al pasar al tilde o a la cruz. */
+.cobro-ok--cargando {
+  background: transparent;
+  color: var(--text-gray);
+  font-size: 15px;
+}

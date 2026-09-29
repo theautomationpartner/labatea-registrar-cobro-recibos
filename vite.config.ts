@@ -27,8 +27,44 @@ export default defineConfig(({ mode }) => {
       }
     : {}
 
+  /* Envío de los documentos (recibo, orden de pago, resumen) a los contactos: el MISMO escenario que
+     usa la app de operaciones de venta. En producción lo resuelve la misma función
+     (`/api/make-comprobantes?escenario=envio-documento`), con `MAKE_WEBHOOK_ENVIOS_URL`. */
+  const webhookEnvio = env.MAKE_WEBHOOK_ENVIOS_URL?.trim()
+  const proxyEnvio: Record<string, ProxyOptions> = webhookEnvio
+    ? {
+        '/make-envio-documento': {
+          target: new URL(webhookEnvio).origin,
+          changeOrigin: true,
+          rewrite: () => new URL(webhookEnvio).pathname,
+          timeout: 120_000,
+          proxyTimeout: 120_000,
+        },
+      }
+    : {}
+
+  /* Estado de un WhatsApp enviado por 360Messenger. En producción lo resuelve `api/whatsapp-estado.ts`
+     con la misma variable; acá el proxy de Vite pone la API key del lado del servidor, así tampoco
+     llega al navegador. `/messenger360-estado?id=…` → `/v2/message/status?id=…`. La de producción si
+     está; si no, la del número de testeo. */
+  const clave360 = (env.WHATSAPP_API_KEY || env.WHATSAPP_API_KEY_TEST)?.trim()
+  const proxy360: Record<string, ProxyOptions> = clave360
+    ? {
+        '/messenger360-estado': {
+          target: 'https://api.360messenger.com',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/messenger360-estado/, '/v2/message/status'),
+          headers: { Authorization: `Bearer ${clave360}` },
+        },
+      }
+    : {}
+
   return {
     plugins: [react()],
+    /* react-pdf y exceljs entran por `import()` recién al emitir. Sin esto, en desarrollo Vite los
+       descubre en ese momento, los optimiza y RECARGA la página: se pierde la operación a mitad de
+       camino. Pre-empaquetados de entrada, la primera emisión no recarga nada. */
+    optimizeDeps: { include: ['@react-pdf/renderer', 'exceljs'] },
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -55,16 +91,9 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/monday-api/, '/v2'),
         },
-        /* Los archivos de las columnas `file` (el PDF del resumen de cta cte): Monday los entrega por
-           un enlace firmado de S3 que el navegador no puede leer desde localhost (CORS). En
-           producción los baja `api/resumen-archivo.ts`. La firma viaja en la query, que el proxy
-           reenvía intacta. */
-        '/monday-files': {
-          target: 'https://files-monday-com.s3.amazonaws.com',
-          changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/monday-files/, ''),
-        },
         ...proxyMake,
+        ...proxyEnvio,
+        ...proxy360,
       },
     },
   }

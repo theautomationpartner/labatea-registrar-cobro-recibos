@@ -525,3 +525,43 @@
   gap: 16px;
   min-width: 0;
 }
+
+/* ===== Ver / Imprimir =====
+   Debajo del botón de emisión, a lo ancho, siempre visible: se habilita cuando la emisión deja algún
+   PDF. Lo comparten el recibo, la orden de pago y el resumen de cta cte. Los mensajes de los dos
+   botones van debajo de éste. */
+.recibo-v2 .ver-pdf {
+  margin-top: 10px;
+}
+.recibo-v2 .ver-pdf-btn {
+  width: 100%;
+  padding: 0 12px;
+  font-size: 13px;
+}
+.recibo-v2 .ver-pdf-btn:disabled {
+  cursor: not-allowed;
+  background: #f4f5f7;
+  color: #a1a3b1;
+}
+.recibo-v2 .ver-pdf-aviso {
+  margin-top: 8px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--red, #e2445c);
+}
+
+/* Los datos cambiaron después de emitir: el documento ya no dice lo que se va a registrar. */
+.recibo-v2 .doc-desactualizado {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #fcd34d;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.recibo-v2 .doc-desactualizado button {
+  margin-top: 8px;
+}
+

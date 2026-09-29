@@ -8,6 +8,7 @@ import { descontarRetencion, esCajaCheque, esRetencionGAN } from '@/lib/pagosPro
 import { periodoDelCriterio } from '@/lib/resumenCtaCte'
 import type { RolPersona } from '@/lib/personas'
 import { indiceDePasoPago } from '@/lib/pasosPago'
+import type { DatosOrdenPago, DatosRecibo, DatosRegistroResumen } from '@/services/monday'
 import type {
   AnticipoPendiente,
   ChequeEnCartera,
@@ -17,8 +18,10 @@ import type {
   OperacionApp,
   CobroState,
   Contacto,
+  CanalEnvio,
+  ComprobanteEmitido,
   EmisionRecibo,
-  PdfsResumen,
+  ResumenEmitido,
   EstadoCtaCteResumen,
   EstadoSaldo,
   FacturaAdeudada,
@@ -173,8 +176,17 @@ export interface AppState {
   imputaciones: Record<string, number>
   /** Movimientos con los que el cliente paga lo imputado. Es lo que se registra en el paso 3. */
   cobro: CobroState
-  /** ID del recibo ya emitido en "➡️Recibos y Cobros". null = todavía no se emitió. */
+  /**
+   * ID del recibo ya REGISTRADO en "➡️Recibos y Cobros". null = todavía no se registró. Nace recién
+   * con "Registrar Cobro": emitir el recibo sólo genera el PDF en la app (`reciboDoc`).
+   */
   reciboId: string | null
+  /**
+   * El recibo EMITIDO en la app: su PDF y los datos con los que se va a registrar. Vive acá y no en
+   * la vista para que ir a otra etapa y volver no lo pierda: "Ver / Imprimir" lo abre, el envío lo
+   * manda y "Registrar Cobro" lo sube al ítem. `null` = todavía no se emitió.
+   */
+  reciboDoc: ComprobanteEmitido<DatosRecibo> | null
   /**
    * En qué anda la emisión de ESE recibo. Es una bandera global —y no el estado local del hook que
    * la conduce— por el mismo motivo que `documentoEnviado`: tiene que sobrevivir a la navegación.
@@ -192,6 +204,35 @@ export interface AppState {
    * se puede disparar un segundo envío.
    */
   documentoEnviado: boolean
+  /**
+   * Qué canales le llegaron ya a cada contacto (por su `pulseId`). Es lo que hace que, tras un envío
+   * PARCIAL, el reintento pida sólo lo que faltó y nadie reciba dos veces lo mismo.
+   */
+  enviadosPorContacto: Record<string, CanalEnvio[]>
+  /** A qué contactos no les llegó el último intento, con el motivo: la cruz roja de su fila. */
+  contactosFallidos: Record<string, string>
+  /**
+   * Ya se disparó el primer envío: desde ahí la lista de contactos queda fija (el tilde o la cruz de
+   * cada fila dicen a quién se le mandó y a quién no, y quitar a alguien lo borraría de esa cuenta).
+   */
+  envioIniciado: boolean
+  /**
+   * Cuántos de los documentos emitidos ya se abrieron con "Ver / Imprimir". El botón muestra los que
+   * faltan y cada clic abre el siguiente. Vive acá para que ir a otra etapa y volver no reinicie la
+   * cuenta; una emisión nueva la pone en cero.
+   */
+  pdfsAbiertos: number
+  /**
+   * Cuántos de los Excel emitidos ya se bajaron con "Descargar Excel". Es la misma cuenta que
+   * `pdfsAbiertos`, para los archivos que no se imprimen: el resumen de cta cte en Excel.
+   */
+  excelsDescargados: number
+  /**
+   * Cuenta las emisiones de la operación: sube con cada documento nuevo (o descartado). El bloque de
+   * envío se monta por este número, así una REEMISIÓN arranca el envío de cero aunque los datos —y la
+   * firma— sean los mismos. Mismo mecanismo que la app de operaciones de venta.
+   */
+  emisionNro: number
   /** Resultado del último envío, para mostrarlo como registro. */
   log: LogEntry[]
   /** Usuarios de los equipos "Vendedores" y "Administradores", leídos al iniciar la app. */
@@ -295,18 +336,19 @@ export interface AppState {
   /** Formato del archivo. Obligatorio antes de emitir: `null` = todavía no se eligió. */
   resumenFormato: FormatoResumen | null
   /**
-   * El ítem sobre el que YA se pidió la generación. `null` = todavía no se emitió. Es de donde se
-   * despacha el envío, igual que `reciboId`.
+   * El ítem de la cuenta sobre el que YA se registró el resumen (se subieron sus archivos). `null` =
+   * todavía no se registró. Nace con "Registrar Resumen", igual que `reciboId`.
    */
   resumenCtaCteId: string | null
+  /**
+   * "🤖ID Cta Cte" de la cuenta del cliente ("CTACTEC-003"): el "Cuenta Nº" de los documentos. Se lee
+   * junto con los movimientos; vacío si no se pudo leer.
+   */
+  ctaCteNro: string
+  /** El resumen EMITIDO en la app: sus archivos y lo que se registra. `null` = no se emitió. */
+  resumenDoc: ResumenEmitido<DatosRegistroResumen> | null
   /** En qué anda la generación del resumen. Global por el mismo motivo que la del recibo. */
   emisionResumen: EmisionRecibo
-  /**
-   * El contador de "Ver / Imprimir": qué PDFs dejó la emisión y cuáles se abrieron. Global para que
-   * ir y volver entre etapas no lo pierda. Nace de nuevo con cada emisión, y se descarta junto con
-   * ella cuando algo la invalida.
-   */
-  resumenPdfs: PdfsResumen
 
   /* ===== MÓDULO DE GESTIÓN DE COBRANZA =====
      El tablero de análisis. No tiene etapas ni documento: tiene un CRITERIO de búsqueda y el
@@ -365,8 +407,13 @@ export interface AppState {
   imputacionesPago: Record<string, number>
   /** Cajas con las que se paga lo imputado. Es lo que se registra en la etapa 3. */
   pago: PagoState
-  /** ID de la ORDEN DE PAGO ya creada en "⬅️ Pagos - PENDIENTES". null = todavía no se emitió. */
+  /**
+   * ID de la ORDEN DE PAGO ya REGISTRADA en "⬅️ Pagos - PENDIENTES". null = todavía no se registró.
+   * Nace con "Registrar Pago": emitir la orden sólo genera el PDF en la app (`ordenPagoDoc`).
+   */
   ordenPagoId: string | null
+  /** La orden EMITIDA en la app: su PDF y los datos con los que se registra. Igual que `reciboDoc`. */
+  ordenPagoDoc: ComprobanteEmitido<DatosOrdenPago> | null
   /**
    * En qué anda la emisión de ESA orden. Misma forma —y mismo motivo para vivir en el estado
    * global— que la del recibo: la orden se emite UNA vez, y esa marca tiene que sobrevivir a la
@@ -377,7 +424,6 @@ export interface AppState {
 
 /** Emisión sin empezar: es el punto de partida y el estado al que vuelve cada reinicio. */
 const EMISION_INICIAL: EmisionRecibo = { fase: 'idle', estado: '', error: null }
-const PDFS_RESUMEN_INICIAL: PdfsResumen = { emitidos: [], abiertos: [], listo: false }
 
 /** Cobro en blanco: sin movimientos y fechado en el día en que se opera. */
 const cobroVacio = (): CobroState => ({ fecha: hoy(), movimientos: [], confirmado: false })
@@ -414,10 +460,17 @@ export const initialState: AppState = {
   aplicaciones: {},
   cobro: cobroVacio(),
   reciboId: null,
+  reciboDoc: null,
   emision: EMISION_INICIAL,
   medioEnvio: 'Email',
   contactos: [],
   documentoEnviado: false,
+  enviadosPorContacto: {},
+  contactosFallidos: {},
+  envioIniciado: false,
+  pdfsAbiertos: 0,
+  excelsDescargados: 0,
+  emisionNro: 0,
   log: [],
   usuarios: [],
   /* Arranca en `true`: la consulta sale al montar la app, así el selector nace "Cargando…" en vez
@@ -448,8 +501,9 @@ export const initialState: AppState = {
   ctaCteId: null,
   resumenFormato: null,
   resumenCtaCteId: null,
+  ctaCteNro: '',
+  resumenDoc: null,
   emisionResumen: EMISION_INICIAL,
-  resumenPdfs: PDFS_RESUMEN_INICIAL,
   /* GESTIÓN DE COBRANZA. El criterio arranca puesto —es la pregunta con la que se entra a cobrar,
      ver `CRITERIO_INICIAL`— pero SIN pedir: el tablero abre en blanco y no consulta hasta que se
      aprieta "Buscar". */
@@ -467,6 +521,7 @@ export const initialState: AppState = {
   imputacionesPago: {},
   pago: pagoVacio(),
   ordenPagoId: null,
+  ordenPagoDoc: null,
   emisionOP: EMISION_INICIAL,
 }
 
@@ -482,6 +537,34 @@ export const initialState: AppState = {
  * Con la operación YA terminada no hay nada que proteger: lo que queda en pantalla es el comprobante
  * de algo que ya se escribió en Monday, no trabajo a medio hacer.
  */
+/**
+ * La etapa de EMITIR Y ENVIAR quedó completada: el documento de la etapa está emitido y, además, se
+ * lo envió a los contactos o ya se registró en Monday. Es lo que tilda en verde el último círculo del
+ * stepper, en los tres recorridos que emiten un documento:
+ *
+ *   · COBROS            · el recibo (paso `recibo`).
+ *   · PAGOS             · la orden de pago (paso `orden`).
+ *   · RESUMEN DE CTA CTE · el resumen (paso `resumenCtaCte`).
+ *
+ * Emitir solo no alcanza: el documento todavía no salió de la app.
+ */
+export function etapaDeEmisionCompleta(state: AppState): boolean {
+  if (state.operacionApp === 'PAGOS') {
+    return (
+      state.pasoPago === 'orden' &&
+      state.ordenPagoDoc !== null &&
+      (state.documentoEnviado || state.ordenPagoId !== null)
+    )
+  }
+  if (state.paso === 'resumenCtaCte') {
+    return state.resumenDoc !== null && (state.documentoEnviado || state.resumenCtaCteId !== null)
+  }
+  if (state.paso === 'recibo') {
+    return state.reciboDoc !== null && (state.documentoEnviado || state.reciboId !== null)
+  }
+  return false
+}
+
 export const hayOperacionEnCurso = (state: AppState): boolean =>
   /* El PROVEEDOR cuenta igual que el cliente: es lo primero que se carga en el módulo de Pagos y
      desde ahí en adelante todo lo cargado cuelga de él. Sin esto, irse de Pagos a mitad de una
@@ -490,12 +573,9 @@ export const hayOperacionEnCurso = (state: AppState): boolean =>
      Y cada circuito mira SU documento para saber si ya terminó: con la orden de pago emitida lo
      que queda en pantalla es el comprobante de algo que ya se escribió en Monday, no trabajo a
      medio hacer. */
-  /* El RESUMEN no deja recibo: su documento es la generación sobre la cuenta, así que lo que dice
-     que terminó es esa emisión. */
+  /* El RESUMEN no deja recibo: lo que dice que terminó es haberlo registrado sobre la cuenta. */
   (state.cliente !== null &&
-    (state.operacionApp === 'RESUMEN'
-      ? state.emisionResumen.fase !== 'emitido'
-      : state.reciboId === null)) ||
+    (state.operacionApp === 'RESUMEN' ? state.resumenCtaCteId === null : state.reciboId === null)) ||
   (state.proveedor !== null && state.ordenPagoId === null)
 
 /**
@@ -575,7 +655,8 @@ export type Action =
   /** Mismo criterio que `setEmision`: llega como PARCHE. */
   | { type: 'setEmisionResumen'; emision: Partial<EmisionRecibo> }
   /** Mismo criterio: PARCHE del contador de "Ver / Imprimir". */
-  | { type: 'setResumenPdfs'; pdfs: Partial<PdfsResumen> }
+  /** El resumen emitido en la app (sus archivos), o `null` para descartarlo. */
+  | { type: 'setResumenDoc'; doc: ResumenEmitido<DatosRegistroResumen> | null }
   | { type: 'setCobranzaEstados'; estados: readonly EstadoSaldo[] }
   | { type: 'setCobranzaTramos'; tramos: readonly TramoVencimiento[] }
   | { type: 'pedirCobranza' }
@@ -597,6 +678,24 @@ export type Action =
   | { type: 'addContacto'; contacto: Contacto }
   | { type: 'removeContacto'; id: string }
   | { type: 'setDocumentoEnviado'; value: boolean }
+  | { type: 'setEnviadosPorContacto'; value: Record<string, CanalEnvio[]> }
+  | { type: 'setContactosFallidos'; value: Record<string, string> }
+  | { type: 'setEnvioIniciado' }
+  | { type: 'setPdfsAbiertos'; value: number }
+  | { type: 'setExcelsDescargados'; value: number }
+  /** El recibo emitido en la app (su PDF y lo que se registra), o `null` para descartarlo. */
+  | { type: 'setReciboDoc'; doc: ComprobanteEmitido<DatosRecibo> | null }
+  /**
+   * Descarta la emisión de un documento —y con ella su envío, que mandó ESE PDF—: el usuario cambió
+   * algo después de emitir y el documento ya no dice lo que se va a registrar.
+   */
+  | { type: 'descartarEmision'; documento: 'recibo' | 'ordenPago' | 'resumen' }
+  /** Avance de "Registrar" sobre el recibo o la orden emitidos (ver `ComprobanteEmitido.registro`). */
+  | {
+      type: 'avanceRegistro'
+      documento: 'recibo' | 'ordenPago'
+      avance: Partial<ComprobanteEmitido<unknown>['registro']>
+    }
   | { type: 'setLog'; entries: LogEntry[] }
   | { type: 'setUsuarios'; usuarios: Usuario[] }
   | { type: 'setUsuarioActual'; usuario: UsuarioActual | null }
@@ -622,6 +721,8 @@ export type Action =
   | { type: 'setOrdenPagoId'; id: string }
   /** Mismo criterio que `setEmision`: llega como PARCHE, porque cada transición mueve sólo lo suyo. */
   | { type: 'setEmisionOP'; emision: Partial<EmisionRecibo> }
+  /** La orden emitida en la app, o `null` para descartarla. Igual que `setReciboDoc`. */
+  | { type: 'setOrdenPagoDoc'; doc: ComprobanteEmitido<DatosOrdenPago> | null }
 
 /**
  * Recorrido que le corresponde a un MÓDULO. Es la unica fuente de esa relacion, y por eso existe
@@ -653,9 +754,25 @@ const recorridoDe = (operacion: OperacionApp | null): TipoOperacion | null =>
  * Los destinatarios elegidos NO se tocan: son contactos del cliente, y el período no los cambia (al
  * cambiar de cliente los descarta `setCliente`).
  *
- * No borra nada en Monday: la generación escribe sobre la cuenta del cliente, no crea un ítem, así
- * que volver a pedirla no duplica nada.
+ * No borra nada en Monday: emitir sólo genera los archivos en la app. Lo que escribe sobre la cuenta
+ * es "Registrar Resumen", y eso todavía no pasó (si hubiera pasado, la operación ya estaría cerrada).
  */
+/**
+ * Lo que vuelve a cero cuando hay un documento NUEVO (o se descarta el que había): el contador de
+ * "Ver / Imprimir" y todo el envío —lo que se mandó era el documento anterior—. Sube `emisionNro`,
+ * que remonta el bloque de envío. Los destinatarios elegidos se conservan: son los mismos contactos.
+ */
+const documentoNuevo = (state: AppState) => ({
+  emisionNro: state.emisionNro + 1,
+  pdfsAbiertos: 0,
+  excelsDescargados: 0,
+  documentoEnviado: false,
+  enviadosPorContacto: {},
+  contactosFallidos: {},
+  envioIniciado: false,
+  log: [],
+})
+
 const resumenSinEmitir = (state: AppState): AppState => ({
   ...state,
   /* Cambió lo que se iba a buscar: el pedido anterior ya no vale y hay que volver a apretar el
@@ -663,18 +780,17 @@ const resumenSinEmitir = (state: AppState): AppState => ({
   resumenBusquedaPedida: null,
   resumenCtaCteId: null,
   emisionResumen: EMISION_INICIAL,
-  resumenPdfs: PDFS_RESUMEN_INICIAL,
-  documentoEnviado: false,
-  log: [],
+  resumenDoc: null,
+  ...documentoNuevo(state),
 })
 
 /**
- * La generación está EN VUELO: se escribió o se está escribiendo sobre la cuenta y se espera al
- * tablero. Mientras tanto no se acepta ningún cambio que la invalide —el período, el estado de la
- * cuenta, el formato—: el archivo que salga tiene que describir lo que se pidió.
+ * La generación está EN VUELO: la app está armando los archivos del resumen. Mientras tanto no se
+ * acepta ningún cambio que la invalide —el período, el estado de la cuenta, el formato—: el archivo
+ * que salga tiene que describir lo que se pidió.
  */
 export const generacionResumenEnVuelo = (state: AppState): boolean =>
-  state.emisionResumen.fase === 'creando' || state.emisionResumen.fase === 'emitiendo'
+  state.emisionResumen.fase === 'creando'
 
 /**
  * Responsable por defecto: el usuario de la lista que coincide con el logueado (mismo id de
@@ -747,9 +863,13 @@ export function reducer(state: AppState, action: Action): AppState {
         saldosAcreedorId: null,
               cobro: cobroVacio(),
         reciboId: null,
+        reciboDoc: null,
         emision: EMISION_INICIAL,
         contactos: [],
         documentoEnviado: false,
+        enviadosPorContacto: {},
+        contactosFallidos: {},
+        envioIniciado: false,
         log: [],
       }
 
@@ -891,9 +1011,13 @@ export function reducer(state: AppState, action: Action): AppState {
         /* El recibo y su envío también: el documento emitido era del cliente anterior, y sus
            destinatarios son los contactos de ESE cliente. */
         reciboId: null,
+        reciboDoc: null,
         emision: EMISION_INICIAL,
         contactos: [],
         documentoEnviado: false,
+        enviadosPorContacto: {},
+        contactosFallidos: {},
+        envioIniciado: false,
         log: [],
         /* RESUMEN DE CTA CTE: los movimientos, la cuenta y la generación son de ESE cliente. El
            estado de la cuenta y el período NO se descartan: son decisiones sobre el documento, no
@@ -906,9 +1030,10 @@ export function reducer(state: AppState, action: Action): AppState {
         facturasAdeudadasClienteId: null,
         movimientosCtaCteClave: null,
         ctaCteId: null,
+        ctaCteNro: '',
         resumenCtaCteId: null,
         emisionResumen: EMISION_INICIAL,
-        resumenPdfs: PDFS_RESUMEN_INICIAL,
+        resumenDoc: null,
       }
 
     /* Llegaron los saldos de la cuenta corriente del cliente. Van al estado global —y no al estado
@@ -1177,6 +1302,7 @@ export function reducer(state: AppState, action: Action): AppState {
         mercaderiaPendFacturar: action.resultado.mercaderiaPendFacturar,
         movimientosCtaCteClave: action.clave,
         ctaCteId: action.resultado.ctaCteId,
+        ctaCteNro: action.resultado.ctaCteNro,
       }
     }
 
@@ -1193,25 +1319,32 @@ export function reducer(state: AppState, action: Action): AppState {
     /* El formato del archivo. Con la generación en vuelo o ya emitida no se cambia: el archivo que
        se está armando —o que ya se armó— es del formato que se pidió. */
     case 'setResumenFormato':
-      if (generacionResumenEnVuelo(state) || state.emisionResumen.fase === 'emitido') return state
-      return { ...state, resumenFormato: action.formato }
+      if (generacionResumenEnVuelo(state)) return state
+      if (action.formato === state.resumenFormato) return state
+      /* Con el resumen ya emitido, cambiar el formato deja viejos sus archivos: se descartan —con su
+         envío— y la etapa vuelve a "Emitir", como cualquier cambio después de emitir. */
+      return state.resumenDoc
+        ? { ...state, ...documentoNuevo(state), resumenFormato: action.formato, resumenDoc: null, emisionResumen: EMISION_INICIAL }
+        : { ...state, resumenFormato: action.formato }
 
     /* Se pidió la generación sobre ESTA cuenta: es de donde se despacha el envío. */
     case 'setResumenCtaCteId':
       return { ...state, resumenCtaCteId: action.id }
 
-    /* Avance de la generación, tal como lo va reportando `useEmision`. */
+    /* Avance de la generación de los archivos del resumen, tal como lo reporta su vista. */
     case 'setEmisionResumen':
       return {
         ...state,
         emisionResumen: { ...state.emisionResumen, ...action.emision },
         /* Una emisión que arranca —la primera o un reintento— cuenta desde cero: lo de la anterior
            ya no vale. */
-        ...(action.emision.fase === 'creando' ? { resumenPdfs: PDFS_RESUMEN_INICIAL } : {}),
+        ...(action.emision.fase === 'creando' ? { pdfsAbiertos: 0, excelsDescargados: 0 } : {}),
       }
 
-    case 'setResumenPdfs':
-      return { ...state, resumenPdfs: { ...state.resumenPdfs, ...action.pdfs } }
+    /* El resumen quedó emitido en la app: sus archivos y lo que se va a registrar. Un documento nuevo
+       arranca la cuenta de "Ver / Imprimir" de cero. */
+    case 'setResumenDoc':
+      return { ...state, ...documentoNuevo(state), resumenDoc: action.doc }
 
 
     /* ===== GESTIÓN DE COBRANZA =====
@@ -1299,7 +1432,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'setReciboId':
       return { ...state, reciboId: action.id }
 
-    /* Avance de la emisión, tal como lo va reportando `useEmisionRecibo`. */
+    /* Avance de la emisión del recibo (la generación de su PDF), tal como lo reporta su vista. */
     case 'setEmision':
       return { ...state, emision: { ...state.emision, ...action.emision } }
 
@@ -1318,6 +1451,46 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case 'removeContacto':
       return { ...state, contactos: state.contactos.filter((c) => c.id !== action.id) }
+
+    /* Un documento nuevo —la primera emisión o una REEMISIÓN— es otro documento: la cuenta de "Ver /
+       Imprimir" y el envío del anterior no cuentan, se vuelve a enviar. */
+    case 'setReciboDoc':
+      return { ...state, ...documentoNuevo(state), reciboDoc: action.doc }
+
+    case 'descartarEmision': {
+      /* El envío vuelve a empezar: lo que se mandó era el documento descartado. Los destinatarios
+         elegidos se conservan —son los mismos contactos—, igual que en `resumenSinEmitir`. */
+      const envioDeCero = documentoNuevo(state)
+      if (action.documento === 'recibo') {
+        return { ...state, ...envioDeCero, reciboDoc: null, emision: EMISION_INICIAL }
+      }
+      if (action.documento === 'ordenPago') {
+        return { ...state, ...envioDeCero, ordenPagoDoc: null, emisionOP: EMISION_INICIAL }
+      }
+      return { ...state, ...envioDeCero, resumenDoc: null, emisionResumen: EMISION_INICIAL }
+    }
+
+    case 'avanceRegistro': {
+      const clave = action.documento === 'recibo' ? 'reciboDoc' : 'ordenPagoDoc'
+      const doc = state[clave]
+      if (!doc) return state
+      return { ...state, [clave]: { ...doc, registro: { ...doc.registro, ...action.avance } } }
+    }
+
+    case 'setEnviadosPorContacto':
+      return { ...state, enviadosPorContacto: action.value }
+
+    case 'setContactosFallidos':
+      return { ...state, contactosFallidos: action.value }
+
+    case 'setEnvioIniciado':
+      return { ...state, envioIniciado: true }
+
+    case 'setPdfsAbiertos':
+      return { ...state, pdfsAbiertos: action.value }
+
+    case 'setExcelsDescargados':
+      return { ...state, excelsDescargados: action.value }
 
     case 'setDocumentoEnviado':
       return { ...state, documentoEnviado: action.value }
@@ -1438,6 +1611,7 @@ export function reducer(state: AppState, action: Action): AppState {
         imputacionesPago: {},
         pago: pagoVacio(),
         ordenPagoId: null,
+        ordenPagoDoc: null,
         emisionOP: EMISION_INICIAL,
       }
 
@@ -1468,9 +1642,13 @@ export function reducer(state: AppState, action: Action): AppState {
         /* La orden y su envío también: el documento emitido era del proveedor anterior, y sus
            destinatarios son los contactos de ESE proveedor. */
         ordenPagoId: null,
+        ordenPagoDoc: null,
         emisionOP: EMISION_INICIAL,
         contactos: [],
         documentoEnviado: false,
+        enviadosPorContacto: {},
+        contactosFallidos: {},
+        envioIniciado: false,
         log: [],
       }
 
@@ -1589,6 +1767,9 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, ordenPagoId: action.id }
 
     /* Avance de la emisión de la orden, tal como lo va reportando el hook. */
+    case 'setOrdenPagoDoc':
+      return { ...state, ...documentoNuevo(state), ordenPagoDoc: action.doc }
+
     case 'setEmisionOP':
       return { ...state, emisionOP: { ...state.emisionOP, ...action.emision } }
 

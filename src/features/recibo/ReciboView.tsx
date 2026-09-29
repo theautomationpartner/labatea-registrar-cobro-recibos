@@ -1,22 +1,54 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { AvisoModal } from '@/components/ui/AvisoModal'
 import { ModalCargando } from '@/components/ui/ModalCargando'
+import { generarReciboPdf } from '@/features/documentos/generarDocumentos'
+import { LOGO_DOCUMENTOS } from '@/features/documentos/pdf/comun'
 import { EnviarDocumento } from '@/features/shared/EnviarDocumento'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
+import { useReemision } from '@/features/shared/useReemision'
+import { VerImprimirPdf } from '@/features/shared/VerImprimirPdf'
+import { diasPromedioCobro, formatoDiasPromedio } from '@/lib/diasPromedio'
+import { saldoConRecibo, type DatosReciboPdf } from '@/lib/documentoComprobante'
+import { firmaDe } from '@/lib/firma'
 import { descripcionDePaso, etiquetaDePaso, numeroDePaso, pasoAnterior } from '@/lib/pasos'
-import { armarRecibo, pagosDeAnticipos, NRO_RECIBO } from '@/lib/recibo'
-import { esperarRegistro, pedirRegistro, REGISTRO_COBROS } from '@/services/monday'
+import { armarRecibo, pagosDeAnticipos } from '@/lib/recibo'
+import {
+  adjuntarPdfRecibo,
+  crearRecibo,
+  esperarRegistro,
+  getProximoNroRecibo,
+  leerNroRecibo,
+  pedirRegistro,
+  REGISTRO_COBROS,
+  reciboCompleto,
+  type DatosRecibo,
+  type ResultadoRecibo,
+} from '@/services/monday'
 import { useApp, useDispatch } from '@/state/hooks'
+import { DocumentoDesactualizado } from './DocumentoDesactualizado'
 import { ReciboAGenerar } from './ReciboAGenerar'
 import { ResumenRecibo } from './ResumenRecibo'
-import { useEmisionRecibo } from './useEmisionRecibo'
+
+/** Qué subelementos faltaron, nombrados como los nombra el recibo. */
+export const faltantesRecibo = (datos: DatosRecibo, r: ResultadoRecibo): string[] =>
+  [
+    r.facturasCreadas < r.facturasEsperadas &&
+      `${datos.tipo === 'anticipo' ? 'Línea del anticipo' : 'Facturas canceladas'}: entraron ${r.facturasCreadas} de ${r.facturasEsperadas}`,
+    r.pagosCreados < r.pagosEsperados &&
+      `Formas de pago y ajustes: entraron ${r.pagosCreados} de ${r.pagosEsperados}`,
+  ].filter((x): x is string => typeof x === 'string')
 
 /**
  * Paso 4: el recibo de la cobranza —resumen a la izquierda, documento a la derecha—.
  *
  * Esta etapa NO decide nada: las facturas canceladas y las formas de pago ya quedaron cerradas en
- * los pasos 2 y 3, y el paso 3 no deja llegar hasta acá si la diferencia no está en cero. Lo único
- * que se hace es mostrar el documento que sale de eso y emitirlo.
+ * los pasos 2 y 3. Son dos momentos separados, igual que el presupuesto de la app de ventas:
+ *
+ *   1. "Emitir el recibo" genera el PDF EN LA APP, con la plantilla que usaba Make.com y los importes
+ *      de la card "Recibo a generar". No toca Monday. "Ver / Imprimir (1)" lo abre y el envío lo
+ *      manda a los contactos del cliente por el escenario de Make.
+ *   2. "Registrar Cobro" recién ahí escribe en Monday: crea el recibo con sus subitems, le sube ese
+ *      mismo PDF y le pide al tablero que registre el cobro (lo que impacta la cuenta corriente).
  */
 export function ReciboView() {
   const {
@@ -32,23 +64,29 @@ export function ReciboView() {
     anticipos,
     aplicaciones,
     reciboId,
+    reciboDoc,
+    emision,
+    emisionNro,
   } = useApp()
   const dispatch = useDispatch()
-  // Aviso al intentar cerrar la operación sin haber emitido el recibo.
+  // Aviso al intentar registrar sin haber emitido el recibo.
   const [aviso, setAviso] = useState(false)
-  /* El pedido de registro está en vuelo. Mientras tanto el botón de cierre se apaga: es una
+  // Aviso al intentar registrar con datos que cambiaron después de emitir.
+  const [avisoCambios, setAvisoCambios] = useState(false)
+  /* El registro está en vuelo. Mientras tanto el botón se apaga y la pantalla se tapa: es una
      escritura que impacta la cuenta corriente del cliente, y repetirla por un doble click la
      pediría dos veces. */
   const [registrando, setRegistrando] = useState(false)
   /* El recibo quedó escrito y pedido, pero el tablero no confirmó su registro. NO se reinicia la
      app: el ítem está en Monday y hay que mirarlo antes de tocar nada. */
   const [avisoRegistro, setAvisoRegistro] = useState('')
-  /* Todo el ciclo de la emisión —escritura, pedido al tablero y seguimiento del estado— vive en el
-     hook. Acá sólo se lo dispara y se reparte su estado entre las dos cards. Ese estado lo guarda el
-     hook en el estado GLOBAL, así que volver un paso y regresar reencuentra el recibo emitido en vez
-     de reofrecer la emisión. */
-  const { fase, estado, error, incompleto, puedeReintentar, emitir, limpiarIncompleto } =
-    useEmisionRecibo()
+  /* Monday le dio al recibo otro número que el del PDF enviado (otro recibo le ganó el número entre
+     la emisión y el registro). Se avisa antes de cerrar la operación. */
+  const [numeroCambiado, setNumeroCambiado] = useState<{ emitido: string; real: string } | null>(null)
+  // Los subelementos que no entraron al crear el recibo: el detalle de su ventana.
+  const [verIncompleto, setVerIncompleto] = useState(false)
+  // Cerrojo sincrónico contra el doble click en "Emitir": entre el click y el re-render hay await.
+  const emitiendoRef = useRef(false)
 
   const esAnticipo = tipoOperacion === 'anticipo'
   const esAplicacion = tipoOperacion === 'aplicacion'
@@ -84,95 +122,242 @@ export function ReciboView() {
      cuenta, así que ése es su TOTAL CANCELADO (el que `armarRecibo` deriva de los comprobantes
      daría 0, que sería decir que el recibo no cancela nada). */
   const totalCancelado = esAnticipo ? importeAnticipo : recibo.totalCancelado
+
+  /* Sale de los comprobantes del recibo, así que se recalcula solo si el usuario vuelve y cambia
+     una factura o lo que le cancela. En un anticipo no hay facturas: el renglón no se muestra. */
+  const diasPromedio = useMemo(
+    () => (esAnticipo ? null : diasPromedioCobro(recibo.comprobantes, cobro.fecha)),
+    [esAnticipo, recibo.comprobantes, cobro.fecha],
+  )
   const anterior = pasoAnterior('recibo', tipoOperacion)
 
-  const emitirRecibo = () => {
-    if (!cliente) return
-    void emitir({
-      clienteId: cliente.id,
-      nombreCliente: cliente.name,
-      vendedorId: usuario?.id ?? null,
-      tipo: esAnticipo ? 'anticipo' : esAplicacion ? 'aplicacion' : 'cobro',
-      /* SÓLO las facturas: los anticipos también figuran entre los comprobantes cancelados del
-         documento, pero no son ítems del tablero de facturas y el servicio los arma por su cuenta
-         a partir de los movimientos. Mandarlos acá los escribiría dos veces. */
-      facturas: recibo.comprobantes
-        .filter((c) => !c.esAnticipo)
-        .map((c) => ({ id: c.id, nro: c.nro, importe: c.cancelado })),
-      /* En una aplicación no hay formas de pago: lo que cubre las facturas son los anticipos. */
-      movimientos: esAplicacion ? [] : cobro.movimientos,
-      /* Los tres datos del anticipo viajan juntos: describen la misma línea del recibo. */
-      anticipo: esAnticipo ? importeAnticipo : undefined,
-      detalleAnticipo: esAnticipo ? detalleAnticipo : undefined,
-      vencimientoAnticipo: esAnticipo ? vencimientoAnticipo : undefined,
-      anticiposAplicados: esAplicacion ? anticiposAplicados : undefined,
-      /* La DEUDA de la cuenta ANTES de este recibo: es el mismo "Saldo Cta Cte (deuda)" que la
-         ficha del cliente muestra en el paso 1, no un número nuevo. Viaja para que el servicio
-         pueda declarar en el tablero cómo queda la cuenta con el cobro ya aplicado; en la app no
-         se muestra en ninguna parte. */
-      saldoCtaCte: cliente.saldoCtaCte,
-    })
+  /**
+   * Lo que "Registrar Cobro" escribe en Monday, armado con lo que hay en pantalla. Se congela al
+   * emitir (`reciboDoc.datos`): lo que se registra es lo que dice el PDF.
+   */
+  const datos = useMemo<DatosRecibo | null>(
+    () =>
+      cliente
+        ? {
+            clienteId: cliente.id,
+            nombreCliente: cliente.name,
+            vendedorId: usuario?.id ?? null,
+            tipo: esAnticipo ? 'anticipo' : esAplicacion ? 'aplicacion' : 'cobro',
+            /* SÓLO las facturas: los anticipos también figuran entre los comprobantes cancelados
+               del documento, pero no son ítems del tablero de facturas y el servicio los arma por su
+               cuenta a partir de los movimientos. Mandarlos acá los escribiría dos veces. */
+            facturas: recibo.comprobantes
+              .filter((c) => !c.esAnticipo)
+              .map((c) => ({ id: c.id, nro: c.nro, importe: c.cancelado })),
+            /* En una aplicación no hay formas de pago: lo que cubre las facturas son los anticipos. */
+            movimientos: esAplicacion ? [] : cobro.movimientos,
+            /* Los tres datos del anticipo viajan juntos: describen la misma línea del recibo. */
+            anticipo: esAnticipo ? importeAnticipo : undefined,
+            detalleAnticipo: esAnticipo ? detalleAnticipo : undefined,
+            vencimientoAnticipo: esAnticipo ? vencimientoAnticipo : undefined,
+            anticiposAplicados: esAplicacion ? anticiposAplicados : undefined,
+            /* La DEUDA de la cuenta ANTES de este recibo: es el mismo "Saldo Cta Cte (deuda)" que la
+               ficha del cliente muestra en el paso 1. Con ella se declara cómo queda la cuenta con
+               el cobro ya aplicado —en el tablero y en el PDF—. */
+            saldoCtaCte: cliente.saldoCtaCte,
+          }
+        : null,
+    [
+      cliente,
+      usuario,
+      esAnticipo,
+      esAplicacion,
+      recibo.comprobantes,
+      cobro.movimientos,
+      importeAnticipo,
+      detalleAnticipo,
+      vencimientoAnticipo,
+      anticiposAplicados,
+    ],
+  )
+  /* La huella de lo que el recibo diría HOY. Si no coincide con la del emitido, el usuario volvió y
+     cambió algo: el PDF ya no dice lo que se registraría. */
+  const firma = useMemo(() => firmaDe({ datos, fecha: cobro.fecha }), [datos, cobro.fecha])
+  const desactualizado = reciboDoc !== null && reciboDoc.firma !== firma
+
+  /** Lo que lleva el PDF, con el número que se le pase. Sale de la MISMA card que ve el usuario. */
+  const datosPdf = (numero: string): Omit<DatosReciboPdf, 'nombre'> | null =>
+    cliente && {
+      variante: esAnticipo ? 'anticipo' : esAplicacion ? 'aplicacion' : 'facturas',
+      numero,
+      fechaEmision: cobro.fecha,
+      titular: cliente,
+      documento: recibo,
+      anticipo: esAnticipo ? { importe: importeAnticipo, vencimiento: vencimientoAnticipo } : null,
+      saldoPendiente: saldoConRecibo(cliente.saldoCtaCte, recibo.totalEntregado),
+      diasPromedio,
+      logoSrc: LOGO_DOCUMENTOS,
+    }
+
+  /**
+   * "Emitir el recibo": pide el número con el que va a nacer el recibo y genera el PDF con lo que
+   * muestra la card. NO escribe en Monday —eso lo hace `registrar`—, así que un error se reintenta
+   * sin dejar nada a medias en el tablero, y un recibo ya emitido se puede VOLVER A EMITIR: el PDF
+   * nuevo reemplaza al anterior y el envío vuelve a cero (ver `useReemision`).
+   *
+   * Lo único que no se permite es emitir con el recibo ya creado en Monday, ni dos veces a la vez.
+   */
+  const emitir = async () => {
+    const pdf0 = datosPdf('')
+    if (!pdf0 || !datos || reciboId || emitiendoRef.current) return
+    emitiendoRef.current = true
+    dispatch({ type: 'setEmision', emision: { fase: 'creando', estado: 'Generando PDF', error: null } })
+    let numero: string | null = null
+    try {
+      numero = await getProximoNroRecibo()
+      if (!numero) throw new Error('sin número')
+    } catch {
+      dispatch({
+        type: 'setEmision',
+        emision: {
+          fase: 'error',
+          estado: '',
+          error: {
+            estado: 'No se pudo obtener el número del recibo',
+            mensaje: 'No pudimos leer en Monday el número con el que va a salir el recibo. Tocá el botón para reintentar.',
+          },
+        },
+      })
+      emitiendoRef.current = false
+      return
+    }
+    try {
+      const pdf = await generarReciboPdf({ ...pdf0, numero })
+      dispatch({
+        type: 'setReciboDoc',
+        doc: { numero, fechaEmision: cobro.fecha, pdf, datos, firma, registro: { pdfSubido: false, incompleto: null } },
+      })
+      dispatch({ type: 'setEmision', emision: { fase: 'emitido', estado: 'Emitido', error: null } })
+    } catch (e) {
+      console.error('No se pudo generar el PDF del recibo', e)
+      dispatch({
+        type: 'setEmision',
+        emision: {
+          fase: 'error',
+          estado: '',
+          error: {
+            estado: 'Error de emisión',
+            mensaje:
+              'La app no está pudiendo generar el PDF del recibo. Tocá el botón para reintentar; si vuelve a fallar, contactate con el soporte de TAP.',
+          },
+        },
+      })
+    } finally {
+      emitiendoRef.current = false
+    }
   }
 
   /**
-   * Cierra la operación y deja la app lista para la próxima cobranza. Con el recibo sin emitir el
-   * botón sigue activo a propósito: la ventana explica por qué no se puede cerrar, en vez de dejar
-   * un botón muerto sin motivo (mismo criterio que el resto de los pasos).
+   * "Registrar Cobro": el ÚNICO lugar donde el recibo nace en Monday. Todo se `await`ea en orden, con
+   * la ventana de espera arriba:
+   *   1. el recibo con TODOS sus subitems (`crearRecibo`); si alguno no entró, se corta ahí;
+   *   2. el PDF emitido, a su columna file, con el recibo en "Emitido" (`adjuntarPdfRecibo`);
+   *   3. el pedido de registro al tablero —"🤖Estado Registro de Cobro" en "Registrar"—, que es lo que
+   *      impacta la cuenta corriente del cliente y marca las facturas como cobradas, y la espera a
+   *      que lo confirme.
+   * Recién con todo confirmado se cierra la operación.
    *
-   * Antes de cerrar le PIDE al tablero que registre el cobro —"🤖Estado Registro de Cobro" en
-   * "Registrar"—, que es lo que dispara la automatización que impacta la cuenta corriente del
-   * cliente y marca las facturas como cobradas. Va acá y no al emitir el recibo porque necesita
-   * que el ítem tenga ya todos sus subelementos colgados.
-   *
-   * Se ESPERA la respuesta en vez de largarla y cerrar: si la escritura falla, la operación queda
-   * a medio camino —el recibo existe y se emitió, pero nada impactó en la cuenta y las facturas
-   * siguen figurando pendientes de cobro— y el usuario ya se fue a la pantalla siguiente, sin nada
-   * que le avise. Por eso el cierre sólo ocurre cuando el pedido entró; si no, se avisa y el botón
-   * queda disponible para reintentar.
-   *
-   * Es el MISMO criterio que la orden de pago (ver `finalizar` en `OrdenPagoView`): las dos son la
-   * última escritura de su operación y la que impacta la cuenta corriente, así que las dos se
-   * confirman antes de dar la operación por cerrada.
+   * Retoma donde quedó: si el recibo ya se creó, un reintento no lo vuelve a crear; si el PDF ya se
+   * subió, no lo vuelve a subir.
    */
-  const finalizar = async () => {
-    if (fase !== 'emitido') {
+  const registrar = async () => {
+    if (!reciboDoc) {
       setAviso(true)
       return
     }
-    if (registrando) return
-    /* Sin id no hay a quién pedirle el registro. No debería pasar —el recibo emitido siempre dejó
-       su ítem—, pero de darse, cerrar igual es mejor que dejar al usuario encerrado en la etapa. */
-    if (!reciboId) {
-      dispatch({ type: 'reset' })
+    if (desactualizado) {
+      setAvisoCambios(true)
       return
     }
+    if (reciboDoc.registro.incompleto) {
+      setVerIncompleto(true)
+      return
+    }
+    if (registrando) return
     setRegistrando(true)
-    /* Marca el corte entre los DOS tiempos. Con el pedido ya escrito, un fallo posterior no se
-       puede comunicar como "no se pudo pedir el registro": el tablero ya lo tiene. */
+    /* Marca el corte entre los dos tiempos del registro: con el pedido ya escrito, un fallo
+       posterior no se puede comunicar como "no se pudo registrar": el tablero ya lo tiene. */
     let pedido = false
+    let accion = 'registrar el recibo'
     try {
-      await pedirRegistro(reciboId)
+      let id = reciboId
+      if (!id) {
+        const creado = await crearRecibo(reciboDoc.datos)
+        id = creado.id
+        dispatch({ type: 'setReciboId', id })
+        if (!reciboCompleto(creado)) {
+          dispatch({
+            type: 'avanceRegistro',
+            documento: 'recibo',
+            avance: { incompleto: faltantesRecibo(reciboDoc.datos, creado) },
+          })
+          setRegistrando(false)
+          setVerIncompleto(true)
+          return
+        }
+      }
+
+      let cambio: { emitido: string; real: string } | null = null
+      if (!reciboDoc.registro.pdfSubido) {
+        accion = 'subir el PDF del recibo'
+        /* El número del PDF era una predicción. Si Monday le dio otro, lo que queda en el tablero
+           tiene que decir el REAL: se regenera el PDF con ése antes de subirlo. */
+        const real = await leerNroRecibo(id)
+        let pdf = reciboDoc.pdf
+        if (real && real !== reciboDoc.numero) {
+          const conReal = datosPdf(real)
+          if (conReal) pdf = await generarReciboPdf(conReal)
+          cambio = { emitido: reciboDoc.numero, real }
+        }
+        await adjuntarPdfRecibo(id, pdf, reciboDoc.fechaEmision)
+        dispatch({ type: 'avanceRegistro', documento: 'recibo', avance: { pdfSubido: true } })
+      }
+
+      accion = 'pedir el registro del cobro'
+      await pedirRegistro(id)
       pedido = true
       /* El tablero tiene que decir que lo registró: se sondea "🤖Estado Registro de Cobro" hasta
-         que llegue a "Registrado". Hasta entonces la pantalla sigue tapada, porque la que impacta
-         la cuenta corriente y marca las facturas como cobradas es la automatización, no la app. */
-      await esperarRegistro(reciboId, REGISTRO_COBROS)
-      /* Registro CONFIRMADO: ESO cierra la operación (mismo criterio que el pase de saldo). */
+         que llegue a "Registrado". La que impacta la cuenta corriente es la automatización. */
+      await esperarRegistro(id, REGISTRO_COBROS)
+      /* Registro CONFIRMADO: eso cierra la operación. Si el número cambió, antes se avisa. */
+      if (cambio) {
+        setRegistrando(false)
+        setNumeroCambiado(cambio)
+        return
+      }
       dispatch({ type: 'reset' })
     } catch (e) {
       setRegistrando(false)
       if (!pedido) {
-        // No salió: se puede reintentar sin duplicar nada.
-        dispatch({ type: 'errorMonday', accion: 'pedir el registro del cobro' })
+        // No llegó al pedido de registro: se puede reintentar y retoma donde quedó.
+        dispatch({ type: 'errorMonday', accion })
         return
       }
       setAvisoRegistro(
         e instanceof Error && e.message.trim()
           ? e.message
-          : 'El recibo quedó emitido en Monday, pero el tablero no confirmó el registro del cobro.',
+          : 'El recibo quedó creado en Monday, pero el tablero no confirmó el registro del cobro.',
       )
     }
   }
+
+  /* Reemisión, con el mismo criterio que la app de ventas: el botón de emitir sigue habilitado, y un
+     PDF que quedó viejo (se cambiaron datos en un paso anterior) se descarta solo. */
+  const descartar = useCallback(() => dispatch({ type: 'descartarEmision', documento: 'recibo' }), [dispatch])
+  const { pedirEmision, modal: modalReemision } = useReemision({
+    nombre: 'el recibo',
+    emitido: reciboDoc !== null,
+    firmaEmitida: reciboDoc?.firma ?? null,
+    firmaActual: firma,
+    creado: reciboId !== null,
+    descartar,
+    emitir: () => void emitir(),
+  })
 
   return (
     <section className="view recibo-v2 paso-layout">
@@ -197,26 +382,29 @@ export function ReciboView() {
               fechaEmision={cobro.fecha}
               totalRecibido={recibo.totalEntregado}
               totalCancelado={totalCancelado}
-              fase={fase}
-              error={error}
-              puedeReintentar={puedeReintentar}
-              onEmitir={emitirRecibo}
-            />
+              diasPromedio={diasPromedio ? formatoDiasPromedio(diasPromedio) : undefined}
+              fase={emision.fase}
+              error={emision.error}
+              onEmitir={pedirEmision}
+              bloqueado={reciboId !== null}
+            >
+              <VerImprimirPdf archivos={reciboDoc ? [reciboDoc.pdf] : null} />
+              {desactualizado && reciboId !== null && <DocumentoDesactualizado documento="el recibo" />}
+            </ResumenRecibo>
 
             {/* Columna derecha: el documento y, debajo, su envío al cliente. */}
             <div className="recibo-col-der">
               <ReciboAGenerar
                 recibo={recibo}
-                fase={fase}
-                estado={estado}
+                fase={emision.fase}
+                estado={emision.estado}
                 anticipo={esAnticipo ? { importe: importeAnticipo } : null}
               />
 
-              {/* En la vista, el envío es una línea. La clave elige el comprobante del catálogo.
-                  Intentar enviar sin haber emitido abre su propio aviso: lo resuelve el componente. */}
-              {/* Sin `onEnviado`: el resultado del envío lo muestra la propia card —y lo persiste
-                  en `documentoEnviado`—, así que la vista no necesita enterarse. */}
-              <EnviarDocumento documento="recibo" numero={NRO_RECIBO} />
+              {/* La clave elige el comprobante del catálogo. Intentar enviar sin haber emitido abre
+                  su propio aviso: lo resuelve el componente. */}
+              {/* Por documento emitido: uno nuevo es otro documento, y el envío arranca de cero. */}
+              <EnviarDocumento key={`emision-${emisionNro}`} documento="recibo" />
             </div>
           </div>
         )}
@@ -233,68 +421,83 @@ export function ReciboView() {
           </button>
 
           <div className="actions-footer-fin">
-            {/* Sin rótulo de estado al lado del botón: en qué anda la emisión ya lo dicen el propio
-                botón "Emitir el recibo" y el semáforo de la card del documento, los dos a la vista.
-                Repetirlo acá era decir tres veces lo mismo. */}
-            {/* El botón NO cambia mientras el pedido viaja: ni spinner ni otro rótulo. Sólo se
-                apaga, que es lo que impide pedir el registro dos veces con un doble click —esa
-                escritura impacta la cuenta corriente— sin mover nada en pantalla. */}
+            {/* Registra el cobro en Monday (ítem, subitems, PDF y registro) y cierra la operación.
+                Con el recibo sin emitir sigue activo a propósito: la ventana explica por qué no se
+                puede registrar, en vez de dejar un botón muerto sin motivo. */}
             <button
               type="button"
               className="btn btn-primary"
               disabled={registrando}
-              onClick={() => void finalizar()}
+              title={reciboDoc ? undefined : 'Emití el recibo para poder registrar el cobro.'}
+              onClick={() => void registrar()}
             >
-              <i className="fas fa-flag-checkered" /> Finalizar Operación
+              <i className="fas fa-flag-checkered" /> Registrar Cobro
             </button>
           </div>
         </div>
       </div>
 
-      {/* Tapa la pantalla desde que se pide el registro hasta que el tablero lo confirma. Es el
-          MISMO componente —y los mismos estilos— con los que la app de operaciones de venta
-          registra una venta, y con los que acá se registra un pase de saldo. */}
+      {/* Tapa la pantalla desde que se empieza a escribir hasta que el tablero confirma el registro.
+          Es el MISMO componente con los que la app de operaciones de venta registra un presupuesto. */}
       {registrando && (
         <ModalCargando
           titulo="Registrando cobro en el sistema"
-          detalle="Estamos registrando el cobro, espera unos segundos y no salgas de la app"
+          detalle="Estamos registrando el recibo en el sistema junto a sus formas de pago, sus comprobantes y su PDF. Espera unos segundos y no salgas de la app"
         />
       )}
 
-      {/* El cobro salió pero el tablero no lo confirmó. Se nombra así, sin prometer nada: lo único
-          seguro es que el ítem está escrito y que su registro no cerró.
+      {/* El cobro salió pero el tablero no lo confirmó. El texto es FIJO: sea timeout, rechazo del
+          tablero o lectura caída, el siguiente paso es el mismo —ir a mirar el cobro en Monday—. */}
+      {modalReemision}
 
-          El texto es FIJO y no el error que quedó en `avisoRegistro`: ahí puede haber un timeout,
-          un rechazo del tablero o una lectura caída, y las tres terminan en el mismo lugar —el
-          cobro está en Monday y hay que ir a mirar su estado de registración—. El mensaje dice eso
-          y no la causa técnica, que al usuario no le cambia el siguiente paso. */}
       {avisoRegistro && (
+        <AvisoModal titulo="No se pudo confirmar el registro del cobro" onClose={() => setAvisoRegistro('')}>
+          El registro del cobro en el sistema tardó más de lo esperado; revisá que en Monday el cobro
+          esté creado y validá su estado de registración para ver lo sucedido.
+        </AvisoModal>
+      )}
+
+      {numeroCambiado && (
         <AvisoModal
-          titulo="No se pudo confirmar el registro del cobro"
-          onClose={() => setAvisoRegistro('')}
+          titulo="El recibo quedó registrado con otro número"
+          onClose={() => {
+            setNumeroCambiado(null)
+            dispatch({ type: 'reset' })
+          }}
         >
-          El registro del cobro en el sistema tardó más de lo esperado; revisá que en Monday el
-          cobro esté creado y validá su estado de registración para ver lo sucedido.
+          El cobro se registró correctamente, pero Monday le asignó el número{' '}
+          <strong>{numeroCambiado.real}</strong> y el PDF se había emitido como{' '}
+          <strong>{numeroCambiado.emitido}</strong> (otro recibo tomó ese número en el medio). En
+          Monday quedó el PDF con el número correcto; si ya se lo enviaste al cliente, reenviáselo
+          desde el tablero.
         </AvisoModal>
       )}
 
       {aviso && (
         <AvisoModal titulo="Todavía no emitiste el recibo" onClose={() => setAviso(false)}>
-          El cobro no queda cerrado hasta que se emite su recibo. Emitilo desde el resumen y después
-          finalizá la operación.
+          El cobro no se puede registrar hasta que se emite su recibo. Emitilo desde el resumen y
+          después registrá el cobro.
+        </AvisoModal>
+      )}
+
+      {avisoCambios && (
+        <AvisoModal titulo="El recibo emitido ya no coincide" onClose={() => setAvisoCambios(false)}>
+          Cambiaste datos del cobro después de emitir el recibo, así que el PDF ya no dice lo que se
+          registraría. Volvé a emitirlo desde el resumen antes de registrar el cobro.
         </AvisoModal>
       )}
 
       {/* El recibo se creó a medias: se nombra exactamente qué no entró. */}
-      {incompleto && (
+      {verIncompleto && reciboDoc?.registro.incompleto && (
         <AvisoModal
           titulo="El recibo quedó incompleto"
-          faltantes={incompleto}
-          onClose={limpiarIncompleto}
+          faltantes={reciboDoc.registro.incompleto}
+          onClose={() => setVerIncompleto(false)}
         >
           El recibo se creó en Monday, pero no entraron todos sus subelementos, así que
-          <strong> no se pidió su emisión</strong>: el PDF saldría sin esas líneas. Completalo en el
-          tablero y emitilo desde ahí; volver a emitirlo desde acá lo duplicaría.
+          <strong> no se le subió el PDF ni se pidió su registro</strong>: el cobro quedaría
+          registrado sin esas líneas. Completalo en el tablero y registralo desde ahí; volver a
+          registrarlo desde acá lo duplicaría.
         </AvisoModal>
       )}
     </section>

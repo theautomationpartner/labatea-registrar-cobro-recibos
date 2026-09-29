@@ -35,19 +35,19 @@ export const DESCRIPCION_PAGO: Record<PasoPago, string> = {
   facturasCompra:
     'Elegí las facturas de compra pendientes del proveedor e indicá cuánto se paga de cada una.',
   pago: 'Registrá el pago: caja, importe e imputación sobre las facturas seleccionadas.',
-  orden: 'Emití la orden de pago en Monday y enviásela al proveedor.',
+  orden: 'Emití la orden de pago, enviásela al proveedor y registrá el pago.',
 }
 
 /** Bajadas que PISAN a las de `DESCRIPCION_PAGO` en el recorrido del anticipo. */
 const DESCRIPCION_PAGO_ANTICIPO: Partial<Record<PasoPago, string>> = {
   pago: 'Cargá el importe que se le entrega al proveedor a cuenta y con qué cajas se entrega.',
-  orden: 'Emití la orden de pago del anticipo en Monday y enviásela al proveedor.',
+  orden: 'Emití la orden de pago del anticipo, enviásela al proveedor y registrá el pago.',
 }
 
 /** Bajadas que PISAN a las de `DESCRIPCION_PAGO` al aplicar un anticipo contra facturas. */
 const DESCRIPCION_PAGO_APLICACION: Partial<Record<PasoPago, string>> = {
   pago: 'Elegí los anticipos del proveedor e indicá cuánto se aplica de cada saldo a favor.',
-  orden: 'Emití la orden de pago de la aplicación en Monday y enviásela al proveedor.',
+  orden: 'Emití la orden de pago de la aplicación, enviásela al proveedor y registrá el pago.',
 }
 
 /**

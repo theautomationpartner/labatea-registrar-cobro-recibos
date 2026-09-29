@@ -287,8 +287,8 @@ casos.push({
     // "Total cancelado" es intocable: mismo rótulo que en el recibo.
     'Total cancelado',
     'EMITIR ORDEN DE PAGO',
-    // El botón de cierre de la operación.
-    'Finalizar Operación',
+    // El botón de cierre de la operación: registra el pago en Monday.
+    'Registrar Pago',
   ],
   noContiene: [
     'Resumen del recibo',
@@ -618,7 +618,7 @@ casos.push({
   contiene: [
     'Resumen de Orden de Pago',
     'EMITIR ORDEN DE PAGO',
-    'Finalizar Operación',
+    'Registrar Pago',
     // Lo entregado son los anticipos aplicados, no cajas.
     'Anticipo - ANTICIPO-04',
     'Facturas Canceladas',
@@ -1562,7 +1562,7 @@ const envioHtml = renderToString(
     createElement(
       DispatchContext.Provider,
       { value: () => undefined },
-      createElement(EnviarDocumento, { documento: 'ordenPago', numero: 'IDPAGO-00001' }),
+      createElement(EnviarDocumento, { documento: 'ordenPago' }),
     ),
   ),
 )

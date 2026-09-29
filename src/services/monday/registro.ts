@@ -10,10 +10,9 @@
  * TRABAJO es el mismo —pedir y esperar—, así que se escribe una vez y se parametriza el tablero:
  * duplicar el sondeo habría dejado dos esperas que se corrigen por separado.
  *
- * El COBRO no pasa por acá: un recibo se pide por su propia columna, "🤖Estado de Emision", que es
- * también donde se lo espera (ver `pedirEmision` y `getEstadoEmision` en `recibos.ts`). Son dos
- * semáforos distintos porque son dos trabajos distintos del tablero —registrar un movimiento y
- * emitir un documento—, y mezclarlos hacía que una operación esperara la señal de la otra.
+ * El recibo y la orden de pago también se registran por acá, con "Registrar Cobro" / "Registrar
+ * Pago", DESPUÉS de crearse con sus subitems y su PDF. La emisión del documento no pasa por ningún
+ * semáforo del tablero: el PDF lo genera la app.
  */
 import { COL, BOARDS, ESTADO_REGISTRO_INDEX, OP_REGISTRO_INDEX } from './columns'
 import { byId, type MondayItem } from './parse'

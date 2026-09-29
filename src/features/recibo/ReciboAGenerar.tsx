@@ -142,7 +142,7 @@ const oDato = (valor: string) => valor || <span className="rec-sd">{SIN_DATO}</s
  *
  * NO repite la cabecera del documento (título, número y fecha) ni los datos fiscales del cliente:
  * de eso ya se ocupa el resumen de la izquierda, y acá sólo agregaba una segunda copia de lo mismo
- * en la misma pantalla. Esos datos van igual en el PDF que emite el tablero.
+ * en la misma pantalla. Esos datos van igual en el PDF que genera la app.
  *
  * Es la misma card plegable que la de un comprobante en la emisión de la factura —cabecera siempre
  * visible con lo que hace falta para decidir, y el detalle desplegable debajo—: el documento cambia,
@@ -162,7 +162,7 @@ export function ReciboAGenerar({
 }: ReciboAGenerarProps) {
   const { abierta, abriendo, cerrando, visible, alternar } = usePlegable()
   const { comprobantes, pagos, totalEntregado } = recibo
-  const enCurso = fase === 'creando' || fase === 'emitiendo'
+  const enCurso = fase === 'creando'
   const emitido = fase === 'emitido'
   /* Un anticipo no tiene comprobantes que cancelar: lo que el recibo declara es su importe, y ése
      es su total cancelado. Es la misma línea que se escribe como subelemento en Monday. */
@@ -200,8 +200,8 @@ export function ReciboAGenerar({
             </Dato>
           </div>
 
-          {/* Semáforo de la emisión, SÓLO ícono: gira mientras se emite, queda tildado en verde al
-              cerrar bien y en rojo si el tablero devolvió un error.
+          {/* Semáforo de la emisión, SÓLO ícono: gira mientras se genera el PDF, queda tildado en
+              verde con el documento listo y en rojo si no se pudo generar.
 
               El texto que lo acompañaba se fue: decía lo mismo que el color y cambiaba de ancho en
               cada fase, corriendo las tres métricas de al lado cada vez que el estado avanzaba. Lo
@@ -214,7 +214,7 @@ export function ReciboAGenerar({
                 fase === 'error'
                   ? `Error al emitir · ${rotulos.titulo}${estado ? ` · ${estado}` : ''}`
                   : enCurso
-                    ? `Emitiendo · ${rotulos.titulo}${estado ? ` · ${estado}` : ''}`
+                    ? `Generando el PDF · ${rotulos.titulo}`
                     : emitido
                       ? `${rotulos.titulo} emitido${estado ? ` · ${estado}` : ''}`
                       : 'Pendiente de emisión'

@@ -578,19 +578,3 @@
   }
 }
 
-/* ===== Ver / Imprimir ===== */
-/* Debajo del botón de emisión, a lo ancho, siempre visible: se habilita cuando la emisión deja algún
-   PDF. Los mensajes de los dos botones van debajo de éste. */
-.resumen-v2 .res-pdf {
-  margin-top: 10px;
-}
-.resumen-v2 .res-pdf-btn {
-  width: 100%;
-  padding: 0 12px;
-  font-size: 13px;
-}
-.resumen-v2 .res-pdf-btn:disabled {
-  cursor: not-allowed;
-  background: #f4f5f7;
-  color: #a1a3b1;
-}

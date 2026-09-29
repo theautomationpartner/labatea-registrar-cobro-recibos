@@ -1,8 +1,10 @@
 /**
- * Emisión y envío de la ORDEN DE PAGO: lo ÚNICO que el módulo de Pagos escribe en Monday.
+ * Registro de la ORDEN DE PAGO: lo ÚNICO que el módulo de Pagos escribe en Monday, y lo hace
+ * "Registrar Pago" DESPUÉS de que la app emitió el PDF (ver `features/documentos`). El envío al
+ * proveedor ya no pasa por el tablero: lo despacha el escenario de Make con el PDF de la app.
  *
- * Es el espejo de `./recibos` + `./envio` del otro lado del mostrador, y repite su forma porque el
- * trabajo es el mismo:
+ * Es el espejo de `./recibos` del otro lado del mostrador, y repite su forma porque el trabajo es el
+ * mismo:
  *
  *   1) CABECERA — `create_item` en "⬅️ Pagos - PENDIENTES" (18421035536) con el vendedor, el
  *      proveedor y los tres totales (cancelado, entregado y su diferencia). Su `id` es el
@@ -11,13 +13,8 @@
  *      cancela y después las CAJAS con las que se pagó. El spec de GraphQL obliga a ejecutar los
  *      campos raíz de una `mutation` en serie y en el orden escrito, así que el orden del lote se
  *      cumple por definición del lenguaje.
- *   3) EMISIÓN — "🤖Estado de Emision y Envio" → "Emitir", que dispara la automatización.
- *   4) ENVÍO — la MISMA columna → "A Enviar", después de escribir medio y destinatarios.
- *
- * UNA diferencia de fondo con el recibo: este tablero NO tiene columna `file` para el PDF. En el
- * recibo el envío empieza comprobando que el documento exista (`reciboPdfGenerado`); acá no hay
- * dónde mirarlo, así que ese control no existe y el disparo del envío confía en que la emisión ya
- * cerró —que es justamente lo que el paso exige antes de habilitar el botón—.
+ *   3) PDF — el que generó la app, a "🤖OP PDF", con "🤖Estado de Emision y Envio" en "Emitido".
+ *   4) REGISTRO — "🤖Estado Registro de Pago" → "Registrar" (ver `pedirRegistroOP`).
  *
  * Sin token (modo local) no se escribe nada y se devuelven ids simulados, igual que el resto de la
  * capa de servicio: el prototipo se puede recorrer entero sin cuenta de Monday.
@@ -31,7 +28,7 @@ import {
   esRetencionGAN,
   vencimientoDeCajaCheque,
 } from '@/lib/pagosProveedor'
-import type { MedioEnvio, MovimientoCaja } from '@/types'
+import type { MovimientoCaja } from '@/types'
 import {
   BANCO_EMISOR_LABEL,
   BOARDS,
@@ -40,14 +37,11 @@ import {
   cajaDePago,
   CHEQUE_ORIGEN_LABEL,
   COL,
-  MEDIO_ENVIO_OP_IDS,
   OP_EMISION_INDEX,
-  OP_ENVIO_FINALES,
-  OP_ENVIO_INDEX,
   personCol,
   TIPO_PAGO_INDEX,
 } from './columns'
-import { byId, type MondayItem } from './parse'
+import { escribirColumnas, getProximoNroDocumento, leerNroDocumento, subirArchivoAColumna } from './documentos'
 import { pedirRegistro, REGISTRO_PAGOS } from './registro'
 import { getProximoNroRetencion } from './retencionGanancias'
 import { mondayApi, mondayHabilitado } from './sdk'
@@ -396,6 +390,12 @@ export interface DatosOrdenPago {
   vencimientoAnticipo?: string
   /** Sólo APLICACIÓN: los anticipos que se imputan contra las facturas de `facturas`. */
   anticiposAplicados?: readonly AnticipoAAplicarPago[]
+  /**
+   * El número de certificado con el que salió la CONSTANCIA de retención emitida junto con la orden
+   * ("RETENC-006"). Va a la línea de la retención ("🤖Nro Retencion"), así la línea y el PDF dicen lo
+   * mismo. Ausente = se predice al crear la orden (ver `getProximoNroRetencion`).
+   */
+  nroRetencion?: string | null
 }
 
 /** Un anticipo que se aplica: qué ítem se usa, con qué nombre se lo muestra y por cuánto. */
@@ -463,9 +463,13 @@ export async function crearOrdenDePago(datos: DatosOrdenPago): Promise<Resultado
      best-effort: si la consulta falla, la línea se escribe sin el número —que es lo mismo que pasa
      cuando el tablero no tiene de dónde sacarlo— en lugar de tumbar una orden que por lo demás está
      completa. */
-  const nroRetencion = entregadas.some((m) => esRetencionGAN(m.formaPago))
-    ? await getProximoNroRetencion().catch(() => null)
-    : null
+  /* Si la orden se emitió con su constancia, el número ya viene decidido (`datos.nroRetencion`): es
+     el que dice el PDF, y la línea tiene que decir lo mismo. */
+  const nroRetencion = !entregadas.some((m) => esRetencionGAN(m.formaPago))
+    ? null
+    : datos.nroRetencion !== undefined
+      ? datos.nroRetencion
+      : await getProximoNroRetencion().catch(() => null)
 
   const cabecera = columnasOrdenPago(datos)
 
@@ -569,146 +573,128 @@ export async function pedirRegistroOP(itemId: string): Promise<void> {
   await pedirRegistro(itemId, REGISTRO_PAGOS)
 }
 
+/* ===== El número y el PDF de la orden ===== */
+
+/** Número de la orden en modo local (sin Monday): el prototipo tiene que poder emitir un PDF igual. */
+export const NRO_ORDEN_PAGO_MOCK = 'IDPAGO-001'
+
 /**
- * Pide la EMISIÓN de la orden: pone "🤖Estado de Emision y Envio" en "Emitir".
- *
- * Es el disparador de la automatización que genera el documento. De ahí en más la columna la mueve
- * el tablero y la app sólo la lee (ver `getEstadoEmisionOP`): se pide y se espera en la MISMA
- * columna, porque son el principio y el final de un solo trabajo.
+ * El número con el que va a nacer la próxima orden ("🤖ID Orden de Pago": "IDPAGO-020" →
+ * "IDPAGO-021"). Lo necesita el PDF, que se genera ANTES de crear el ítem. Es una predicción: ver
+ * `getProximoNroDocumento`.
  */
-export async function pedirEmisionOP(itemId: string): Promise<void> {
+export async function getProximoNroOP(): Promise<string | null> {
+  if (!mondayHabilitado()) return NRO_ORDEN_PAGO_MOCK
+  return getProximoNroDocumento(BOARDS.ordenesPago, COL.ordenPago.nro)
+}
+
+/** El "🤖ID Orden de Pago" que Monday le asignó a la orden ya creada. */
+export const leerNroOP = (itemId: string): Promise<string> => leerNroDocumento(itemId, COL.ordenPago.nro)
+
+/**
+ * Sube el PDF que generó la app a "🤖OP PDF" y deja la orden EMITIDA: "🤖Estado de Emision y Envio"
+ * en "Emitido" y su "🤖Fecha de Emision OP".
+ *
+ * NO se escribe "Emitir": ese era el disparador de la automatización que generaba el documento, y el
+ * PDF ahora ya lo generó la app. Mismo criterio que `adjuntarPdfRecibo`.
+ */
+export async function adjuntarPdfOP(itemId: string, pdf: File, fechaEmision: string): Promise<void> {
   if (!mondayHabilitado()) return
-  await escribirEstadoOP(itemId, OP_EMISION_INDEX.emitir)
-}
-
-/** En qué anda la emisión de la orden, según el tablero. Misma forma que la del recibo. */
-export type FaseEmisionOP = 'en-curso' | 'emitido' | 'error'
-
-export interface EstadoEmisionOP {
-  fase: FaseEmisionOP
-  /** Etiqueta tal cual la muestra el tablero ("Emitiendo", "Emitido", "Error de Emision"). */
-  label: string
-}
-
-/**
- * Lee "🤖Estado de Emision y Envio" de la orden. Es la consulta que se repite mientras se espera al
- * tablero: devuelve en qué anda —con lo que se decide— y la etiqueta —que es lo que se le muestra al
- * usuario, para que la pantalla diga exactamente lo mismo que el board—.
- *
- * Una columna vacía o un ítem que no se pudo leer cuentan como "en curso", NO como error: recién
- * empezó y el tablero todavía no la movió.
- *
- * En modo local no hay tablero que emita nada, así que se responde "Emitido" de una.
- */
-export async function getEstadoEmisionOP(itemId: string): Promise<EstadoEmisionOP> {
-  if (!mondayHabilitado()) return { fase: 'emitido', label: 'Emitido' }
-  const cv = await leerEstadoOP(itemId)
-  const index = cv?.index ?? null
-  const fase: FaseEmisionOP =
-    index === OP_EMISION_INDEX.emitido
-      ? 'emitido'
-      : index === OP_EMISION_INDEX.error
-        ? 'error'
-        : 'en-curso'
-  return { fase, label: cv?.text?.trim() ?? '' }
-}
-
-/**
- * Escribe a QUIÉNES y por qué medio se manda la orden, antes de disparar el envío: la automatización
- * lee el ítem para saber a dónde despachar, así que esto tiene que estar puesto antes.
- *
- * El medio va por ID de etiqueta —no por texto—, con el mapa PROPIO de este tablero
- * (`MEDIO_ENVIO_OP_IDS`): acá "Ambos" existe como etiqueta y no hay que mandar las dos sueltas.
- */
-export async function asignarDestinoEnvioOP(
-  itemId: string,
-  medio: MedioEnvio,
-  contactoIds: readonly string[],
-): Promise<void> {
-  if (!mondayHabilitado()) return
+  await subirArchivoAColumna(itemId, COL.ordenPago.pdf, pdf)
   const columnas: Record<string, unknown> = {
-    [COL.ordenPago.enviarPor]: { ids: MEDIO_ENVIO_OP_IDS[medio] },
+    [COL.ordenPago.estadoEmision]: { index: OP_EMISION_INDEX.emitido },
   }
-  const ids = contactoIds.map(Number).filter((n) => Number.isFinite(n) && n > 0)
-  /* Sin destinatarios la columna NO se escribe: vaciarla borraría los que el tablero ya tuviera, y
-     un envío sin nadie a quien mandárselo no es algo que la app deba dejar asentado. */
-  if (ids.length > 0) columnas[COL.ordenPago.contactos] = { item_ids: ids }
-  await mondayApi(
-    `mutation ($id: ID!, $board: ID!, $cv: JSON!) {
-      change_multiple_column_values(item_id: $id, board_id: $board, column_values: $cv) { id }
-    }`,
-    { id: itemId, board: BOARDS.ordenesPago, cv: JSON.stringify(columnas) },
-  )
+  const iso = aIso(fechaEmision)
+  if (iso) columnas[COL.ordenPago.fechaEmision] = { date: iso }
+  await escribirColumnas(itemId, BOARDS.ordenesPago, columnas)
 }
 
-/** Dispara el ENVÍO: la misma columna del estado, ahora en "A Enviar". */
-export async function dispararEnvioOP(itemId: string): Promise<void> {
-  if (!mondayHabilitado()) return
-  await escribirEstadoOP(itemId, OP_ENVIO_INDEX.aEnviar)
-}
+/* ===== La constancia de retención ===== */
 
-/** Cada cuánto se le vuelve a preguntar al tablero por el estado del envío. */
-const INTERVALO_ENVIO_MS = 3000
-
-/** Hasta cuándo se espera al tablero por el envío. Mismo plazo que el del recibo. */
-const LIMITE_ENVIO_MS = 90 * 1000
+const esperar = (ms: number) => new Promise<void>((ok) => setTimeout(ok, ms))
 
 /**
- * Sigue "🤖Estado de Emision y Envio" hasta que la automatización cierre el envío en "Enviado" o
- * "Error de Envio". Devuelve el índice final, o el último leído si venció el plazo.
- *
- * `onProgreso` recibe la etiqueta que va publicando el tablero, para que la pantalla diga
- * exactamente lo mismo que el board mientras espera.
+ * El nombre de una fila de "🔃Retenciones" nombra ESA orden: el número entero, no como parte de otro
+ * ("IDPAGO-01" también está adentro de "IDPAGO-010"). Se exporta para verificarlo sin red.
  */
-export async function seguirEnvioOP(
-  itemId: string,
-  onProgreso: (estado: string) => void,
-): Promise<number | null> {
-  if (!mondayHabilitado()) return OP_ENVIO_INDEX.enviado
-  const vence = Date.now() + LIMITE_ENVIO_MS
-  let ultimo: number | null = null
-  while (Date.now() < vence) {
-    const cv = await leerEstadoOP(itemId)
-    ultimo = cv?.index ?? null
-    if (cv?.text) onProgreso(cv.text.trim())
-    if (ultimo !== null && OP_ENVIO_FINALES.includes(ultimo)) return ultimo
-    await new Promise((r) => setTimeout(r, INTERVALO_ENVIO_MS))
+export function nombraLaOrden(nombre: string, nroOrden: string): boolean {
+  const nro = nroOrden.trim()
+  if (!nro) return false
+  let desde = 0
+  for (;;) {
+    const i = nombre.indexOf(nro, desde)
+    if (i === -1) return false
+    const antes = nombre[i - 1] ?? ' '
+    const despues = nombre[i + nro.length] ?? ' '
+    if (!/[\w-]/.test(antes) && !/[\w-]/.test(despues)) return true
+    desde = i + 1
   }
-  return ultimo
 }
 
-/* ===== Piezas compartidas ===== */
-
-/** Escribe un índice en la columna de estado de la orden. Es la única escritura sobre ella. */
-async function escribirEstadoOP(itemId: string, index: number): Promise<void> {
-  await mondayApi(
-    `mutation ($id: ID!, $board: ID!, $cv: JSON!) {
-      change_multiple_column_values(item_id: $id, board_id: $board, column_values: $cv) { id }
-    }`,
-    {
-      id: itemId,
-      board: BOARDS.ordenesPago,
-      cv: JSON.stringify({ [COL.ordenPago.estadoEmision]: { index } }),
-    },
-  )
-}
-
-/** Lee la columna de estado de la orden. La comparten el sondeo de la emisión y el del envío. */
-async function leerEstadoOP(itemId: string) {
-  const data = await mondayApi<{ items: MondayItem[] }>(
-    `query ($id: [ID!]) {
-      items(ids: $id) {
-        id
-        column_values(ids: ["${COL.ordenPago.estadoEmision}"]) {
-          id text
-          ... on StatusValue { index }
+/**
+ * La fila de "🔃Retenciones" de una orden ya registrada: la crea la automatización de registro, y su
+ * nombre lleva el número de la orden ("Retencion GAN - IDPAGO-010 - …"). La relación con la orden
+ * viene vacía en el tablero (verificado), así que el nombre es el vínculo que hay.
+ *
+ * Se la busca unas veces: la automatización puede terminar de crearla un instante después de dejar
+ * la orden en "Registrado". `null` = no apareció.
+ */
+export async function buscarRetencionDeOrden(
+  nroOrden: string,
+  { intentos = 5, intervalo = 2000 }: { intentos?: number; intervalo?: number } = {},
+): Promise<{ id: string; nro: string } | null> {
+  if (!mondayHabilitado() || !nroOrden.trim()) return null
+  for (let i = 0; i < intentos; i++) {
+    const data = await mondayApi<{ boards: { items_page: { items: { id: string; name: string; column_values: { id: string; text: string | null }[] }[] } }[] }>(
+      `query ($nro: CompareValue!) {
+        boards(ids: [${BOARDS.retenciones}]) {
+          items_page(limit: 5, query_params: {
+            rules: [{ column_id: "name", compare_value: $nro, operator: contains_text }],
+            order_by: [{ column_id: "__creation_log__", direction: desc }]
+          }) {
+            items { id name column_values(ids: ["${COL.retencion.nro}"]) { id text } }
+          }
         }
-      }
-    }`,
-    { id: [itemId] },
-  )
-  const item = data.items?.[0]
-  return item ? byId(item)[COL.ordenPago.estadoEmision] : undefined
+      }`,
+      { nro: nroOrden.trim() },
+    )
+    /* `contains_text` es por inclusión: "IDPAGO-01" también está en "IDPAGO-010". Se exige el número
+       entero, delimitado. */
+    const fila = data.boards?.[0]?.items_page?.items?.find((it) => nombraLaOrden(it.name, nroOrden))
+    if (fila) return { id: fila.id, nro: fila.column_values?.[0]?.text?.trim() ?? '' }
+    if (i < intentos - 1) await esperar(intervalo)
+  }
+  return null
+}
+
+/**
+ * Sube la CONSTANCIA de retención a su fila de "🔃Retenciones" ("🤖Retencion PDF"). Si la fila no
+ * aparece, va a la columna del PDF de la ORDEN, para que el documento no se pierda.
+ *
+ * `regenerar`: si la fila nació con otro número que el del PDF —el certificado era una predicción—,
+ * se regenera la constancia con el REAL antes de subirla. Devuelve dónde quedó.
+ */
+export async function adjuntarConstanciaRetencion({
+  ordenId,
+  nroOrden,
+  constancia,
+  regenerar,
+}: {
+  ordenId: string
+  nroOrden: string
+  constancia: { pdf: File; numero: string }
+  regenerar: (certificado: string) => Promise<File>
+}): Promise<'retencion' | 'orden'> {
+  if (!mondayHabilitado()) return 'retencion'
+  const fila = await buscarRetencionDeOrden(nroOrden)
+  if (!fila) {
+    console.warn(`No apareció la fila de "Retenciones" de ${nroOrden}: la constancia se guarda en la orden.`)
+    await subirArchivoAColumna(ordenId, COL.ordenPago.pdf, constancia.pdf)
+    return 'orden'
+  }
+  const pdf = fila.nro && fila.nro !== constancia.numero ? await regenerar(fila.nro) : constancia.pdf
+  await subirArchivoAColumna(fila.id, COL.retencion.pdf, pdf)
+  return 'retencion'
 }
 
 /**

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { AvisoModal } from '@/components/ui/AvisoModal'
 import { ContactosPicker } from '@/features/shared/ContactosPicker'
 import { useBloqueoCredito } from '@/features/shared/useBloqueoCredito'
-import { comprobanteEnviable } from '@/features/shared/comprobantesEnviables'
+import { comprobanteEnviable, enviarComprobante } from '@/features/shared/comprobantesEnviables'
+import { problemasDeContactos, pulseIdDe, recibioTodo } from '@/lib/envioDocumento'
 import {
   contactosSinVia,
   faltaParaMedio,
@@ -20,6 +21,7 @@ const ICONO_LOG: Record<LogEntry['tipo'], string> = {
   ok: 'fa-circle-check',
   err: 'fa-circle-exclamation',
   info: 'fa-circle-info',
+  warn: 'fa-triangle-exclamation',
 }
 
 /**
@@ -34,55 +36,70 @@ const ICONO_MEDIO: Record<MedioEnvio, string> = {
 
 interface EnviarDocumentoProps {
   /**
-   * Clave del comprobante en `comprobantesEnviables` ('recibo'). De ahí sale TODO lo que distingue
-   * a un comprobante de otro: de qué ítem se despacha, si ya se emitió, si el crédito lo frena y
-   * cómo se envía.
+   * Clave del comprobante en `comprobantesEnviables` ('recibo', 'ordenPago', 'resumenCtaCte'). De ahí
+   * sale TODO lo que distingue a un comprobante de otro: si ya se emitió, qué se manda, a quién y si
+   * el crédito lo frena.
    */
   documento: string
-  numero: string
-  /** Se dispara cuando el envío se completó bien: habilita "Finalizar Operación" en la vista. */
+  /** Se dispara cuando el envío se completó bien. */
   onEnviado?: () => void
 }
 
-/** Estado del envío, que se muestra como una sola línea dentro de la card. */
-type EstadoEnvio = 'idle' | 'enviando' | 'enviado' | 'error'
+/** Cómo le fue el envío a UN contacto: el ícono a la derecha de su fila. */
+type EstadoFila = 'idle' | 'enviando' | 'ok' | 'error'
 
 /**
- * El registro del envío es una sola entrada: interesa si salió y a cuántos, no el detalle
- * contacto por contacto.
+ * El estado del envío de un contacto: gris mientras no se mandó, girando mientras se manda, verde con
+ * tilde si le llegó y rojo con cruz si no. El motivo de la falla va en el tooltip.
  */
-function construirLog(contactos: Contacto[], documento: string, numero: string): LogEntry[] {
-  const aceptan = contactos.filter((c) => c.ok).length
-  return [
-    {
-      id: 'envio',
-      tipo: 'ok',
-      titulo: 'Documento enviado correctamente',
-      detalle: `${numero} enviado a ${aceptan} de ${contactos.length} contactos por ${documento}.`,
-    },
-  ]
+function EstadoEnvioContacto({ estado, motivo }: { estado: EstadoFila; motivo?: string }) {
+  if (estado === 'enviando') {
+    return (
+      <span className="cobro-ok cobro-ok--cargando" role="status" aria-label="Enviando">
+        <i className="fas fa-circle-notch fa-spin" />
+      </span>
+    )
+  }
+  const titulo =
+    estado === 'ok'
+      ? 'Enviado'
+      : estado === 'error'
+        ? `No se pudo enviar${motivo ? `: ${motivo}` : ''}`
+        : 'Sin enviar'
+  return (
+    <span
+      className={`cobro-ok ${estado === 'ok' ? 'on' : estado === 'error' ? 'err' : ''}`}
+      title={titulo}
+      aria-label={titulo}
+    >
+      <i className={`fas ${estado === 'error' ? 'fa-xmark' : 'fa-check'}`} />
+    </span>
+  )
 }
 
-/** Envío del PDF al cliente. Hoy lo usa la emisión del recibo. */
-export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocumentoProps) {
+/** Estado del envío: gobierna íntegramente el botón. */
+type EstadoEnvio = 'idle' | 'enviando' | 'enviado' | 'error' | 'parcial'
+
+/**
+ * Envío del documento emitido a los contactos del titular, por el escenario de Make. Es el MISMO
+ * bloque de envío que el del presupuesto y el remito de la app de operaciones de venta: el PDF que
+ * generó la app viaja al escenario junto con los destinatarios, y el escenario contesta contacto por
+ * contacto qué salió.
+ */
+export function EnviarDocumento({ documento, onEnviado }: EnviarDocumentoProps) {
   const state = useApp()
   const { medioEnvio, contactos, documentoEnviado, log } = state
   const dispatch = useDispatch()
   /* El comprobante a enviar. Es lo ÚNICO que sabe de las diferencias entre uno y otro: el
      componente sólo le pregunta. */
   const comprobante = comprobanteEnviable(documento)
-  const articulo = comprobante.articulo
   /* EMAIL CON WHATSAPP OPCIONAL (el envío de la factura en la app de operaciones de venta): el Email
-     va siempre y WhatsApp se suma con un check, que en el tablero es "Ambos". El medio vive en el
-     estado GLOBAL, así que se normaliza: cualquier valor que no sea "Ambos" sale como Email, y un
-     "WhatsApp" suelto no tiene cómo colarse. */
+     va siempre y WhatsApp se suma con un check, que es "Ambos". El medio vive en el estado GLOBAL,
+     así que se normaliza: cualquier valor que no sea "Ambos" sale como Email, y un "WhatsApp" suelto
+     no tiene cómo colarse. */
   const emailConWhatsapp = comprobante.modoEnvio === 'emailConWhatsapp'
   const conWhatsapp = medioEnvio === 'Ambos'
-  const medioEfectivo: MedioEnvio = emailConWhatsapp
-    ? conWhatsapp
-      ? 'Ambos'
-      : 'Email'
-    : medioEnvio
+  const medioEfectivo: MedioEnvio = emailConWhatsapp ? (conWhatsapp ? 'Ambos' : 'Email') : medioEnvio
   /* De quién son los contactos: el cliente de la cobranza o el proveedor del pago. Lo dice el
      comprobante, no el componente: es la misma consulta sobre el mismo board, con otro ítem. */
   const titular = comprobante.titular(state)
@@ -90,49 +107,59 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
   const emitido = comprobante.emitido(state)
   // Aviso al intentar enviar sin haber emitido el comprobante todavía.
   const [avisoNoEmitido, setAvisoNoEmitido] = useState(false)
+  // Contactos elegidos que no pueden recibir el comprobante: qué cambiar, un renglón por problema.
+  const [problemasContactos, setProblemasContactos] = useState<string[] | null>(null)
   /* El envío no consume línea nueva: el bloqueo sólo mira el estado del cliente. Cada comprobante
      decide si el crédito lo frena. */
   const bloqueo = useBloqueoCredito({ bloqueante: comprobante.frenaPorCredito })
   /* Con qué texto el contacto declara que acepta este comprobante en su "Para Enviar". */
   const etiquetaContacto = comprobante.etiquetaContacto ?? comprobante.nombre
-  // Estado del envío: gobierna íntegramente el botón (idle / loading / success / error).
+  // Estado del envío: gobierna íntegramente el botón.
   const [estadoEnvio, setEstadoEnvio] = useState<EstadoEnvio>('idle')
-  // Progreso que reporta la columna de estado en Monday: es el callback de `seguirEnvioRecibo`.
-  const [, setEstadoMonday] = useState('')
   const enviando = estadoEnvio === 'enviando'
   /* Éxito PERSISTENTE: el envío ya se completó (bandera global) o se acaba de completar (estado
      local). Sobrevive a la navegación con el stepper, así el botón NO vuelve a habilitarse ni pierde
      su color de éxito al volver a esta etapa. */
   const enviadoOk = documentoEnviado || estadoEnvio === 'enviado'
-  /* Deja el botón en rojo para poder reintentar. Es lo único que hace: el detalle del problema va
-     al registro, y si el problema fue la API de Monday, a su ventana global. */
+  /* Envío PARCIAL: salió por un canal y no por el otro, o a unos contactos y a otros no. Se lee de la
+     bandera global, así que también sobrevive al stepper. Mientras dure, el botón queda en amarillo y
+     habilitado: reintentar pide sólo lo que falta. */
+  const parcial =
+    !enviadoOk && Object.values(state.enviadosPorContacto).some((canales) => canales.length > 0)
+
+  /* Estado por contacto: de cada fila se sabe si le llegó, si falló o si se le está mandando ahora.
+     Mientras se envía, gira sólo en los que se incluyen en este pedido —los que todavía no
+     recibieron todo—; el que ya tiene su tilde lo conserva. */
+  const estadoFila = (c: Contacto): EstadoFila => {
+    if (recibioTodo(c, medioEfectivo, state.enviadosPorContacto)) return 'ok'
+    if (enviando) return 'enviando'
+    return state.contactosFallidos[pulseIdDe(c)] ? 'error' : 'idle'
+  }
+  /* Quitar contactos: nunca mientras se envía ni con el envío completo; y desde que se disparó el
+     primer envío la lista queda fija: el tilde o la cruz de cada fila dicen a quién se le mandó y a
+     quién no, y quitar a alguien lo borraría de esa cuenta. */
+  const bloqueaQuitar = enviando || enviadoOk || state.envioIniciado
+  /* Deja el botón en rojo para poder reintentar. El detalle del problema va a los avisos de al lado. */
   const marcarError = () => setEstadoEnvio('error')
 
   /**
    * Vuelve a foja cero tras un intento fallido. Se llama cuando el usuario TOCA algo que puede haber
-   * resuelto el problema —quitar un contacto, sumar o sacar WhatsApp—: dejar el botón en rojo y el
-   * motivo viejo a la vista haría dudar de si el aviso es de antes o de ahora.
+   * resuelto el problema —quitar un contacto, cambiar el medio—: dejar el botón en rojo y el motivo
+   * viejo a la vista haría dudar de si el aviso es de antes o de ahora.
    *
-   * No toca un envío YA hecho: ahí no hay nada que reintentar y el verde tiene que quedarse.
+   * No toca un envío YA hecho ni uno parcial: el verde tiene que quedarse, y el aviso amarillo dice
+   * qué falta, y eso sigue siendo cierto aunque se cambie la lista o el medio.
    */
   const limpiarIntento = () => {
-    if (documentoEnviado || estadoEnvio !== 'error') return
+    if (documentoEnviado || parcial || estadoEnvio !== 'error') return
     setEstadoEnvio('idle')
     dispatch({ type: 'setLog', entries: [] })
   }
 
-  /* Fallo de la API de Monday: además del botón en rojo, dispara la ventana global. `accion`
-     completa la frase "No se pudo …". */
-  const fallar = (accion: string) => {
-    marcarError()
-    dispatch({ type: 'errorMonday', accion })
-  }
-
   /**
-   * Los contactos del cliente se traen al entrar al paso, así ya están listos cuando el
-   * usuario elige enviar. Se reparten según su clasificación: los que aceptan el documento
-   * quedan seleccionados de entrada, y los que no, disponibles en el buscador por si igual
-   * se los quiere sumar.
+   * Los contactos del titular se traen al entrar al paso, así ya están listos cuando el usuario elige
+   * enviar. Se reparten según su clasificación: los que aceptan el documento quedan seleccionados de
+   * entrada, y los que no, disponibles en el buscador por si igual se los quiere sumar.
    */
   const [disponibles, setDisponibles] = useState<Contacto[]>([])
   const [cargando, setCargando] = useState(false)
@@ -151,27 +178,23 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
     }
     let vivo = true
     setCargando(true)
-    /* La consulta está CACHEADA por cliente y documento: al volver a esta etapa con el stepper
+    /* La consulta está CACHEADA por titular y documento: al volver a esta etapa con el stepper
        resuelve al instante y no se le pega de nuevo a Monday. */
     getContactosCliente(titular.id, etiquetaContacto)
       .then((cs) => {
         if (!vivo) return
         /* BLOQUEO DE NEGOCIO: con `exigeContactoQueAcepta`, que el titular tenga contactos no
-           alcanza —tiene que haber al menos uno que declare que acepta ESTE comprobante—. Es lo
-           que inhabilita por completo el envío de una orden de pago a un proveedor sin
-           destinatarios válidos. */
+           alcanza —tiene que haber al menos uno que declare que acepta ESTE comprobante—. */
         const aceptan = cs.filter((c) => c.ok)
-        setSinContactos(
-          comprobante.exigeContactoQueAcepta ? aceptan.length === 0 : cs.length === 0,
-        )
-        /* El buscador conserva a todos: el picker ya descarta los que están seleccionados,
-           así que arranca mostrando sólo los que no aceptan, y un contacto quitado a mano
-           vuelve a quedar disponible. */
+        setSinContactos(comprobante.exigeContactoQueAcepta ? aceptan.length === 0 : cs.length === 0)
+        /* El buscador conserva a todos: el picker ya descarta los que están seleccionados, así que
+           arranca mostrando sólo los que no aceptan, y un contacto quitado a mano vuelve a quedar
+           disponible. */
         setDisponibles(cs)
-        /* La selección se siembra UNA sola vez: si ya hay contactos elegidos —porque el usuario
-           los ajustó y navegó con el stepper— no se los pisa con la lista por defecto. */
+        /* La selección se siembra UNA sola vez: si ya hay contactos elegidos —porque el usuario los
+           ajustó y navegó con el stepper— no se los pisa con la lista por defecto. */
         if (contactosRef.current.length === 0) {
-          dispatch({ type: 'setContactos', contactos: cs.filter((c) => c.ok) })
+          dispatch({ type: 'setContactos', contactos: aceptan })
         }
       })
       .catch(() => {
@@ -188,58 +211,25 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
   }, [titular, etiquetaContacto, comprobante.exigeContactoQueAcepta, dispatch])
 
   /**
-   * Contactos que el buscador puede OFRECER.
-   *
-   * Con `exigeContactoQueAcepta` sólo se ofrecen los que aceptan el comprobante: si el picker
-   * dejara sumar a uno que no lo declaró, el usuario podría habilitar el botón agregándolo, y el
-   * bloqueo de negocio dejaría de serlo. Para el recibo se siguen ofreciendo todos —ahí sumar a
-   * alguien que no lo declaró es una decisión válida del usuario—.
+   * Contactos que el buscador puede OFRECER. Con `exigeContactoQueAcepta` sólo se ofrecen los que
+   * aceptan el comprobante: si el picker dejara sumar a uno que no lo declaró, el bloqueo de negocio
+   * dejaría de serlo.
    */
-  const ofrecibles = comprobante.exigeContactoQueAcepta
-    ? disponibles.filter((c) => c.ok)
-    : disponibles
+  const ofrecibles = comprobante.exigeContactoQueAcepta ? disponibles.filter((c) => c.ok) : disponibles
 
   /**
    * No hay a quién enviarle. El bloque de envío se muestra IGUAL —el medio, el buscador vacío y la
-   * lista— y lo que ocupa el lugar de los contactos es el aviso: así se ve QUÉ falta en el lugar
-   * donde iría, en vez de reemplazar la pantalla entera por un cartel.
-   *
-   * Con el envío ya hecho no se muestra: ahí el "Enviado exitosamente" tiene que seguir a la vista.
+   * lista— y lo que ocupa el lugar de los contactos es el aviso. Con el envío ya hecho no se muestra:
+   * ahí el "Enviado exitosamente" tiene que seguir a la vista.
    */
   const sinDestinatarios = sinContactos && !enviadoOk
 
-  /** Contactos elegidos como ids numéricos de Monday. */
-  const contactoItemIds = () =>
-    contactos.map((c) => c.itemId).filter((id): id is string => Boolean(id))
-
-  /** Aviso de que el documento todavía no existe en su columna: no se envía sin él. */
-  const avisarSinDocumento = () => {
-    dispatch({
-      type: 'setLog',
-      entries: [
-        {
-          id: 'err-doc',
-          tipo: 'err',
-          titulo: `Todavía no hay ${comprobante.nombre} generado${articulo === 'la' ? 'a' : ''}`,
-          detalle: `El PDF ${articulo === 'la' ? 'de la' : 'del'} ${comprobante.nombre} aún no figura en Monday. Esperá a que termine de generarse y reintentá.`,
-        },
-      ],
-    })
-    /* No es un fallo de la API: el documento todavía no se generó. El registro ya lo explica. */
-    marcarError()
-  }
-
   /**
-   * Con el Email obligatorio, frena el envío si algún contacto elegido no tiene email, y dice cuál.
-   * UNA entrada por contacto: con dos o tres en falta, un solo mensaje que los enumere obliga a leerlo
-   * entero para saber a quién quitar. Con WhatsApp sumado ("Ambos") nunca frena: a cada uno se le
-   * envía por el canal que tenga.
-   *
-   * Sólo en `emailConWhatsapp`: con el selector, el usuario elige el medio y la lista ya marca en rojo
-   * a quien no puede recibirlo, como hasta ahora.
+   * Frena el envío cuando algún contacto elegido no tiene el dato que el medio necesita, y explica
+   * cuál y por qué. UNA entrada por contacto: con dos o tres en falta, un solo mensaje que los enumere
+   * obliga a leerlo entero para saber a quién quitar. Con "Ambos" NUNCA frena: ver `contactosSinVia`.
    */
   const frenarPorContactoSinVia = (): boolean => {
-    if (!emailConWhatsapp) return false
     const sinVia = contactosSinVia(contactos, medioEfectivo)
     if (sinVia.length === 0) return false
     dispatch({
@@ -257,53 +247,82 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
 
   const confirmar = async () => {
     // Anti-duplicado: si el envío ya se ejecutó con éxito (incluso tras navegar con el stepper), la
-    // acción se anula internamente y NO se vuelve a disparar la mutación de envío.
+    // acción se anula internamente y NO se vuelve a disparar.
     if (enviando || enviadoOk) return
-    /* Sin el comprobante emitido NO se envía: early return sin tocar la API de Monday, y se avisa
-       por modal que primero hay que emitirlo. */
+    /* Sin el comprobante emitido NO se envía: se avisa por modal que primero hay que emitirlo. */
     if (!emitido) {
       setAvisoNoEmitido(true)
       return
     }
-    /* Antes de tocar la API: si alguno de los elegidos no tiene por dónde recibirlo, no se manda
-       nada. Que parte de la lista quede afuera en silencio es peor que frenar y decir quién falta. */
+    /* Validación estricta: todos los elegidos tienen que aceptar el comprobante y tener el dato del
+       medio. Se frena con una ventana que lista qué cambiar, antes de llamar al escenario. */
+    const problemas = problemasDeContactos(contactos, medioEfectivo, comprobante.nombrePlural)
+    if (problemas.length > 0) {
+      setProblemasContactos(problemas)
+      return
+    }
+    /* Si alguno de los elegidos no tiene por dónde recibirlo con el medio actual, no se manda nada.
+       Que parte de la lista quede afuera en silencio es peor que frenar y decir quién falta. */
     if (frenarPorContactoSinVia()) return
     // El envío es una salida del sistema: no sale nada de un cliente bloqueado o excedido.
     if (bloqueo.frenar()) return
     setEstadoEnvio('enviando')
-    setEstadoMonday('')
-    const itemId = comprobante.itemId(state)
-    /* Sin ítem en el tablero no hay de dónde despachar. `emitido` ya lo cubre en el caso normal;
-       esto es el resguardo por si las dos señales se desincronizan. */
-    if (!itemId) {
-      avisarSinDocumento()
-      return
-    }
+    // Desde acá la lista queda fija: ya no se puede quitar a nadie (ver `bloqueaQuitar`).
+    dispatch({ type: 'setEnvioIniciado' })
     try {
-      const resultado = await comprobante.enviar({
-        state,
-        itemId,
-        contactoIds: contactoItemIds(),
-        medio: medioEfectivo,
-        onProgreso: setEstadoMonday,
-      })
-      // El PDF todavía no se generó: no es un fallo, hay que esperar y reintentar.
+      const resultado = await enviarComprobante(comprobante, state, medioEfectivo)
       if (resultado.estado === 'sin-documento') {
-        avisarSinDocumento()
+        setEstadoEnvio('idle')
+        setAvisoNoEmitido(true)
         return
       }
-      // El tablero reportó error en el envío (destinatarios, medio, la automatización).
+      // A quién no le llegó: la cruz roja de su fila, y a ellos va el reintento.
       if (resultado.estado === 'error-envio') {
-        fallar(`enviar ${articulo} ${comprobante.nombre}`)
+        if (resultado.fallidos) dispatch({ type: 'setContactosFallidos', value: resultado.fallidos })
+        dispatch({
+          type: 'setLog',
+          entries: [
+            {
+              id: 'err-envio',
+              tipo: 'err',
+              // Con el canal que falló, se sabe qué revisar: "No se pudo enviar por WhatsApp".
+              titulo: resultado.titulo ?? 'No se pudo enviar',
+              /* Tal cual llega: el mensaje ya dice qué pasó y qué hacer. El reintento lo indica el
+                 tooltip del botón. */
+              detalle:
+                resultado.mensaje ??
+                `Falló el envío ${comprobante.articulo === 'la' ? 'de la' : 'del'} ${comprobante.nombre}. Reintentá.`,
+            },
+          ],
+        })
+        marcarError()
         return
       }
-      dispatch({ type: 'setLog', entries: construirLog(contactos, comprobante.nombre, numero) })
+      /* Salió por un canal y no por el otro: se guarda lo que salió —el reintento no lo vuelve a
+         pedir— y se explica qué falta, en amarillo al lado del botón. */
+      if (resultado.estado === 'parcial') {
+        dispatch({ type: 'setEnviadosPorContacto', value: resultado.enviados })
+        dispatch({ type: 'setContactosFallidos', value: resultado.fallidos })
+        dispatch({
+          type: 'setLog',
+          entries: [{ id: 'parcial', tipo: 'warn', titulo: 'Envío incompleto', detalle: resultado.mensaje }],
+        })
+        setEstadoEnvio('parcial')
+        return
+      }
+      /* El éxito NO deja mensaje: lo dice el propio botón, que pasa a verde con "Enviado
+         exitosamente". Lo que sí hace falta es LIMPIAR el aviso de un intento fallido anterior. */
+      dispatch({ type: 'setLog', entries: [] })
+      if (resultado.enviados) dispatch({ type: 'setEnviadosPorContacto', value: resultado.enviados })
+      dispatch({ type: 'setContactosFallidos', value: {} })
       // Bandera GLOBAL de éxito: persiste el envío para que el botón quede bloqueado y en verde
       // aunque el usuario navegue con el stepper y vuelva a esta etapa.
       dispatch({ type: 'setDocumentoEnviado', value: true })
       setEstadoEnvio('enviado')
       onEnviado?.()
     } catch {
+      /* Un rechazo de seguridad ya levantó su propia ventana; acá sólo queda decir que no salió y
+         dejar el botón listo para reintentar. */
       dispatch({
         type: 'setLog',
         entries: [
@@ -311,20 +330,18 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
             id: 'err-envio',
             tipo: 'err',
             titulo: 'No se pudo enviar',
-            detalle: `Falló el envío ${articulo === 'la' ? 'de la' : 'del'} ${comprobante.nombre} en Monday. Reintentá.`,
+            detalle: `Falló el envío ${comprobante.articulo === 'la' ? 'de la' : 'del'} ${comprobante.nombre}. Reintentá.`,
           },
         ],
       })
-      fallar(`enviar ${articulo} ${comprobante.nombre}`)
+      marcarError()
     }
   }
 
   return (
     <div className="card card--neutral card--flush">
-      {/* El envío es obligatorio post-emisión: la card queda SIEMPRE abierta y fija (sin pregunta
-          "¿Desea enviar?" ni toggle SI/NO). Se muestra directo el bloque de envío.
-          Con el envío YA hecho nunca se tapa el bloque: el "Enviado exitosamente" tiene que seguir
-          a la vista aunque se vuelva a entrar a la etapa. */}
+      {/* El envío es obligatorio post-emisión: la card queda SIEMPRE abierta y fija. Con el envío YA
+          hecho nunca se tapa el bloque: el "Enviado exitosamente" tiene que seguir a la vista. */}
       {cargando && !enviadoOk ? (
         <div className="contactos-cargando">
           <i className="fas fa-spinner fa-spin" /> Cargando contactos…
@@ -341,9 +358,7 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
                   <i className="fas fa-envelope" aria-hidden="true" /> Email
                 </div>
               </div>
-              <label
-                className={`dpago-check envio-wsp-check ${enviadoOk ? 'dpago-check--off' : ''}`}
-              >
+              <label className={`dpago-check envio-wsp-check ${enviadoOk ? 'dpago-check--off' : ''}`}>
                 <input
                   type="checkbox"
                   className="dpago-check-input"
@@ -356,15 +371,10 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
                     dispatch({ type: 'setMedioEnvio', value: e.target.checked ? 'Ambos' : 'Email' })
                   }}
                 />
-                <span
-                  className={`dpago-check-box ${conWhatsapp ? 'dpago-check-box--on' : ''}`}
-                  aria-hidden="true"
-                >
+                <span className={`dpago-check-box ${conWhatsapp ? 'dpago-check-box--on' : ''}`} aria-hidden="true">
                   <i className="fas fa-check" />
                 </span>
-                <span className="dpago-check-txt">
-                  ¿Desea realizar también un envío por WhatsApp?
-                </span>
+                <span className="dpago-check-txt">¿Desea realizar también un envío por WhatsApp?</span>
               </label>
             </div>
           ) : (
@@ -375,9 +385,13 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
                 className="full w-medio"
                 style={{ cursor: 'pointer' }}
                 value={medioEnvio}
-                onChange={(e) =>
+                disabled={enviadoOk || enviando}
+                onChange={(e) => {
+                  /* Cambiar el medio puede resolver el problema —o crear otro—: en los dos casos el
+                     aviso anterior ya no aplica. */
+                  limpiarIntento()
                   dispatch({ type: 'setMedioEnvio', value: e.target.value as MedioEnvio })
-                }
+                }}
               >
                 {/* El value queda limpio: el emoji es sólo la etiqueta. */}
                 {MEDIOS.map((m) => (
@@ -396,8 +410,7 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
           </div>
           <div className="selc">
             {/* Sin destinatarios el aviso ocupa el lugar de la lista: es exactamente lo que falta y
-                está donde iría. La lista queda vacía por construcción —el picker no tiene nada que
-                ofrecer—, así que no hay dos estados que puedan contradecirse. */}
+                está donde iría. */}
             {sinDestinatarios && (
               <div className="envio-sin-contactos" role="alert">
                 <i className="fas fa-triangle-exclamation" />
@@ -409,11 +422,11 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
             )}
             {contactos.map((c) => {
               const falta = faltaParaMedio(c, medioEfectivo)
-              /* Sólo se marca al contacto que NO tiene por dónde recibirlo. Con "Ambos", que le
-                 falte uno de los dos datos no es un problema: se envía por el que tenga. */
+              /* Sólo se marca al contacto que NO tiene por dónde recibirlo. Con "Ambos", que le falte
+                 uno de los dos datos no es un problema: se envía por el que tenga. */
               const incompleto = sinViaDeEnvio(c, medioEfectivo)
-              /* Rojo únicamente cuando el envío no puede llegarle. Si sigue siendo alcanzable por
-                 el otro canal, el dato ausente se informa en gris oscuro: no es un error. */
+              /* Rojo únicamente cuando el envío no puede llegarle. Si sigue siendo alcanzable por el
+                 otro canal, el dato ausente se informa en gris oscuro: no es un error. */
               const claseFalta = incompleto ? 'citem-sub--falta' : 'citem-sub--aviso'
               return (
                 <div className={`citem ${incompleto ? 'citem--sin-dato' : ''}`} key={c.id}>
@@ -423,8 +436,6 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
                     </div>
                     <div>
                       <div className="citem-name">{c.name}</div>
-                      {/* Falta el dato del medio elegido: se avisa acá, en rojo o en gris oscuro
-                          según si el contacto queda o no sin vía de envío. */}
                       <div className={`citem-sub ${falta.telefono ? claseFalta : ''}`}>
                         {falta.telefono ? 'SIN TELEFONO' : c.phone}
                       </div>
@@ -440,7 +451,14 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
                       type="button"
                       className="del"
                       aria-label={`Quitar ${c.name}`}
+                      disabled={bloqueaQuitar}
+                      title={
+                        bloqueaQuitar
+                          ? 'Ya se envió el documento: no se puede quitar contactos de la lista'
+                          : undefined
+                      }
                       onClick={() => {
+                        if (bloqueaQuitar) return
                         // Quitar al contacto en falta es justamente cómo se destraba el envío.
                         limpiarIntento()
                         dispatch({ type: 'removeContacto', id: c.id })
@@ -448,44 +466,63 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
                     >
                       🗑️
                     </button>
+                    {/* Cómo le fue el envío a este contacto, a la derecha del tacho. */}
+                    <EstadoEnvioContacto estado={estadoFila(c)} motivo={state.contactosFallidos[pulseIdDe(c)]} />
                   </div>
                 </div>
               )
             })}
           </div>
 
-          {/* Todo el feedback vive DENTRO del botón (idle / loading / success / error). Sin líneas
-              de texto sueltas debajo. */}
+          {/* El botón dice EN QUÉ estado está y el detalle va a su derecha: qué salió mal y qué
+              hacer. */}
           <div className="enviar-row">
             <button
               type="button"
               className={`btn-block btn-block--enviar ${enviadoOk ? 'btn-block--ok' : ''}`}
-              /* El fondo verde de éxito depende de la bandera GLOBAL (`enviadoOk`): se conserva al
-                 volver a esta etapa con el stepper. */
-              /* El fondo dice en qué estado está: verde el envío hecho, rojo el fallido, GRIS el
-                 que no se puede disparar —sin destinatarios— y azul el que espera el click. El gris
-                 es lo que lo distingue de un botón vivo: con el azul al 50% que deja `:disabled`,
-                 un control bloqueado se sigue leyendo como accionable. */
+              /* El fondo dice en qué estado está: verde el envío hecho, amarillo el parcial, rojo el
+                 fallido, GRIS el que no se puede disparar —sin destinatarios— y azul el que espera el
+                 click. */
               style={{
                 background: enviadoOk
                   ? 'var(--green)'
-                  : estadoEnvio === 'error'
-                    ? 'var(--red)'
-                    : contactos.length === 0
-                      ? 'var(--c-text-secondary, #6b7280)'
-                      : 'var(--primary-blue)',
+                  : parcial && !enviando
+                    ? 'var(--orange)'
+                    : estadoEnvio === 'error'
+                      ? 'var(--red)'
+                      : contactos.length === 0
+                        ? 'var(--c-text-secondary, #6b7280)'
+                        : 'var(--primary-blue)',
+                ...(enviadoOk ? { opacity: 1 } : {}),
               }}
               disabled={contactos.length === 0 || enviando || enviadoOk}
               aria-busy={enviando}
-              onClick={confirmar}
+              /* En error y en parcial sigue habilitado: el mismo botón reintenta, con las mismas
+                 validaciones. */
+              title={
+                enviando || enviadoOk
+                  ? undefined
+                  : parcial
+                    ? 'Tocá para completar el envío'
+                    : estadoEnvio === 'error'
+                      ? 'Tocá para reintentar el envío'
+                      : undefined
+              }
+              onClick={() => void confirmar()}
             >
               {enviando ? (
                 <>
-                  <i className="fas fa-circle-notch spin" /> Enviando...
+                  <i className="fas fa-circle-notch fa-spin" /> Enviando...
                 </>
               ) : enviadoOk ? (
                 <>
                   <i className="fas fa-check" /> Enviado exitosamente
+                </>
+              ) : parcial ? (
+                /* Amarillo y habilitado: se reintenta con el mismo botón. Va antes del error: si un
+                   reintento falla, lo que ya salió sigue habiendo salido. */
+                <>
+                  <i className="fas fa-triangle-exclamation" /> Parcialmente enviado
                 </>
               ) : estadoEnvio === 'error' ? (
                 <>
@@ -498,21 +535,18 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
               )}
             </button>
 
-            {/* Qué salió mal y qué hacer, a la derecha del botón. Sólo los ERRORES: el éxito ya lo
-                dice el propio botón en verde, y repetirlo al lado es ruido. `role="status"` y no
+            {/* Detalle de lo último que pasó: sólo lo que salió mal o a medias. `role="status"` y no
                 `alert`: acompaña a una acción que el usuario acaba de hacer, no interrumpe. */}
-            {estadoEnvio === 'error' && log.some((e) => e.tipo === 'err') && (
+            {!enviadoOk && log.length > 0 && (
               <div className="enviar-avisos" role="status" aria-live="polite">
-                {log
-                  .filter((e) => e.tipo === 'err')
-                  .map((e) => (
-                    <p key={e.id} className={`enviar-aviso enviar-aviso--${e.tipo}`}>
-                      <i className={`fas ${ICONO_LOG[e.tipo]}`} aria-hidden="true" />
-                      <span>
-                        <strong>{e.titulo}.</strong> {e.detalle}
-                      </span>
-                    </p>
-                  ))}
+                {log.map((e) => (
+                  <p key={e.id} className={`enviar-aviso enviar-aviso--${e.tipo}`}>
+                    <i className={`fas ${ICONO_LOG[e.tipo]}`} aria-hidden="true" />
+                    <span>
+                      <strong>{e.titulo}.</strong> {e.detalle}
+                    </span>
+                  </p>
+                ))}
               </div>
             )}
           </div>
@@ -523,8 +557,19 @@ export function EnviarDocumento({ documento, numero, onEnviado }: EnviarDocument
 
       {/* Aviso al intentar enviar sin haber emitido el comprobante. */}
       {avisoNoEmitido && (
-        <AvisoModal titulo="Falta emitir el comprobante" onClose={() => setAvisoNoEmitido(false)}>
-          No es posible realizar el envío. Primero debe emitir el comprobante para poder enviarlo.
+        <AvisoModal titulo={comprobante.avisoNoEmitido.titulo} onClose={() => setAvisoNoEmitido(false)}>
+          {comprobante.avisoNoEmitido.texto}
+        </AvisoModal>
+      )}
+
+      {/* Contactos que no pueden recibir el comprobante: se dice a quién y qué cambiar. */}
+      {problemasContactos && (
+        <AvisoModal
+          titulo="Hay contactos que no pueden recibirlo"
+          faltantes={problemasContactos}
+          onClose={() => setProblemasContactos(null)}
+        >
+          No se envió nada. Corregí lo siguiente y volvé a tocar "Confirmar y Enviar":
         </AvisoModal>
       )}
     </div>

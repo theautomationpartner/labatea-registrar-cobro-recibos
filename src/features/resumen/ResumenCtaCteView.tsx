@@ -1,11 +1,36 @@
-import { useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { AvisoModal } from '@/components/ui/AvisoModal'
-import { useEmision } from '@/features/recibo/useEmisionRecibo'
-import { RESUMEN_CTA_CTE_EMISIBLE } from '@/features/shared/emisiones'
+import { ModalCargando } from '@/components/ui/ModalCargando'
+import { generarDocumentosCtaCte } from '@/features/documentos/generarDocumentos'
+import { LOGO_DOCUMENTOS } from '@/features/documentos/pdf/comun'
+import { DescargarExcel } from '@/features/shared/DescargarArchivos'
 import { EnviarDocumento } from '@/features/shared/EnviarDocumento'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
+import { useReemision } from '@/features/shared/useReemision'
+import { VerImprimirPdf } from '@/features/shared/VerImprimirPdf'
+import { hoy, hoyIso } from '@/lib/dates'
+import { firmaDe } from '@/lib/firma'
 import { descripcionDePaso, etiquetaDePaso, numeroDePaso, pasoAnterior } from '@/lib/pasos'
+import { envioDelResumen } from '@/lib/actividadResumen'
 import { periodoDelCriterio, rotuloCriterio } from '@/lib/resumenCtaCte'
+import {
+  AVANCE_REGISTRO_RESUMEN_INICIAL,
+  ErrorRegistroResumen,
+  registrarResumenCtaCte,
+  type AvanceRegistroResumen,
+  type DatosRegistroResumen,
+  type PasoRegistroResumen,
+} from '@/services/monday'
+
+/** Qué dice la ventana de advertencia según el paso en el que se cortó "Registrar Resumen". */
+const FALLO_REGISTRO: Record<PasoRegistroResumen, string> = {
+  archivos:
+    'No se pudieron guardar los archivos del resumen en la cuenta corriente del cliente, así que la actividad del envío no se registró.',
+  actividad:
+    'Los archivos del resumen se guardaron, pero no se pudo crear la actividad del envío en el timeline del cliente.',
+  completar:
+    'La actividad del envío se creó en el timeline del cliente, pero no se le pudieron cargar los contactos ni marcarla como completada.',
+}
 import { criterioResumen } from '@/state/appState'
 import { useApp, useDispatch } from '@/state/hooks'
 import { FichaResumenCtaCte } from './FichaResumenCtaCte'
@@ -14,20 +39,31 @@ import { useFacturasAdeudadas } from './useFacturasAdeudadas'
 import { useMovimientosCtaCte } from './useMovimientosCtaCte'
 
 /** Qué ventana está abierta, si hay una. */
-type Aviso = 'sin-formato' | 'sin-periodo' | 'cargando' | 'fallo' | 'sin-cuenta' | 'sin-emitir'
+type Aviso =
+  | 'sin-formato'
+  | 'sin-periodo'
+  | 'cargando'
+  | 'fallo'
+  | 'sin-cuenta'
+  | 'fallo-facturas'
+  | 'sin-emitir'
+  | 'sin-enviar'
+  | 'cambios'
 
 /**
- * RESUMEN DE CTA CTE · paso 2 y último: emitir el resumen y enviárselo al cliente. Misma grilla que
- * la emisión del recibo —la ficha con el botón a la izquierda, el documento y su envío a la derecha—.
+ * RESUMEN DE CTA CTE · paso 2 y último: emitir el resumen, enviárselo al cliente y registrarlo. Misma
+ * grilla que la emisión del recibo —la ficha con el botón a la izquierda, el documento y su envío a la
+ * derecha—.
  *
  * ACÁ se consulta la cuenta: al entrar a esta etapa salen las dos lecturas que arman los documentos
  * —los movimientos del período y, si el resumen lleva el estado de la cuenta, las facturas que el
- * cliente debe—, con lo elegido en el paso 1. Los resultados se ven en las cards "Resumen de Cta
- * Cte" y "Estado de Cta Cte", que es donde tienen sentido: ya con la forma del documento.
+ * cliente debe—, con lo elegido en el paso 1.
  *
- * Emitir NO crea un ítem: deja escrito el pedido en la cuenta corriente del cliente y le pide al
- * tablero que genere el archivo, y se sigue esa generación hasta que cierre (ver
- * `RESUMEN_CTA_CTE_EMISIBLE`). El envío se habilita recién con el archivo generado.
+ * Son dos momentos separados, igual que en el recibo:
+ *   1. "Emitir Resumen Cta Cte" genera los archivos EN LA APP —el resumen y, si se incluye, el estado
+ *      de cuenta, en PDF y/o Excel— con lo que muestran las cards. No toca Monday.
+ *   2. "Registrar Resumen", con el resumen ya ENVIADO, los deja en la cuenta corriente del cliente en
+ *      Monday y registra la actividad del envío en su timeline.
  */
 export function ResumenCtaCteView() {
   const state = useApp()
@@ -37,9 +73,17 @@ export function ResumenCtaCteView() {
     movimientosCtaCte,
     mercaderiaPendFacturar,
     ctaCteId,
+    ctaCteNro,
     resumenFormato,
     resumenEstadoCtaCte,
     facturasAdeudadas,
+    resumenDoc,
+    emisionResumen,
+    emisionNro,
+    documentoEnviado,
+    contactos,
+    medioEnvio,
+    enviadosPorContacto,
   } = state
   const dispatch = useDispatch()
 
@@ -51,17 +95,46 @@ export function ResumenCtaCteView() {
   const lectura = useMovimientosCtaCte()
   const facturas = useFacturasAdeudadas(incluyeEstado)
 
-  const { fase, estado, error, puedeReintentar, emitir } = useEmision(RESUMEN_CTA_CTE_EMISIBLE)
   const [aviso, setAviso] = useState<Aviso | null>(null)
   const [marcarFormato, setMarcarFormato] = useState(false)
+  // "Registrar Resumen" en curso: tapa la pantalla con la ventana de espera.
+  const [registrando, setRegistrando] = useState(false)
+  // "Registrar Resumen" falló: en qué paso, para la ventana de advertencia.
+  const [falloRegistro, setFalloRegistro] = useState<PasoRegistroResumen | null>(null)
+  // Cerrojo sincrónico contra el doble click en "Emitir".
+  const emitiendoRef = useRef(false)
 
   const anterior = pasoAnterior('resumenCtaCte', tipoOperacion)
   const movimientos = lectura.listo ? movimientosCtaCte : []
+  const facturasDelEstado = incluyeEstado && facturas.listo ? facturasAdeudadas : []
   const saldoFinal = movimientos.length > 0 ? movimientos[movimientos.length - 1].saldoFinal : 0
   /* La cuenta se leyó y el cliente no tiene ninguna asignada: no hay sobre qué emitir. */
   const sinCuenta = lectura.listo && ctaCteId === null
 
-  const emitirResumen = () => {
+  /** Lo que "Registrar Resumen" escribe sobre la cuenta. */
+  const clienteId = cliente?.id ?? ''
+  const datos = useMemo<DatosRegistroResumen | null>(
+    () =>
+      ctaCteId && clienteId && resumenFormato && periodo
+        ? { ctaCteId, clienteId, formato: resumenFormato, periodo, incluyeEstado }
+        : null,
+    [ctaCteId, clienteId, resumenFormato, periodo, incluyeEstado],
+  )
+  /* La huella de lo que los documentos dirían HOY: el pedido y lo leído de la cuenta. Si una lectura
+     nueva trae otros movimientos después de emitir, deja de coincidir con la del emitido. */
+  const firma = useMemo(
+    () => firmaDe({ datos, movimientos, facturas: facturasDelEstado, ctaCteNro }),
+    [datos, movimientos, facturasDelEstado, ctaCteNro],
+  )
+  const desactualizado = resumenDoc !== null && resumenDoc.firma !== firma
+
+  /**
+   * "Emitir Resumen Cta Cte": genera los archivos con lo que muestran las cards. No escribe en Monday,
+   * así que se puede VOLVER A EMITIR: los archivos nuevos reemplazan a los anteriores y el envío vuelve
+   * a cero (ver `useReemision`).
+   */
+  const emitirResumen = async () => {
+    if (emitiendoRef.current || !cliente) return
     /* El formato primero: es el único dato de ESTA etapa, y el que la ficha marca en rojo. */
     if (!resumenFormato) {
       setMarcarFormato(true)
@@ -73,7 +146,7 @@ export function ResumenCtaCteView() {
       setAviso('sin-periodo')
       return
     }
-    if (lectura.cargando) {
+    if (lectura.cargando || (incluyeEstado && facturas.cargando)) {
       setAviso('cargando')
       return
     }
@@ -81,22 +154,125 @@ export function ResumenCtaCteView() {
       setAviso('fallo')
       return
     }
-    if (!ctaCteId) {
+    if (!ctaCteId || !datos) {
       setAviso('sin-cuenta')
       return
     }
-    void emitir({ ctaCteId, formato: resumenFormato, periodo, incluyeEstado })
+    // El estado de cuenta no se puede armar sin las facturas que el cliente debe.
+    if (incluyeEstado && !facturas.listo) {
+      setAviso('fallo-facturas')
+      return
+    }
+    emitiendoRef.current = true
+    dispatch({ type: 'setEmisionResumen', emision: { fase: 'creando', estado: 'Generando archivos', error: null } })
+    try {
+      const hoyAhora = hoyIso()
+      const titular = { name: cliente.name, cuit: cliente.cuit, addr: cliente.addr }
+      const archivos = await generarDocumentosCtaCte({
+        formato: resumenFormato,
+        incluyeEstado,
+        resumen: { cliente: titular, cuentaNro: ctaCteNro, hoy: hoyAhora, periodo, movimientos, logoSrc: LOGO_DOCUMENTOS },
+        estado: incluyeEstado
+          ? { cliente: titular, cuentaNro: ctaCteNro, hoy: hoyAhora, facturas: facturasDelEstado, logoSrc: LOGO_DOCUMENTOS }
+          : undefined,
+      })
+      dispatch({
+        type: 'setResumenDoc',
+        doc: {
+          // Con qué número se lo identifica en el envío: el de la cuenta.
+          numero: ctaCteNro || `Resumen Cta Cte ${cliente.codigo}`,
+          fechaEmision: hoy(),
+          archivos,
+          datos,
+          firma,
+        },
+      })
+      dispatch({ type: 'setEmisionResumen', emision: { fase: 'emitido', estado: 'Generado', error: null } })
+    } catch (e) {
+      console.error('No se pudieron generar los archivos del resumen de cta cte', e)
+      dispatch({
+        type: 'setEmisionResumen',
+        emision: {
+          fase: 'error',
+          estado: '',
+          error: {
+            estado: 'Error de emisión',
+            mensaje:
+              'La app no está pudiendo generar los archivos del resumen. Tocá el botón para reintentar; si vuelve a fallar, contactate con el soporte de TAP.',
+          },
+        },
+      })
+    } finally {
+      emitiendoRef.current = false
+    }
   }
 
-  /* Cierra la operación y deja la app lista para la próxima. Sin el resumen emitido el botón sigue
-     activo a propósito: la ventana explica por qué no se puede cerrar. */
-  const finalizar = () => {
-    if (fase !== 'emitido') {
+  /* Hasta dónde llegó un registro que se cortó, POR EMISIÓN: el reintento retoma desde ahí —sin
+     volver a crear la actividad del timeline— y un resumen nuevo arranca de cero. */
+  const avanceRef = useRef<{ doc: typeof resumenDoc; avance: AvanceRegistroResumen }>({
+    doc: null,
+    avance: AVANCE_REGISTRO_RESUMEN_INICIAL,
+  })
+
+  /**
+   * "Registrar Resumen": sólo con el resumen EMITIDO y ENVIADO. Deja en la cuenta corriente del
+   * cliente los archivos emitidos —y el formato, el período, los contactos y el medio del envío— y
+   * registra la actividad del envío en el timeline del cliente, como lo hacía el escenario de Make.
+   * Con eso se cierra la operación.
+   */
+  const registrar = async () => {
+    if (!resumenDoc) {
       setAviso('sin-emitir')
       return
     }
-    dispatch({ type: 'reset' })
+    if (desactualizado) {
+      setAviso('cambios')
+      return
+    }
+    if (!documentoEnviado) {
+      setAviso('sin-enviar')
+      return
+    }
+    if (registrando) return
+    setRegistrando(true)
+    if (avanceRef.current.doc !== resumenDoc) {
+      avanceRef.current = { doc: resumenDoc, avance: AVANCE_REGISTRO_RESUMEN_INICIAL }
+    }
+    try {
+      await registrarResumenCtaCte(
+        resumenDoc.datos,
+        resumenDoc.archivos,
+        envioDelResumen(contactos, medioEnvio, enviadosPorContacto),
+        avanceRef.current.avance,
+        (avance) => {
+          avanceRef.current = { doc: resumenDoc, avance }
+        },
+      )
+      dispatch({ type: 'setResumenCtaCteId', id: resumenDoc.datos.ctaCteId })
+      dispatch({ type: 'reset' })
+    } catch (e) {
+      /* El fallo se informa SÓLO en la app: no se deja update ni se cambia ningún estado en Monday. */
+      console.error('No se pudo registrar el resumen de cta cte', e)
+      setRegistrando(false)
+      setFalloRegistro(e instanceof ErrorRegistroResumen ? e.paso : 'archivos')
+    }
   }
+
+  /* Reemisión, con el mismo criterio que la app de ventas: el botón de emitir sigue habilitado, y
+     archivos que quedaron viejos (cambió la cuenta o lo pedido) se descartan solos. */
+  const descartar = useCallback(() => dispatch({ type: 'descartarEmision', documento: 'resumen' }), [dispatch])
+  const { pedirEmision, modal: modalReemision } = useReemision({
+    nombre: 'el resumen de cuenta corriente',
+    emitido: resumenDoc !== null,
+    firmaEmitida: resumenDoc?.firma ?? null,
+    firmaActual: firma,
+    creado: false,
+    descartar,
+    emitir: () => void emitirResumen(),
+  })
+
+  const pdfs = resumenDoc ? resumenDoc.archivos.filter((a) => a.formato === 'pdf').map((a) => a.archivo) : null
+  const excels = resumenDoc ? resumenDoc.archivos.filter((a) => a.formato === 'xlsx').map((a) => a.archivo) : null
 
   return (
     <section className="view recibo-v2 resumen-v2 paso-layout">
@@ -117,17 +293,20 @@ export function ResumenCtaCteView() {
         ) : (
           <div className="recibo-grid">
             <FichaResumenCtaCte
-              ctaCteId={ctaCteId}
               cliente={cliente}
               rotuloPeriodo={rotuloCriterio(criterio)}
               saldoFinal={saldoFinal}
               mercaderiaPendFacturar={lectura.listo ? mercaderiaPendFacturar : 0}
-              fase={fase}
-              error={error}
-              puedeReintentar={puedeReintentar}
+              fase={emisionResumen.fase}
+              error={emisionResumen.error}
               marcarFormato={marcarFormato}
-              onEmitir={emitirResumen}
-            />
+              onEmitir={pedirEmision}
+            >
+              {/* "Ver / Imprimir" abre los PDF y "Descargar Excel" baja los Excel, uno por clic. Cada
+                  botón aparece sólo con el formato que lo usa. */}
+              {resumenFormato !== 'Excel' && <VerImprimirPdf archivos={pdfs} />}
+              {resumenFormato !== 'PDF' && <DescargarExcel archivos={excels} />}
+            </FichaResumenCtaCte>
 
             <div className="recibo-col-der">
               {/* La lectura falló: el documento no se puede armar, y se ofrece volver a intentarla
@@ -156,13 +335,14 @@ export function ResumenCtaCteView() {
                 formato={resumenFormato}
                 incluyeEstado={incluyeEstado}
                 cargandoMovimientos={lectura.cargando}
-                facturas={facturas.listo ? facturasAdeudadas : []}
+                facturas={facturasDelEstado}
                 cargandoFacturas={facturas.cargando}
-                fase={fase}
-                estado={estado}
+                fase={emisionResumen.fase}
+                estado={emisionResumen.estado}
               />
 
-              <EnviarDocumento documento="resumenCtaCte" numero={`Resumen Cta Cte ${cliente.codigo}`} />
+              {/* Por documento emitido: uno nuevo es otro documento, y el envío arranca de cero. */}
+              <EnviarDocumento key={`emision-${emisionNro}`} documento="resumenCtaCte" />
             </div>
           </div>
         )}
@@ -176,12 +356,34 @@ export function ResumenCtaCteView() {
             <i className="fas fa-arrow-left" /> Volver
           </button>
           <div className="actions-footer-fin">
-            <button type="button" className="btn btn-primary" onClick={finalizar}>
-              <i className="fas fa-flag-checkered" /> Finalizar Operación
+            <button
+              type="button"
+              className="btn btn-primary"
+              /* Sólo con el resumen emitido Y enviado: lo que se registra es la actividad del envío. */
+              disabled={registrando || !resumenDoc || !documentoEnviado}
+              title={
+                !resumenDoc
+                  ? 'Emití y enviá el resumen para poder registrarlo.'
+                  : !documentoEnviado
+                    ? 'Enviá el resumen a los contactos para poder registrarlo.'
+                    : undefined
+              }
+              onClick={() => void registrar()}
+            >
+              <i className="fas fa-flag-checkered" /> Registrar Resumen
             </button>
           </div>
         </div>
       </div>
+
+      {modalReemision}
+
+      {registrando && (
+        <ModalCargando
+          titulo="Registrando resumen en el sistema"
+          detalle="Estamos guardando el resumen de cuenta corriente en la cuenta del cliente y registrando la actividad del envío. Espera unos segundos y no salgas de la app"
+        />
+      )}
 
       {aviso === 'sin-formato' && (
         <AvisoModal titulo="Falta elegir el formato" onClose={() => setAviso(null)}>
@@ -197,14 +399,22 @@ export function ResumenCtaCteView() {
         </AvisoModal>
       )}
       {aviso === 'cargando' && (
-        <AvisoModal titulo="Los movimientos todavía se están cargando" onClose={() => setAviso(null)}>
-          Esperá a que terminen de cargarse los movimientos del período y volvé a intentar.
+        <AvisoModal titulo="La cuenta todavía se está cargando" onClose={() => setAviso(null)}>
+          Esperá a que terminen de cargarse los movimientos del período
+          {incluyeEstado ? ' y los comprobantes pendientes' : ''} y volvé a intentar.
         </AvisoModal>
       )}
       {aviso === 'fallo' && (
         <AvisoModal titulo="No se pudieron leer los movimientos" onClose={() => setAviso(null)}>
           Sin los movimientos de la cuenta corriente no se puede armar el resumen. Usá
           <strong> Reintentar</strong> y, cuando carguen, emitilo.
+        </AvisoModal>
+      )}
+      {aviso === 'fallo-facturas' && (
+        <AvisoModal titulo="No se pudieron leer los comprobantes pendientes" onClose={() => setAviso(null)}>
+          El resumen se pidió CON el estado de la cuenta corriente, y sin los comprobantes que el
+          cliente debe ese documento no se puede armar. Volvé a entrar a la etapa para reintentar la
+          lectura.
         </AvisoModal>
       )}
       {aviso === 'sin-cuenta' && (
@@ -215,8 +425,27 @@ export function ResumenCtaCteView() {
       )}
       {aviso === 'sin-emitir' && (
         <AvisoModal titulo="Todavía no emitiste el resumen" onClose={() => setAviso(null)}>
-          La operación no queda cerrada hasta que se emite el resumen de cuenta corriente. Emitilo
-          desde la ficha y después finalizá la operación.
+          El resumen no se puede registrar hasta que se emite. Emitilo desde la ficha y después
+          registralo.
+        </AvisoModal>
+      )}
+      {falloRegistro && (
+        <AvisoModal titulo="No se pudo registrar la actividad" onClose={() => setFalloRegistro(null)}>
+          {FALLO_REGISTRO[falloRegistro]} Tocá <strong>Registrar Resumen</strong> para reintentar: se
+          retoma desde donde se cortó, sin duplicar lo que ya quedó hecho. Si vuelve a fallar,
+          contactate con el soporte de TAP.
+        </AvisoModal>
+      )}
+      {aviso === 'sin-enviar' && (
+        <AvisoModal titulo="Todavía no enviaste el resumen" onClose={() => setAviso(null)}>
+          Registrar el resumen deja asentada la actividad de su envío, así que primero tenés que
+          enviárselo a los contactos. Tocá <strong>Confirmar y Enviar</strong> y después registralo.
+        </AvisoModal>
+      )}
+      {aviso === 'cambios' && (
+        <AvisoModal titulo="El resumen emitido ya no coincide" onClose={() => setAviso(null)}>
+          La cuenta corriente cambió después de emitir el resumen, así que sus archivos ya no dicen lo
+          que se registraría. Volvé a emitirlo desde la ficha antes de registrarlo.
         </AvisoModal>
       )}
     </section>

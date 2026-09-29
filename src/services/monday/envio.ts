@@ -1,24 +1,13 @@
 /**
- * Envío del recibo al cliente. La app NO manda el mail ni el WhatsApp: deja el recibo listo en el
- * tablero y una automatización de Monday lo despacha. El circuito son cuatro pasos:
+ * Los CONTACTOS a los que se les envía un documento (recibo, orden de pago, resumen de cta cte).
  *
- *   1. verificar que el PDF ya exista en su columna file (sin documento no hay nada que enviar);
- *   2. escribir el medio elegido en "✋Enviar por:" y los contactos en "🤖Contactos";
- *   3. poner "🤖Estado de Emision" en "Enviar", que es lo que dispara la automatización;
- *   4. seguir esa misma columna hasta que el tablero la cierre en "Enviado" o "Error - Enviar".
- *
- * Es el mismo esquema que usa la emisión (`pedirEmision` + `getEstadoEmision`): la app escribe
- * una sola vez y después sólo mira.
+ * El envío en sí ya no pasa por el tablero: lo despacha el escenario de Make con el PDF que generó la
+ * app (ver `services/make/envioDocumento`). De Monday sólo hace falta saber a quién se le puede
+ * mandar: los contactos de la persona y si declaran aceptar ESE documento en su "Para Enviar".
  */
 import { CONTACTOS_INICIALES } from '@/data/mock'
-import type { Contacto, MedioEnvio } from '@/types'
-import {
-  BOARDS,
-  COL,
-  ENVIO_RECIBO_FINALES,
-  ENVIO_RECIBO_INDEX,
-  MEDIO_ENVIO_IDS,
-} from './columns'
+import type { Contacto } from '@/types'
+import { COL } from './columns'
 import { byId, type MondayItem } from './parse'
 import { mondayApi, mondayHabilitado } from './sdk'
 
@@ -48,6 +37,7 @@ function mapContacto(item: MondayItem, documento: string): Contacto {
     id: c[COL.contacto.codigo]?.text || item.id,
     itemId: item.id,
     name: completo,
+    ...(nombre ? { primerNombre: nombre } : {}),
     phone: c[COL.contacto.telefono]?.text ?? '',
     email: c[COL.contacto.email]?.text ?? '',
     // Iniciales: la del nombre y la del apellido cuando existen.
@@ -106,131 +96,4 @@ export function getContactosCliente(clienteId: string, documento = 'Recibo'): Pr
   })
   cacheContactos.set(clave, pedido)
   return pedido
-}
-
-/* ===== Envío ===== */
-
-/**
- * ¿El PDF del recibo ya está en su columna file? La automatización lo genera después de emitir, y
- * hasta que no exista no hay documento que despachar.
- */
-export async function reciboPdfGenerado(itemId: string): Promise<boolean> {
-  if (!mondayHabilitado()) return true
-  const data = await mondayApi<{ items: MondayItem[] }>(
-    `query ($id: [ID!]) {
-      items(ids: $id) { id column_values(ids: ["${COL.cobro.pdf}"]) { id text } }
-    }`,
-    { id: [itemId] },
-  )
-  const item = data.items?.[0]
-  const archivo = item ? byId(item)[COL.cobro.pdf]?.text ?? '' : ''
-  return archivo.trim() !== ''
-}
-
-/**
- * Paso 2: deja escrito A QUIÉNES y POR DÓNDE se envía.
- *
- * Las dos cosas viajan en UNA sola mutación porque son el mismo dato para la automatización: el
- * destino del documento. Escribirlas por separado abría un estado intermedio —el medio puesto y los
- * destinatarios no— en el que un envío disparado justo ahí saldría sin saber a quién.
- *
- * El medio se manda por ID de etiqueta (ver `MEDIO_ENVIO_IDS`); "Ambos" son las dos, porque la
- * columna del tablero es multi-valor. Los contactos van como relación al board de Contactos.
- */
-export async function asignarDestinoEnvio(
-  itemId: string,
-  medio: MedioEnvio,
-  contactoIds: readonly string[] = [],
-): Promise<void> {
-  if (!mondayHabilitado()) return
-
-  const cv: Record<string, unknown> = { [COL.cobro.enviarPor]: { ids: MEDIO_ENVIO_IDS[medio] } }
-  /* Sólo ids numéricos válidos: la relación los pide como números, y uno que no lo sea haría
-     rebotar la mutación entera —con ella, el envío—. */
-  const ids = contactoIds
-    .map((id) => Number(id))
-    .filter((n) => Number.isFinite(n) && n > 0)
-  // Sin destinatarios se OMITE la columna, igual que el resto de la capa: no se manda vacía.
-  if (ids.length > 0) cv[COL.cobro.contactos] = { item_ids: ids }
-
-  await mondayApi(
-    `mutation ($id: ID!, $board: ID!, $cv: JSON!) {
-      change_multiple_column_values(item_id: $id, board_id: $board, column_values: $cv) { id }
-    }`,
-    { id: itemId, board: BOARDS.cobros, cv: JSON.stringify(cv) },
-  )
-}
-
-/** Paso 3: pone el estado en "Enviar". Ese cambio es el que dispara el envío del tablero. */
-export async function dispararEnvioRecibo(itemId: string): Promise<void> {
-  if (!mondayHabilitado()) return
-  await mondayApi(
-    `mutation ($id: ID!, $board: ID!, $cv: JSON!) {
-      change_multiple_column_values(item_id: $id, board_id: $board, column_values: $cv) { id }
-    }`,
-    {
-      id: itemId,
-      board: BOARDS.cobros,
-      cv: JSON.stringify({ [COL.cobro.estadoEmision]: { index: ENVIO_RECIBO_INDEX.enviar } }),
-    },
-  )
-}
-
-/** Estado del envío tal como lo reporta el tablero: el índice decide, la etiqueta se muestra. */
-export interface EstadoEnvioRecibo {
-  index: number | null
-  label: string
-}
-
-const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms))
-
-async function getEstadoEnvio(itemId: string): Promise<EstadoEnvioRecibo> {
-  const data = await mondayApi<{ items: MondayItem[] }>(
-    `query ($id: [ID!]) {
-      items(ids: $id) {
-        id
-        column_values(ids: ["${COL.cobro.estadoEmision}"]) { id text ... on StatusValue { index } }
-      }
-    }`,
-    { id: [itemId] },
-  )
-  const item = data.items?.[0]
-  const cv = item ? byId(item)[COL.cobro.estadoEmision] : undefined
-  return { index: cv?.index ?? null, label: cv?.text?.trim() ?? '' }
-}
-
-/**
- * Paso 4: espera a que la automatización cierre el envío, informando por `onEstado` cada cambio de
- * etiqueta —es lo que se le muestra al usuario, para que la pantalla diga lo mismo que el board—.
- *
- * Devuelve el índice final. Si se agotan los intentos devuelve el último visto: no se inventa un
- * "enviado" que el tablero nunca confirmó.
- *
- * En modo local no hay automatización: simula el ciclo y responde "Enviado", así el prototipo se
- * puede recorrer entero sin cuenta de Monday.
- */
-export async function seguirEnvioRecibo(
-  itemId: string,
-  onEstado: (estado: string) => void,
-  { intentos = 30, intervalo = 2000 }: { intentos?: number; intervalo?: number } = {},
-): Promise<number | null> {
-  if (!mondayHabilitado()) {
-    onEstado('Enviando')
-    await esperar(1200)
-    onEstado('Enviado')
-    return ENVIO_RECIBO_INDEX.enviado
-  }
-  let ultimo: number | null = null
-  let ultimaEtiqueta = ''
-  for (let i = 0; i < intentos; i++) {
-    const { index, label } = await getEstadoEnvio(itemId)
-    if (label && label !== ultimaEtiqueta) {
-      ultimaEtiqueta = label
-      onEstado(label)
-    }
-    ultimo = index
-    if (index !== null && ENVIO_RECIBO_FINALES.includes(index)) return index
-    await esperar(intervalo)
-  }
-  return ultimo
 }

@@ -614,10 +614,13 @@ export function armarOrdenDePago(
            ya se cargaron en la etapa 3 y viajan a sus columnas del subelemento: repetirlos acá
            alargaría la fila sin agregar nada al documento. */
         descripcion: m.formaPago,
-        /* El número del cheque es lo único que identifica una caja en este circuito: ni el efectivo
-           ni la transferencia ni las tarjetas traen un comprobante propio (ver `comprobanteDePago`,
-           que resuelve lo mismo del lado del recibo). */
-        comprobante: esCajaCheque(m.formaPago) ? (m.numeroCheque?.trim() ?? '') : '',
+        /* NRO DE COMPROBANTE: el número del cheque o el de la transferencia (el identificador que da
+           el banco, que se carga en la etapa 3). El efectivo no tiene uno. */
+        comprobante: esCajaCheque(m.formaPago)
+          ? (m.numeroCheque?.trim() ?? '')
+          : esCajaTransferencia(m.formaPago)
+            ? (m.nroComprobanteTransferencia?.trim() ?? '')
+            : '',
         entregado: round2(m.importe),
       }))
 
