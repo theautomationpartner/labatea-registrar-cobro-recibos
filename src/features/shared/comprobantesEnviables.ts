@@ -133,7 +133,8 @@ const RECIBO: ComprobanteEnviable = {
   nombre: 'recibo',
   nombrePlural: 'recibos',
   // Emitido = el PDF ya se generó en la app.
-  emitido: (s) => s.reciboDoc !== null,
+  /* Mientras se está (re)emitiendo, el documento todavía no existe: el que hay está por perderse. */
+  emitido: (s) => s.reciboDoc !== null && s.emision.fase !== 'creando',
   documento: (s) =>
     s.reciboDoc && {
       tipo: 'RECIBO',
@@ -170,7 +171,7 @@ const ORDEN_PAGO: ComprobanteEnviable = {
   nombrePlural: 'órdenes de pago',
   /* Con este texto el contacto declara, en su "✋Para Enviar", que acepta recibir órdenes de pago. */
   etiquetaContacto: 'Orden de Pago',
-  emitido: (s) => s.ordenPagoDoc !== null,
+  emitido: (s) => s.ordenPagoDoc !== null && s.emisionOP.fase !== 'creando',
   documento: (s) =>
     s.ordenPagoDoc && {
       tipo: 'ORDEN DE PAGO',
@@ -214,7 +215,7 @@ const RESUMEN_CTA_CTE: ComprobanteEnviable = {
   nombre: 'resumen de cuenta corriente',
   nombrePlural: 'resúmenes de cuenta corriente',
   etiquetaContacto: 'Resumen Cta Cte',
-  emitido: (s) => s.resumenDoc !== null,
+  emitido: (s) => s.resumenDoc !== null && s.emisionResumen.fase !== 'creando',
   documento: (s) =>
     s.resumenDoc && {
       tipo: 'RESUMEN CTA CTE',

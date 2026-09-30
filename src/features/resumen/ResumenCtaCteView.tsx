@@ -6,7 +6,7 @@ import { LOGO_DOCUMENTOS } from '@/features/documentos/pdf/comun'
 import { DescargarExcel } from '@/features/shared/DescargarArchivos'
 import { EnviarDocumento } from '@/features/shared/EnviarDocumento'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
-import { useReemision } from '@/features/shared/useReemision'
+import { useGuardaRegistro, useReemision } from '@/features/shared/useReemision'
 import { VerImprimirPdf } from '@/features/shared/VerImprimirPdf'
 import { hoy, hoyIso } from '@/lib/dates'
 import { firmaDe } from '@/lib/firma'
@@ -214,6 +214,9 @@ export function ResumenCtaCteView() {
     avance: AVANCE_REGISTRO_RESUMEN_INICIAL,
   })
 
+  /* No se registra mientras el documento se está emitiendo o enviando (ver `useGuardaRegistro`). */
+  const guardaRegistro = useGuardaRegistro('el resumen de cuenta corriente', emisionResumen.fase)
+
   /**
    * "Registrar Resumen": sólo con el resumen EMITIDO y ENVIADO. Deja en la cuenta corriente del
    * cliente los archivos emitidos —y el formato, el período, los contactos y el medio del envío— y
@@ -221,6 +224,7 @@ export function ResumenCtaCteView() {
    * Con eso se cierra la operación.
    */
   const registrar = async () => {
+    if (guardaRegistro.frenar()) return
     if (!resumenDoc) {
       setAviso('sin-emitir')
       return
@@ -377,6 +381,7 @@ export function ResumenCtaCteView() {
       </div>
 
       {modalReemision}
+      {guardaRegistro.modal}
 
       {registrando && (
         <ModalCargando

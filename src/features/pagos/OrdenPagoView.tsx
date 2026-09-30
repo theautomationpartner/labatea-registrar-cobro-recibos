@@ -8,7 +8,7 @@ import { ReciboAGenerar, ROTULOS_DOC_OP } from '@/features/recibo/ReciboAGenerar
 import { ResumenRecibo, ROTULOS_RESUMEN_OP } from '@/features/recibo/ResumenRecibo'
 import { EnviarDocumento } from '@/features/shared/EnviarDocumento'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
-import { useReemision } from '@/features/shared/useReemision'
+import { useGuardaRegistro, useReemision } from '@/features/shared/useReemision'
 import { VerImprimirPdf } from '@/features/shared/VerImprimirPdf'
 import type { DatosConstanciaRetencionPdf, DatosOrdenPagoPdf } from '@/lib/documentoComprobante'
 import { firmaDe } from '@/lib/firma'
@@ -326,6 +326,9 @@ export function OrdenPagoView() {
     }
   }
 
+  /* No se registra mientras el documento se está emitiendo o enviando (ver `useGuardaRegistro`). */
+  const guardaRegistro = useGuardaRegistro('la orden de pago', emisionOP.fase)
+
   /**
    * "Registrar Pago": el ÚNICO lugar donde la orden nace en Monday. Dos tiempos, con la ventana de
    * espera arriba —el mismo recorrido que "Registrar Cobro"—:
@@ -336,6 +339,7 @@ export function OrdenPagoView() {
    * Recién con los dos confirmados se cierra la operación. Retoma donde quedó si algo falla.
    */
   const registrar = async () => {
+    if (guardaRegistro.frenar()) return
     if (!ordenPagoDoc) {
       setAviso(true)
       return
@@ -575,6 +579,7 @@ export function OrdenPagoView() {
       )}
 
       {modalReemision}
+      {guardaRegistro.modal}
 
       {/* La orden está creada, pero algo del registro no entró. Se nombra qué, y nada se escribe en
           Monday para contarlo: ni estados ni updates. */}

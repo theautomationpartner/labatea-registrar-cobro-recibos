@@ -117,6 +117,12 @@ export function EnviarDocumento({ documento, onEnviado }: EnviarDocumentoProps) 
   // Estado del envío: gobierna íntegramente el botón.
   const [estadoEnvio, setEstadoEnvio] = useState<EstadoEnvio>('idle')
   const enviando = estadoEnvio === 'enviando'
+  /* El envío en curso se publica en el estado global: mientras dure, la etapa no deja volver a
+     emitir ni registrar el documento. Al desmontar se libera, por si se sale a mitad de camino. */
+  useEffect(() => {
+    dispatch({ type: 'setEnvioEnCurso', value: enviando })
+  }, [enviando, dispatch])
+  useEffect(() => () => dispatch({ type: 'setEnvioEnCurso', value: false }), [dispatch])
   /* Éxito PERSISTENTE: el envío ya se completó (bandera global) o se acaba de completar (estado
      local). Sobrevive a la navegación con el stepper, así el botón NO vuelve a habilitarse ni pierde
      su color de éxito al volver a esta etapa. */

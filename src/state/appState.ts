@@ -217,6 +217,11 @@ export interface AppState {
    */
   envioIniciado: boolean
   /**
+   * Hay un envío EN CURSO (el escenario de Make todavía no contestó). Mientras dure no se puede volver
+   * a emitir el documento ni registrarlo: se estaría mandando un PDF que deja de existir.
+   */
+  envioEnCurso: boolean
+  /**
    * Cuántos de los documentos emitidos ya se abrieron con "Ver / Imprimir". El botón muestra los que
    * faltan y cada clic abre el siguiente. Vive acá para que ir a otra etapa y volver no reinicie la
    * cuenta; una emisión nueva la pone en cero.
@@ -468,6 +473,7 @@ export const initialState: AppState = {
   enviadosPorContacto: {},
   contactosFallidos: {},
   envioIniciado: false,
+  envioEnCurso: false,
   pdfsAbiertos: 0,
   excelsDescargados: 0,
   emisionNro: 0,
@@ -681,6 +687,7 @@ export type Action =
   | { type: 'setEnviadosPorContacto'; value: Record<string, CanalEnvio[]> }
   | { type: 'setContactosFallidos'; value: Record<string, string> }
   | { type: 'setEnvioIniciado' }
+  | { type: 'setEnvioEnCurso'; value: boolean }
   | { type: 'setPdfsAbiertos'; value: number }
   | { type: 'setExcelsDescargados'; value: number }
   /** El recibo emitido en la app (su PDF y lo que se registra), o `null` para descartarlo. */
@@ -1485,6 +1492,9 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case 'setEnvioIniciado':
       return { ...state, envioIniciado: true }
+
+    case 'setEnvioEnCurso':
+      return state.envioEnCurso === action.value ? state : { ...state, envioEnCurso: action.value }
 
     case 'setPdfsAbiertos':
       return { ...state, pdfsAbiertos: action.value }

@@ -5,7 +5,7 @@ import { generarReciboPdf } from '@/features/documentos/generarDocumentos'
 import { LOGO_DOCUMENTOS } from '@/features/documentos/pdf/comun'
 import { EnviarDocumento } from '@/features/shared/EnviarDocumento'
 import { PasoHeader, PasoTitulo } from '@/features/shared/PasoHeader'
-import { useReemision } from '@/features/shared/useReemision'
+import { useGuardaRegistro, useReemision } from '@/features/shared/useReemision'
 import { VerImprimirPdf } from '@/features/shared/VerImprimirPdf'
 import { diasPromedioCobro, formatoDiasPromedio } from '@/lib/diasPromedio'
 import { saldoConRecibo, type DatosReciboPdf } from '@/lib/documentoComprobante'
@@ -254,6 +254,9 @@ export function ReciboView() {
     }
   }
 
+  /* No se registra mientras el documento se está emitiendo o enviando (ver `useGuardaRegistro`). */
+  const guardaRegistro = useGuardaRegistro('el recibo', emision.fase)
+
   /**
    * "Registrar Cobro": el ÚNICO lugar donde el recibo nace en Monday. Dos tiempos, con la ventana de
    * espera arriba:
@@ -267,6 +270,7 @@ export function ReciboView() {
    * subió, no lo vuelve a subir; y lo que el registro ya impactó queda anotado y no se repite.
    */
   const registrar = async () => {
+    if (guardaRegistro.frenar()) return
     if (!reciboDoc) {
       setAviso(true)
       return
@@ -473,6 +477,7 @@ export function ReciboView() {
       )}
 
       {modalReemision}
+      {guardaRegistro.modal}
 
       {/* El recibo está creado, pero algo del registro no entró. Se nombra qué, y nada se escribe en
           Monday para contarlo: ni estados ni updates. */}
